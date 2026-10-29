@@ -43,8 +43,12 @@ const mcpRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..',
  * (Start-Job runs it in another process), or something that may remove a
  * function: a $function: variable ($function:net = $null), a word naming the
  * function drive or provider (Remove-Item function:net, New-PSDrive
- * -PSProvider Function), or an item cmdlet whose path is known only at run
- * time or comes from the pipeline ('function:net' | Remove-Item).
+ * -PSProvider Function), or an item or content cmdlet whose path is known
+ * only at run time or comes from the pipeline ('function:net' | Remove-Item;
+ * Set-Content gives a function a new body). Nor when it runs code the helper
+ * doesn't read: Invoke-Expression, Import-Module, Add-Type, a script file, a
+ * name known only at run time, a method call ([scriptblock]::Create(...).Invoke())
+ * or ForEach-Object calling one.
  * Offsets are .NET string indexes, the same as JavaScript's.
  */
 const HELPER_SCRIPT = `
@@ -77,7 +81,19 @@ function Test-RemovesFunction($found) {
     elseif ($word -match '\\bfunction\\b') { return $true }
     elseif (-not $word.StartsWith('-')) { $knownPaths++ }
   }
-  return $found.name -like '*-Item' -and ($pathAtRunTime -or $knownPaths -eq 0)
+  return ($found.name -like '*-Item' -or $found.name -like '*-Content') -and ($pathAtRunTime -or $knownPaths -eq 0)
+}
+function Test-RunsUnreadCode($found) {
+  if ($found.nameAtRunTime -or $found.name -in 'Invoke-Expression', 'Import-Module', 'Add-Type') { return $true }
+  # ForEach-Object InvokeScript 'text' calls each object's method
+  if ($found.name -eq 'ForEach-Object') {
+    $values = 0
+    for ($i = 1; $i -lt $found.words.Count; $i++) { if (-not "$($found.words[$i])".StartsWith('-')) { $values++ } }
+    if ($values -gt 1) { return $true }
+  }
+  # A script file: .ps1 or .psm1, or a path without an extension (. ./lib runs lib.ps1)
+  $leaf = $found.name.Substring($found.name.LastIndexOfAny([char[]]'\\/') + 1)
+  return $leaf -like '*.ps1' -or $leaf -like '*.psm1' -or ($leaf -ne $found.name -and $leaf -notlike '*.*')
 }
 while ($true) {
   $line = $reader.ReadLine()
@@ -105,8 +121,9 @@ while ($true) {
       })
       $isBlockValue = { $args[0] -is [Management.Automation.Language.ScriptBlockExpressionAst] }
       $isFunctionVariable = { $args[0] -is [Management.Automation.Language.VariableExpressionAst] -and $args[0].VariablePath.DriveName -eq 'function' }
-      $removers = @($answer.commands | Where-Object { Test-RemovesFunction $_ })
-      $functionsMayGo = $removers.Count -gt 0 -or $ast.Find($isBlockValue, $true) -or $ast.Find($isFunctionVariable, $true)
+      $isMethodCall = { $args[0] -is [Management.Automation.Language.InvokeMemberExpressionAst] }
+      $removers = @($answer.commands | Where-Object { (Test-RemovesFunction $_) -or (Test-RunsUnreadCode $_) })
+      $functionsMayGo = $removers.Count -gt 0 -or $ast.Find($isBlockValue, $true) -or $ast.Find($isFunctionVariable, $true) -or $ast.Find($isMethodCall, $true)
       $statements = if ($ast.EndBlock -and -not $functionsMayGo) { $ast.EndBlock.Statements } else { @() }
       $answer.functions = @(foreach ($statement in $statements) {
         if ($statement -is [Management.Automation.Language.FunctionDefinitionAst]) { @{ name = $statement.Name; end = $statement.Extent.EndOffset } }
