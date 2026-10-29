@@ -8,12 +8,14 @@ import type { FoundCommand } from './command-reading.js';
  * options (timeout 5 reboot, nice -n 10 dd, sudo -u root id), and checks that
  * program like any other command. A wrapper can start another wrapper: env
  * nohup sudo ls runs sudo.
- * - env, nohup, xargs, timeout, nice, stdbuf, setsid, chroot, sudo, doas,
- *   pkexec, busybox and wsl are programs, so they start the program after
- *   them from every shell: chroot after its new root, busybox its own program
- *   of that name, wsl in Linux. env -S 'sudo ls' runs sudo too: env splits
- *   -S's text into more of its own words. Windows' timeout /t 5 starts
- *   nothing: it only waits;
+ * - env, nohup, timeout, sudo, strace and the other programs in PROGRAMS
+ *   start the program after their options from every shell: chroot after its
+ *   new root, busybox its own program of that name, wsl in Linux, find the one
+ *   after -exec, tmux the one its new-session starts, and capsh its shell.
+ *   env -S 'sudo ls' runs sudo too: env splits -S's text into more of its own
+ *   words. Windows' timeout /t 5 starts nothing: it only waits. psexec
+ *   \\server sudo ls runs sudo on another computer, which the check leaves
+ *   out, as it leaves out ssh's;
  * - exec and command are commands of the POSIX shells;
  * - Start-Process (also written start or saps) is PowerShell's: the PowerShell
  *   reader gives the programs it starts, as PowerShell itself binds its
@@ -26,7 +28,8 @@ import type { FoundCommand } from './command-reading.js';
  * (nice -X 10 sudo ls runs 10 or sudo). A word known only at run time where an
  * option could be ($OPTS in nice $OPTS make) may be the program, or an option
  * with or without a value: it is a program known only at run time, and either
- * of the next two words may be the program too.
+ * of the next two words may be the program too. Neither takes a word that is
+ * an option itself as its value (in env $OPTS -u sudo ls, -u takes sudo).
  */
 
 /**
@@ -45,14 +48,26 @@ interface PosixWrapper {
   flags?: string;
   /** The long options that take a value */
   long?: string[];
+  /** The long options that take two words: bwrap --bind SRC DEST */
+  longPairs?: string[];
   /** The long options that take no value, or one only after = (env --block-signal=PIPE) */
   longFlags?: string[];
+  /** Whether its long options are written in full and take a value only after = (firejail --private=dir), so one without = takes none */
+  equalsOnly?: boolean;
+  /** Whether its options are whole words after one dash, not letters, read as long options (xterm -title, arch -x86_64) */
+  wordOptions?: boolean;
+  /** Whether an option can also start with +, which turns it off (xterm +sb) */
+  plus?: boolean;
   /** The options with which no program runs: command -v sudo only says what sudo is */
   noProgram?: string;
+  /** The long options with which no program runs: ionice --pid 1234 changes a running process */
+  noProgramLong?: string[];
   /** The first words, in any case, after which no program runs: Windows' timeout /t 5 only waits */
   noProgramWords?: string[];
   /** How many words after the options come before the program: timeout's duration */
   before?: number;
+  /** Whether those words may be left out: since util-linux 2.42, chrt -i make needs no priority */
+  beforeOptional?: boolean;
   /** Whether NAME=VALUE words before the program set its environment (env, sudo) */
   assignments?: boolean;
   /**
@@ -60,12 +75,40 @@ interface PosixWrapper {
    * splits the text into more of its own words
    */
   texts?: { letters: string; long: string[] };
+  /**
+   * The options whose value is the program, which takes the words after -- as its arguments
+   * (start-stop-daemon --exec /usr/bin/sudo -- ls), and the program that runs after -- without one (capsh -- -c ls
+   * runs bash). The words after the options are no program then.
+   */
+  programOptions?: { letters?: string; long: string[]; default?: string };
+  /**
+   * The words after which a program runs, anywhere among its words, and the words that end it (find -exec sudo rm
+   * {} ;). Its other words are no program.
+   */
+  programAfter?: { words: string[]; ends: string[] };
+  /** Its own commands that start a program, each with its rules: tmux new-session -d sudo ls */
+  subcommands?: Map<string, PosixWrapper>;
+  /** How the words that name other computers start: psexec \\server runs its program there, not here */
+  remote?: string[];
 }
 
+/** tmux's commands that start the program after their options (tmux new-session -d sudo ls), by name and alias */
+const TMUX_NEW_SESSION: PosixWrapper = { letters: 'cefFnstxy', flags: 'AdDEPX' };
+const TMUX_NEW_WINDOW: PosixWrapper = { letters: 'ceFnt', flags: 'abdEkPS' };
+const TMUX_SPLIT_WINDOW: PosixWrapper = { letters: 'BceFlmpRsStT', flags: 'bdEfhIkPvWZ' };
+const TMUX_RESPAWN: PosixWrapper = { letters: 'cet', flags: 'Ek' };
+const TMUX_COMMANDS = new Map<string, PosixWrapper>([
+  ['new-session', TMUX_NEW_SESSION], ['new', TMUX_NEW_SESSION],
+  ['new-window', TMUX_NEW_WINDOW], ['neww', TMUX_NEW_WINDOW],
+  ['split-window', TMUX_SPLIT_WINDOW], ['splitw', TMUX_SPLIT_WINDOW],
+  ['respawn-pane', TMUX_RESPAWN], ['respawnp', TMUX_RESPAWN], ['respawn-window', TMUX_RESPAWN], ['respawnw', TMUX_RESPAWN],
+]);
+
 /**
- * The wrappers that are programs, with their options in GNU, BSD and macOS
- * (and Windows' sudo); doas's in OpenBSD, pkexec's in polkit, setsid's in
- * util-linux, and busybox's and wsl's in their own usage text
+ * The wrappers that are programs, with their options from each one's manual
+ * or --help: GNU's, BSD's and macOS's where there are several (and Windows'
+ * sudo), util-linux's, systemd's, OpenBSD's doas, polkit's pkexec, and the
+ * usage text of busybox, wsl, gsudo and psexec
  */
 const PROGRAMS = new Map<string, PosixWrapper>([
   ['env', {
@@ -100,6 +143,200 @@ const PROGRAMS = new Map<string, PosixWrapper>([
   ['pkexec', { long: ['user'], longFlags: ['keep-cwd', 'disable-internal-agent', 'help', 'version'] }],
   ['busybox', { noProgramWords: ['--list', '--list-full', '--install', '--show', '--help'] }],
   ['wsl', { letters: 'du', flags: 'e', long: ['cd', 'distribution', 'distribution-id', 'user', 'shell-type'], longFlags: ['exec', 'system'] }],
+  ['nsenter', {
+    letters: 'tNGS', attachedLetters: 'muinpUCTrwW', flags: 'aeFZchV', long: ['target', 'net-socket', 'setgid', 'setuid'],
+    longFlags: [
+      'all', 'mount', 'uts', 'ipc', 'net', 'pid', 'user', 'user-parent', 'cgroup', 'time', 'keep-caps', 'preserve-credentials', 'root',
+      'wd', 'wdns', 'env', 'no-fork', 'follow-context', 'join-cgroup', 'help', 'version',
+    ],
+  }],
+  ['unshare', {
+    letters: 'lRwSG', attachedLetters: 'imnpuUCT', flags: 'frchV',
+    long: [
+      'load-interp', 'map-user', 'map-users', 'map-group', 'map-groups', 'owner', 'propagation', 'setgroups', 'root', 'wd', 'setuid',
+      'setgid', 'monotonic', 'boottime', 'whitelist-env',
+    ],
+    longFlags: [
+      'ipc', 'mount', 'net', 'pid', 'uts', 'user', 'cgroup', 'time', 'fork', 'forward-signals', 'keep-caps', 'kill-child', 'mount-proc',
+      'mount-binfmt', 'map-auto', 'map-subids', 'map-root-user', 'map-current-user', 'clear-env', 'help', 'version',
+    ],
+  }],
+  ['ionice', { letters: 'cn', flags: 'thV', long: ['class', 'classdata'], longFlags: ['ignore', 'help', 'version'], noProgram: 'pPu', noProgramLong: ['pid', 'pgid', 'uid'] }],
+  ['taskset', { flags: 'achV', longFlags: ['all-tasks', 'cpu-list', 'help', 'version'], noProgram: 'p', noProgramLong: ['pid'], before: 1 }],
+  ['chrt', {
+    letters: 'TPDUX', flags: 'ofrbideGORavhV', long: ['sched-runtime', 'sched-period', 'sched-deadline', 'clamp-min', 'clamp-max'],
+    longFlags: ['other', 'fifo', 'rr', 'batch', 'idle', 'deadline', 'ext', 'reclaim-grub', 'deadline-overrun', 'reset-on-fork', 'all-tasks', 'verbose', 'help', 'version'],
+    noProgram: 'mp', noProgramLong: ['max', 'pid'], before: 1, beforeOptional: true,
+  }],
+  ['numactl', {
+    letters: 'iwmNCpP', flags: 'alb',
+    long: ['interleave', 'weighted-interleave', 'membind', 'cpunodebind', 'physcpubind', 'preferred', 'preferred-many', 'offset', 'shmmode', 'length'],
+    longFlags: ['all', 'localalloc', 'balancing', 'cpu-compress', 'huge', 'strict', 'touch', 'dump', 'dump-nodes'],
+    noProgram: 'sH', noProgramLong: ['show', 'hardware', 'version', 'shm', 'shmid', 'file'],
+  }],
+  ['prlimit', {
+    letters: 'o', attachedLetters: 'cdefilmnqrstuvxy', flags: 'hV', long: ['output'],
+    longFlags: [
+      'noheadings', 'raw', 'verbose', 'help', 'version', 'core', 'data', 'nice', 'fsize', 'sigpending', 'memlock', 'rss', 'nofile',
+      'msgqueue', 'rtprio', 'stack', 'cpu', 'nproc', 'as', 'locks', 'rttime',
+    ],
+    noProgram: 'p', noProgramLong: ['pid'],
+  }],
+  ['setpriv', {
+    flags: 'hV',
+    long: [
+      'groups', 'inh-caps', 'ambient-caps', 'bounding-set', 'rgid', 'egid', 'regid', 'ruid', 'euid', 'reuid', 'securebits', 'pdeathsig',
+      'ptracer', 'selinux-label', 'apparmor-profile', 'landlock-access', 'landlock-rule', 'seccomp-filter',
+    ],
+    longFlags: ['clear-groups', 'keep-groups', 'init-groups', 'nnp', 'no-new-privs', 'reset-env', 'help', 'version'],
+    noProgram: 'd', noProgramLong: ['dump', 'list-caps'],
+  }],
+  ['capsh', { equalsOnly: true, programOptions: { long: ['shell'], default: 'bash' } }],
+  ['cpulimit', {
+    letters: 'lcs', flags: 'bfqkmrvzh', long: ['limit', 'cpu', 'signal'],
+    longFlags: ['background', 'foreground', 'quiet', 'kill', 'monitor-forks', 'restore', 'verbose', 'lazy', 'help'],
+    noProgram: 'peP', noProgramLong: ['pid', 'exe', 'path'],
+  }],
+  ['systemd-run', {
+    letters: 'upEHMC', flags: 'rdRtTPSqvGh',
+    long: [
+      'unit', 'property', 'description', 'slice', 'expand-environment', 'service-type', 'uid', 'gid', 'nice', 'working-directory',
+      'root-directory', 'setenv', 'output', 'on-active', 'on-boot', 'on-startup', 'on-unit-active', 'on-unit-inactive', 'on-calendar',
+      'path-property', 'socket-property', 'timer-property', 'job-mode', 'background', 'host', 'machine', 'capsule', 'json',
+    ],
+    longFlags: [
+      'scope', 'slice-inherit', 'remain-after-exit', 'send-sighup', 'same-dir', 'same-root-dir', 'pty', 'pty-late', 'pipe', 'shell',
+      'quiet', 'verbose', 'on-clock-change', 'on-timezone-change', 'no-block', 'wait', 'collect', 'ignore-failure', 'user', 'system',
+      'no-ask-password', 'help', 'version', 'no-pager',
+    ],
+  }],
+  ['run0', {
+    letters: 'ugD', flags: 'kKinh',
+    long: [
+      'unit', 'property', 'description', 'slice', 'user', 'group', 'nice', 'chdir', 'setenv', 'background', 'shell-prompt-prefix',
+      'lightweight', 'area', 'machine',
+    ],
+    longFlags: [
+      'slice-inherit', 'reset-timestamp', 'remove-timestamp', 'via-shell', 'pty', 'pty-late', 'pipe', 'empower', 'same-root-dir',
+      'non-interactive', 'no-ask-password', 'help', 'version',
+    ],
+    noProgram: 'v', noProgramLong: ['validate'],
+  }],
+  ['strace', {
+    letters: 'eEpubIPaoOsSUX', flags: 'DfcCdhiknNqrtTvVwxyYzZAF',
+    long: [
+      'env', 'attach', 'user', 'argv0', 'detach-on', 'interruptible', 'syscall-limit', 'trace', 'trace-fds', 'signal', 'status',
+      'trace-path', 'columns', 'abbrev', 'verbose', 'raw', 'read', 'write', 'silent', 'silence', 'kvm', 'namespace',
+      'stack-trace-frame-limit', 'output', 'color', 'string-limit', 'const-print-style', 'summary-syscall-overhead', 'summary-sort-by',
+      'summary-columns', 'inject', 'fault',
+    ],
+    longFlags: [
+      'daemonize', 'follow-forks', 'output-separately', 'kill-on-exit', 'successful-only', 'failed-only', 'quiet', 'decode-fds',
+      'decode-pids', 'pidns-translation', 'instruction-pointer', 'syscall-number', 'arg-names', 'stack-trace', 'output-append-mode',
+      'relative-timestamps', 'absolute-timestamps', 'timestamps', 'syscall-times', 'no-abbrev', 'strings-in-hex', 'summary-only',
+      'summary', 'summary-wall-clock', 'debug', 'help', 'seccomp-bpf', 'tips', 'version', 'always-show-pid', 'secontext',
+    ],
+  }],
+  ['ltrace', {
+    letters: 'aAdDeFlnopsuwx', flags: 'bcCfhiLrStTV', long: ['align', 'max-depth', 'debug', 'config', 'library', 'indent', 'output', 'where'],
+    longFlags: ['no-signals', 'demangle', 'help', 'version'],
+  }],
+  ['time', { letters: 'fo', flags: 'paqvV', long: ['format', 'output'], longFlags: ['portability', 'append', 'verbose', 'quiet', 'help', 'version'] }],
+  ['firejail', {
+    equalsOnly: true, flags: 'c', noProgram: '?',
+    noProgramLong: [
+      'list', 'tree', 'top', 'netstats', 'nettrace', 'icmptrace', 'dnstrace', 'snitrace', 'version', 'help', 'debug-caps',
+      'debug-errnos', 'debug-syscalls', 'debug-syscalls32', 'debug-protocols', 'shutdown', 'bandwidth', 'ids-init', 'ids-check', 'ls',
+      'get', 'put', 'cat',
+    ],
+  }],
+  ['bwrap', {
+    long: [
+      'args', 'userns', 'userns2', 'pidns', 'uid', 'gid', 'hostname', 'chdir', 'unsetenv', 'lock-file', 'sync-fd', 'perms', 'size',
+      'remount-ro', 'proc', 'dev', 'tmpfs', 'mqueue', 'dir', 'seccomp', 'add-seccomp-fd', 'exec-label', 'file-label', 'block-fd',
+      'userns-block-fd', 'info-fd', 'json-status-fd', 'cap-add', 'cap-drop',
+    ],
+    longPairs: [
+      'setenv', 'bind', 'bind-try', 'dev-bind', 'dev-bind-try', 'ro-bind', 'ro-bind-try', 'file', 'bind-data', 'ro-bind-data', 'symlink',
+      'chmod',
+    ],
+    longFlags: [
+      'help', 'version', 'unshare-user', 'unshare-user-try', 'unshare-ipc', 'unshare-pid', 'unshare-net', 'unshare-uts',
+      'unshare-cgroup', 'unshare-cgroup-try', 'unshare-all', 'share-net', 'disable-userns', 'assert-userns-disabled', 'clearenv',
+      'new-session', 'die-with-parent', 'as-pid-1',
+    ],
+  }],
+  ['unbuffer', { flags: 'p' }],
+  ['rlwrap', {
+    letters: 'bCDefgHlMOPqsStwz', attachedLetters: 'aAmp', flags: 'cEhiInNorRUvW',
+    long: [
+      'break-chars', 'command-name', 'history-no-dupes', 'extra-char-after-completion', 'file', 'forget-matching', 'history-filename',
+      'logfile', 'multi-line-ext', 'only-cook', 'pre-given', 'quote-characters', 'histsize', 'substitute-prompt', 'set-term-name',
+      'wait-before-prompt', 'filter',
+    ],
+    longFlags: [
+      'always-readline', 'ansi-colour-aware', 'complete-filenames', 'always-echo', 'help', 'case-insensitive', 'pass-sigint-as-sigterm',
+      'multi-line', 'no-warnings', 'no-children', 'one-shot', 'prompt-colour', 'remember', 'renice', 'mirror-arguments', 'version', 'polling',
+    ],
+  }],
+  ['chpst', { letters: 'uUbe/nlLmdopfct', flags: 'vVP012' }],
+  ['setuidgid', { before: 1 }],
+  ['start-stop-daemon', {
+    letters: 'pnugsRcrdONPIk', flags: 'StoqbCmv',
+    long: [
+      'pid', 'ppid', 'pidfile', 'name', 'user', 'group', 'signal', 'retry', 'chuid', 'chroot', 'chdir', 'notify-timeout', 'output',
+      'nicelevel', 'procsched', 'iosched', 'umask',
+    ],
+    longFlags: ['start', 'test', 'oknodo', 'quiet', 'background', 'notify-await', 'no-close', 'make-pidfile', 'remove-pidfile', 'verbose'],
+    noProgram: 'KTHV', noProgramLong: ['stop', 'status', 'help', 'version'], programOptions: { letters: 'xa', long: ['exec', 'startas'] },
+  }],
+  ['caffeinate', { letters: 'tw', flags: 'dimsu' }],
+  ['arch', { wordOptions: true, long: ['arch', 'd', 'e'], longFlags: ['32', '64', 'i386', 'x86_64', 'x86_64h', 'arm64', 'arm64e', 'c', 'h'] }],
+  ['sandbox-exec', { letters: 'fnpD' }],
+  ['find', { programAfter: { words: ['-exec', '-execdir', '-ok', '-okdir'], ends: [';', '+'] } }],
+  ['parallel', {
+    letters: 'aCdEIjJnNPsLS', attachedLetters: 'eil', flags: '0kmqrtuvXx',
+    long: [
+      'arg-file', 'arg-file-sep', 'arg-sep', 'basefile', 'bf', 'basenamereplace', 'bnr', 'basenameextensionreplace', 'bner', 'bin', 'block',
+      'block-size', 'block-timeout', 'bt', 'colsep', 'combineexec', 'compress-program', 'decompress-program', 'delay', 'delimiter',
+      'dirnamereplace', 'dnr', 'env', 'extensionreplace', 'er', 'filter', 'group-by', 'halt', 'halt-on-error', 'header', 'jobs',
+      'max-procs', 'joblog', 'jl', 'limit', 'load', 'match', 'max-args', 'max-chars', 'max-replace-args', 'memfree', 'memsuspend',
+      'milestone', 'minversion', 'nice', 'parens', 'process-slot-var', 'profile', 'recend', 'recstart', 'results', 'res', 'retries',
+      'return', 'rpl', 'rsync-opts', 'sshlogin', 'sshloginfile', 'tagstring', 'timeout', 'tmpdir', 'workdir', 'wd',
+    ],
+    longFlags: [
+      'eof', 'max-lines', 'keep-order', 'tag', 'dry-run', 'pipe', 'group', 'ungroup', 'line-buffer', 'progress', 'eta', 'bar', 'verbose',
+      'null', 'quote', 'no-run-if-empty', 'shuf', 'tty', 'xargs', 'cleanup', 'transfer', 'help', 'version',
+    ],
+  }],
+  ['xterm', {
+    wordOptions: true, plus: true,
+    long: [
+      'b', 'bcf', 'bcn', 'bd', 'bg', 'bw', 'cc', 'class', 'cr', 'display', 'en', 'fa', 'fb', 'fc', 'fd', 'fg', 'fi', 'fn', 'font', 'fs', 'fw',
+      'fwb', 'fx', 'geometry', 'hc', 'into', 'kt', 'lcc', 'lf', 'mc', 'ms', 'n', 'name', 'nb', 'pf', 'selbg', 'selfg', 'sh', 'sl', 'ti',
+      'title', 'tm', 'tn', 'T', 'w', 'xrm', 'ziconbeep', 'baudrate',
+    ],
+    longFlags: [
+      'e', 'ah', 'aw', 'bc', 'cb', 'cjk_width', 'cm', 'cn', 'cu', 'dc', 'fbb', 'fbx', 'fullscreen', 'hf', 'hm', 'hold', 'ie', 'im', 'itc',
+      'j', 'k8', 'l', 'lc', 'leftbar', 'ls', 'maximized', 'mb', 'mesg', 'mk_width', 'nul', 'pc', 'pob', 'rightbar', 'rv', 'rvc', 'rw', 's',
+      'samename', 'sb', 'sf', 'si', 'sk', 'sm', 'sp', 't', 'tb', 'toolbar', 'u8', 'ulc', 'ulit', 'ut', 'vb', 'wc', 'wf', 'iconic',
+      'reverse', 'help', 'version',
+    ],
+  }],
+  ['tmux', { letters: 'cfLST', flags: '2CDhlNuVv', subcommands: TMUX_COMMANDS }],
+  ['screen', { letters: 'cehpsStT', flags: 'aAdDfiLlmOPqRU', noProgram: 'rxXQv', noProgramWords: ['-ls', '-list', '-wipe'] }],
+  ['gsudo', {
+    letters: 'ui', flags: 'nwskd', long: ['user', 'integrity', 'loglevel', 'chdir'],
+    longFlags: ['new', 'wait', 'keepShell', 'keepWindow', 'system', 'ti', 'direct', 'loadProfile', 'debug', 'copyns', 'copyev'],
+  }],
+  ['psexec', {
+    wordOptions: true, long: ['u', 'p', 'n', 'r', 'w', 'a', 'g'],
+    longFlags: [
+      's', 'e', 'h', 'l', 'x', 'c', 'f', 'v', 'd', 'accepteula', 'nobanner', 'low', 'belownormal', 'abovenormal', 'high', 'realtime',
+      'background',
+    ],
+    remote: ['\\\\', '@'],
+  }],
 ]);
 
 /** The POSIX shells' own commands that start a program */
@@ -154,15 +391,44 @@ function posixPrograms({ words, written }: Started, rules: PosixWrapper): Starte
   // Windows' timeout /t 5 only waits, and GNU's timeout stops with an error at /t, which is no duration
   const first = words[1];
   if (first && rules.noProgramWords?.includes(first.toLowerCase())) return [];
-  const { operands, texts } = readOptions(words, rules);
+  const from = (i: number, end = words.length): Started => ({ words: words.slice(i, end), written: written.slice(i, end) });
+  const after = rules.programAfter;
+  if (after) {
+    // find -exec sudo rm {} ;: each program runs from the word after -exec up to ;
+    return words.flatMap((word, i) => {
+      if (word === null || !after.words.includes(word)) return [];
+      const end = words.findIndex((next, j) => j > i && next !== null && after.ends.includes(next));
+      const stop = end === -1 ? words.length : end;
+      return stop > i + 1 ? [from(i + 1, stop)] : [];
+    });
+  }
+  const { operands, texts, programs: named } = readOptions(words, rules);
+  if (rules.programOptions) {
+    // The program an option names, or the one that runs without it, takes the words after -- as its arguments
+    const end = words.indexOf('--');
+    const args = end === -1 ? words.length : end + 1;
+    const fallback = rules.programOptions.default;
+    const runs = named.length > 0 ? named : end !== -1 && fallback ? [{ program: fallback }] : [];
+    return runs.map(({ program, at }) => ({
+      words: [program, ...words.slice(args)],
+      written: [at === undefined ? program ?? '' : written[at], ...written.slice(args)],
+    }));
+  }
+  // psexec \\server sudo ls runs sudo on another computer
+  const remote = (i: number): boolean => words.slice(1, i + 1).some((word) => rules.remote?.some((start) => word?.startsWith(start)));
   const at = new Set<number>();
   for (let i of operands) {
-    // After the options: the NAME=VALUE settings, then the words before the program
+    // After the options: the NAME=VALUE settings, then the words before the program, which chrt may leave out
     while (rules.assignments && i < words.length && (words[i] ?? written[i]).includes('=')) i++;
+    if (rules.beforeOptional && i < words.length) at.add(i);
     i += rules.before ?? 0;
-    if (i < words.length) at.add(i);
+    if (i < words.length && !remote(i)) at.add(i);
   }
-  const programs = [...at].map((i) => ({ words: words.slice(i), written: written.slice(i) }));
+  // A command of the program's own, such as tmux new-session, reads its words by its own rules
+  const programs = [...at].flatMap((i) => {
+    const subcommand = subcommandOf(words[i], rules);
+    return subcommand ? posixPrograms(from(i), subcommand) : [from(i)];
+  });
   // A wrapper's command text is more of its own words, split as env splits -S's: env is the one wrapper with one
   return [...programs, ...texts.flatMap(({ text, after }) => {
     const split = envSplitWords(text);
@@ -173,23 +439,28 @@ function posixPrograms({ words, written }: Started, rules: PosixWrapper): Starte
   })];
 }
 
-/** Where a program's options end, in each way they can be read, and the command texts they give */
+/** Where a program's options end, in each way they can be read, and the command texts and programs they give */
 interface OptionReadings {
   /** The first word after the options, in each reading */
   operands: number[];
   /** Each command text an option gives, and the first word after it */
   texts: { text: string; after: number }[];
+  /** Each program an option names (start-stop-daemon --exec), null when known only at run time; `at` is its word, unless it is in the option's own */
+  programs: { program: string | null; at?: number }[];
 }
 
 /**
  * Reads a program's options by its rules, in every way they can be read: an
  * option the rules don't list, and a word known only at run time, may take the
- * next word as its value or not. A command text known only at run time (env
- * -S "$CMD") is read on as a word known only at run time.
+ * next word as its value or not, though not a word that is an option itself.
+ * A command text known only at run time (env -S "$CMD") is read on as a word
+ * known only at run time.
  */
 function readOptions(words: (string | null)[], rules: PosixWrapper): OptionReadings {
-  const readings: OptionReadings = { operands: [], texts: [] };
+  const readings: OptionReadings = { operands: [], texts: [], programs: [] };
   const read = new Set<number>();
+  const isOption = (word: string | null | undefined): word is string =>
+    typeof word === 'string' && (word.startsWith('-') || (rules.plus === true && word.length > 1 && word.startsWith('+')));
   const readFrom = (i: number): void => {
     if (read.has(i)) return;
     read.add(i);
@@ -198,10 +469,10 @@ function readOptions(words: (string | null)[], rules: PosixWrapper): OptionReadi
       // An option with or without a value, or the first word after them
       readings.operands.push(i);
       readFrom(i + 1);
-      readFrom(i + 2);
+      if (!isOption(words[i + 1])) readFrom(i + 2);
       return;
     }
-    if (word === undefined || !word.startsWith('-')) {
+    if (!isOption(word)) {
       readings.operands.push(i);
       return;
     }
@@ -211,6 +482,15 @@ function readOptions(words: (string | null)[], rules: PosixWrapper): OptionReadi
     }
     for (const reading of optionReadings(word, rules)) {
       if (reading === null) continue;
+      // A value the rules don't know of isn't a word that is an option itself
+      if (reading.uncertain && reading.next > 0 && isOption(words[i + reading.next])) continue;
+      if (reading.program !== undefined) {
+        const at = reading.next === 1 ? i + 1 : undefined;
+        const program = at === undefined ? reading.program : words[at];
+        if (program !== undefined) readings.programs.push({ program, at });
+        readFrom(i + 1 + reading.next);
+        continue;
+      }
       if (reading.text === undefined) {
         readFrom(i + 1 + reading.next);
         continue;
@@ -226,10 +506,14 @@ function readOptions(words: (string | null)[], rules: PosixWrapper): OptionReadi
 
 /** One way to read an option word */
 interface OptionReading {
-  /** How many of the next words are its value: 0 or 1 */
-  next: 0 | 1;
+  /** How many of the next words are its value */
+  next: number;
+  /** Whether it is the reading that an option the rules don't list takes a value */
+  uncertain?: true;
   /** For an option whose value is a command text: the text in the same word, or '' when it is the next word */
   text?: string;
+  /** For an option whose value is the program: the program in the same word, or '' when it is the next word */
+  program?: string;
 }
 
 /**
@@ -240,14 +524,20 @@ interface OptionReading {
  * option too: env's -i.
  */
 function optionReadings(option: string, rules: PosixWrapper): (OptionReading | null)[] {
-  if (option.startsWith('--')) {
-    const equals = option.indexOf('=');
-    const name = longOption(option.slice(2, equals === -1 ? undefined : equals), rules);
+  const long = option.startsWith('--') ? option.slice(2) : rules.wordOptions ? option.slice(1) : undefined;
+  if (long !== undefined) {
+    const equals = long.indexOf('=');
+    const name = longOption(equals === -1 ? long : long.slice(0, equals), rules);
+    if (name !== undefined && rules.noProgramLong?.includes(name)) return [null];
     const isText = name !== undefined && rules.texts?.long.includes(name);
-    if (equals !== -1) return [isText ? { next: 0, text: option.slice(equals + 1) } : { next: 0 }];
-    if (name === undefined) return [{ next: 0 }, { next: 1 }];
+    const isProgram = name !== undefined && rules.programOptions?.long.includes(name);
+    const value = long.slice(equals + 1);
+    if (equals !== -1) return [isText ? { next: 0, text: value } : isProgram ? { next: 0, program: value } : { next: 0 }];
+    if (rules.equalsOnly) return [{ next: 0 }];
+    if (name === undefined) return [{ next: 0 }, { next: 1, uncertain: true }];
     if (isText) return [{ next: 1, text: '' }];
-    return [{ next: rules.long?.includes(name) ? 1 : 0 }];
+    if (isProgram) return [{ next: 1, program: '' }];
+    return [{ next: rules.longPairs?.includes(name) ? 2 : rules.long?.includes(name) ? 1 : 0 }];
   }
   const readings: (OptionReading | null)[] = [];
   for (let i = 1; i < option.length; i++) {
@@ -255,20 +545,35 @@ function optionReadings(option: string, rules: PosixWrapper): (OptionReading | n
     const value: OptionReading = i === option.length - 1 ? { next: 1 } : { next: 0 };
     if (rules.noProgram?.includes(letter)) return [...readings, null];
     if (rules.texts?.letters.includes(letter)) return [...readings, { ...value, text: option.slice(i + 1) }];
+    if (rules.programOptions?.letters?.includes(letter)) return [...readings, { ...value, program: option.slice(i + 1) }];
     if (rules.attachedLetters?.includes(letter)) return [...readings, { next: 0 }];
     if (rules.letters?.includes(letter)) return [...readings, value];
     // An option the rules don't list may take a value, and the next letters read on as if it takes none
-    if (!rules.flags?.includes(letter)) readings.push(value);
+    if (!rules.flags?.includes(letter)) readings.push({ ...value, uncertain: true });
   }
   return [...readings, { next: 0 }];
 }
 
 /** The long option a name means: the one it names, or the only one it shortens */
 function longOption(name: string, rules: PosixWrapper): string | undefined {
-  const long = [...rules.long ?? [], ...rules.longFlags ?? [], ...rules.texts?.long ?? []];
+  const long = [
+    ...rules.long ?? [], ...rules.longPairs ?? [], ...rules.longFlags ?? [], ...rules.noProgramLong ?? [],
+    ...rules.texts?.long ?? [], ...rules.programOptions?.long ?? [],
+  ];
   if (long.includes(name)) return name;
+  // firejail and capsh know their long options only in full
+  if (rules.equalsOnly) return undefined;
   const shortened = long.filter((known) => known.startsWith(name));
   return shortened.length === 1 ? shortened[0] : undefined;
+}
+
+/** The command of the program's own that a word names: the one it names, or the one it shortens (tmux new-s) */
+function subcommandOf(word: string | null | undefined, rules: PosixWrapper): PosixWrapper | undefined {
+  if (!word || !rules.subcommands) return undefined;
+  const named = rules.subcommands.get(word);
+  if (named) return named;
+  const shortened = new Set([...rules.subcommands].filter(([name]) => name.startsWith(word)).map(([, subcommand]) => subcommand));
+  return shortened.size === 1 ? [...shortened][0] : undefined;
 }
 
 /** What a backslash escape in env -S's text gives, besides the character after the backslash */
