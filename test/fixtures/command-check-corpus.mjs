@@ -14,6 +14,10 @@
  * `expectPerShell`, when set, gives the answer for one PowerShell program
  * where it differs from `expect`: in Windows PowerShell 5.1 sc is the alias of
  * Set-Content, while PowerShell 7 has no such alias and runs sc.exe.
+ * `needs`, when set, is the PowerShell that a case in another shell starts
+ * with a command text (bash: pwsh -Command 'sudo ls'). The check reads that
+ * text with that PowerShell, so the case is checked only where it is
+ * installed, as the PowerShell cases are.
  *
  * Groups: case = support cases; issue = GitHub issues; table = a PowerShell
  * @{ } table: its keys and text values are data, but a value, or a key in ( ),
@@ -527,17 +531,17 @@ export const CORPUS = [
   { id: 'inline_pwsh_opts', group: 'inline', shell: 'powershell', expect: 'net', command: "pwsh -NoProfile -ExecutionPolicy Bypass -c 'net stop Spooler'", note: 'a switch, a parameter with its value, then -c' },
   { id: 'inline_pwsh_words', group: 'inline', shell: 'powershell', expect: 'net', command: 'pwsh -Command net stop Spooler', note: 'pwsh joins the words after -Command into one command' },
   // PowerShell takes the word after a parameter with a value as that value, also a path that starts with /
-  { id: 'inline_pwsh_wd_path', group: 'inline', shell: 'bash', expect: 'sudo', command: "pwsh -WorkingDirectory /home/me -Command 'sudo ls'", note: '/home/me is the value of -WorkingDirectory, not the script file' },
-  { id: 'inline_pwsh_wd_short', group: 'inline', shell: 'bash', expect: 'sudo', command: "pwsh -wd /home/me -Command 'sudo ls'", note: 'the same with -wd' },
-  { id: 'inline_pwsh_settings_path', group: 'inline', shell: 'bash', expect: 'sudo', command: "pwsh -SettingsFile /x/y.json -Command 'sudo ls'", note: '/x/y.json is the value of -SettingsFile' },
-  { id: 'inline_pwsh_config_path', group: 'inline', shell: 'bash', expect: 'sudo', command: "pwsh -ConfigurationFile /x/y.pssc -Command 'sudo ls'", note: '/x/y.pssc is the value of -ConfigurationFile' },
-  { id: 'inline_pwsh_wd_letters', group: 'inline', shell: 'bash', expect: 'sudo', command: "pwsh -wd /tmp -Command 'sudo ls'", note: '/tmp is written as a parameter is, but no parameter is called tmp' },
-  { id: 'inline_pwsh_wd_drive_c', group: 'inline', shell: 'bash', expect: 'sudo', command: "pwsh -wd /c -Command 'sudo ls'", note: "/c is Git Bash's C: drive, and also -Command's short form: both readings count" },
-  { id: 'inline_pwsh_wd_drive_f', group: 'inline', shell: 'bash', expect: 'sudo', command: "pwsh -wd /f -Command 'sudo ls'", note: "/f is Git Bash's F: drive, and also -File's short form: both readings count" },
-  { id: 'inline_pwsh_wd_path_ok', group: 'inline', shell: 'bash', expect: null, command: "pwsh -wd /home/me -Command 'Get-Date'", note: '/home/me is the value of -wd, so no script file runs' },
+  { id: 'inline_pwsh_wd_path', group: 'inline', shell: 'bash', needs: 'pwsh', expect: 'sudo', command: "pwsh -WorkingDirectory /home/me -Command 'sudo ls'", note: '/home/me is the value of -WorkingDirectory, not the script file' },
+  { id: 'inline_pwsh_wd_short', group: 'inline', shell: 'bash', needs: 'pwsh', expect: 'sudo', command: "pwsh -wd /home/me -Command 'sudo ls'", note: 'the same with -wd' },
+  { id: 'inline_pwsh_settings_path', group: 'inline', shell: 'bash', needs: 'pwsh', expect: 'sudo', command: "pwsh -SettingsFile /x/y.json -Command 'sudo ls'", note: '/x/y.json is the value of -SettingsFile' },
+  { id: 'inline_pwsh_config_path', group: 'inline', shell: 'bash', needs: 'pwsh', expect: 'sudo', command: "pwsh -ConfigurationFile /x/y.pssc -Command 'sudo ls'", note: '/x/y.pssc is the value of -ConfigurationFile' },
+  { id: 'inline_pwsh_wd_letters', group: 'inline', shell: 'bash', needs: 'pwsh', expect: 'sudo', command: "pwsh -wd /tmp -Command 'sudo ls'", note: '/tmp is written as a parameter is, but no parameter is called tmp' },
+  { id: 'inline_pwsh_wd_drive_c', group: 'inline', shell: 'bash', needs: 'pwsh', expect: 'sudo', command: "pwsh -wd /c -Command 'sudo ls'", note: "/c is Git Bash's C: drive, and also -Command's short form: both readings count" },
+  { id: 'inline_pwsh_wd_drive_f', group: 'inline', shell: 'bash', needs: 'pwsh', expect: 'sudo', command: "pwsh -wd /f -Command 'sudo ls'", note: "/f is Git Bash's F: drive, and also -File's short form: both readings count" },
+  { id: 'inline_pwsh_wd_path_ok', group: 'inline', shell: 'bash', needs: 'pwsh', expect: null, command: "pwsh -wd /home/me -Command 'Get-Date'", note: '/home/me is the value of -wd, so no script file runs' },
   { id: 'inline_pwsh_i_file', group: 'inline', shell: 'bash', expect: 'unknowable', command: 'pwsh -i deploy.ps1', note: "pwsh's -i is the switch -Interactive, and deploy.ps1 the script file; Windows PowerShell's -i may be -InputFormat, which takes a value" },
   { id: 'inline_ps_slash_command', group: 'inline', shell: 'powershell', expect: 'net', command: "powershell /Command 'net user'", note: 'a parameter may start with / too' },
-  { id: 'inline_pwsh_value_param_runtime', group: 'inline', shell: 'bash', expect: 'sudo', command: "pwsh $OPT /home/me -Command 'sudo ls'", note: '$OPT may be -wd, and /home/me its value' },
+  { id: 'inline_pwsh_value_param_runtime', group: 'inline', shell: 'bash', needs: 'pwsh', expect: 'sudo', command: "pwsh $OPT /home/me -Command 'sudo ls'", note: '$OPT may be -wd, and /home/me its value' },
   { id: 'inline_pwsh_var', group: 'inline', shell: 'powershell', expect: 'net', command: 'pwsh -Command "net user $name"', note: 'PowerShell fills in $name, and net runs whatever it is' },
   { id: 'inline_cmd_from_ps', group: 'inline', shell: 'powershell', expect: 'net', command: 'cmd /c net stop Spooler', note: 'cmd started from PowerShell' },
   { id: 'inline_cmd_from_ps_quoted', group: 'inline', shell: 'powershell', expect: 'net', command: 'cmd /c "net stop Spooler"', note: 'cmd drops the quotes around the command' },
