@@ -17,6 +17,11 @@
 // the desktop stand-in must have stopped, and the Claude Code stand-in must
 // still run.
 //
+// Before the stand-ins start, the stop step runs with no desktop app running,
+// and the installer must go on after it. install-docker.sh runs with set -e,
+// and pgrep exits 1 when it finds nothing; there a stand-in pgrep finds
+// nothing, so nothing on the machine is looked at or stopped.
+//
 // Run, on Windows, macOS or Linux: node test/docker-installer-restart.test.js
 // Exit code: 1 if a check fails.
 import { spawn } from 'node:child_process';
@@ -75,6 +80,12 @@ const movedEnv = {
   ...Object.fromEntries(Object.entries(process.env).filter(([name]) => !Object.keys(moved).some((key) => key.toLowerCase() === name.toLowerCase()))),
   ...moved,
 };
+
+const nothingRuns = windows
+  ? runInstallerPs1('Write-Output ("STOPPED " + (Stop-ClaudeProcess))', { env: movedEnv })
+  : runInstallerSh(`OS=${platform}; pgrep() { return 1; }; stop_claude_desktop; echo "AFTER THE STOP STEP"`);
+check('with no desktop app running, the installer goes on after the stop step',
+  (windows ? /^STOPPED True$/m : /^AFTER THE STOP STEP$/m).test(nothingRuns.stdout), `exit code ${nothingRuns.status}`);
 
 const desktop = await startStandIn(desktopFile);
 const code = await startStandIn(codeFile);
