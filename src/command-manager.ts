@@ -303,7 +303,8 @@ class CommandManager {
      * CommandCheck's `unseen`):
      * - a program chosen only when the command runs: a name that is a variable
      *   or another command's output (& $tool), or eval and Invoke-Expression
-     *   given a text known only at run time (eval "$CMD");
+     *   given a text known only at run time, in whole or in part (eval "$CMD",
+     *   eval "ls $X": see sameShellTexts);
      * - a script file given to a shell (bash deploy.sh): the commands in it
      *   aren't in the text. A file named only when the command runs ("$SCRIPT")
      *   counts as a program chosen at run time, named by the shell, and so does
@@ -312,8 +313,8 @@ class CommandManager {
      */
     private findUnseen(cmd: FoundCommand, shellType: ShellType): UnseenProgram | undefined {
         if (cmd.nameAtRunTime) return { what: cmd.name, inFile: false };
-        // A text eval or Invoke-Expression is given whole is read; one known only at run time hides its programs
-        if (sameShellTexts(cmd, shellType) === null) return { what: cmd.name, inFile: false };
+        // eval and Invoke-Expression's text is read as written, but a part of it known only at run time may hold any command
+        if (sameShellTexts(cmd, shellType).file === null) return { what: cmd.name, inFile: false };
         return this.scriptFile(cmd, shellType);
     }
 
@@ -401,7 +402,7 @@ class CommandManager {
                 const hidden = this.findUnseen(found, shellType);
                 if (hidden) unseen.push(hidden);
                 const texts = [
-                    ...(sameShellTexts(found, shellType) ?? []).map((text) => ({ text, runs: shell })),
+                    ...sameShellTexts(found, shellType).texts.map((text) => ({ text, runs: shell })),
                     ...shellRuns(found).texts.map((text) => ({ text, runs: found.name })),
                 ];
                 for (const { text, runs } of texts) {
