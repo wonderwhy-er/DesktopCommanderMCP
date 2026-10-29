@@ -261,6 +261,11 @@ export const CORPUS = [
   { id: 'fn_import_module_ps', group: 'ownfunc', shell: 'powershell', expect: 'net', command: "function net { 'x' }; Import-Module ./tools.psm1; net user", note: 'a module runs in this session, and may remove the own net' },
   { id: 'fn_path_no_extension_ps', group: 'ownfunc', shell: 'powershell', expect: 'net', command: "function net { 'x' }; . ./lib; net user", note: '. ./lib runs lib.ps1, which may remove the own net' },
   { id: 'fn_exe_path_ps', group: 'ownfunc', shell: 'powershell', expect: null, command: "function net { 'x' }; & 'C:\\Windows\\System32\\where.exe' git; net user", note: 'a program by its path runs no PowerShell code: the own net stays' },
+  { id: 'fn_alias', group: 'ownfunc', shell: 'bash', expect: 'halt', command: ['halt() { echo stop; }', 'shopt -s expand_aliases', 'alias halt=/sbin/halt', 'halt'].join(nl), note: 'with expand_aliases, an alias comes before the own halt' },
+  { id: 'fn_set_alias_ps', group: 'ownfunc', shell: 'powershell', expect: 'net', command: "function net { 'x' }; Set-Alias net net.exe; net user", note: 'an alias comes before a function: net runs net.exe' },
+  { id: 'fn_new_alias_ps', group: 'ownfunc', shell: 'powershell', expect: 'net', command: "function net { 'x' }; New-Alias net net.exe; net user", note: 'New-Alias made net run net.exe, before the own net' },
+  { id: 'fn_alias_drive_ps', group: 'ownfunc', shell: 'powershell', expect: 'net', command: "function net { 'x' }; New-Item alias:net -Value net.exe; net user", note: 'an alias made on the alias: drive comes before the own net' },
+  { id: 'fn_alias_variable_ps', group: 'ownfunc', shell: 'powershell', expect: 'net', command: "function net { 'x' }; $alias:net = 'net.exe'; net user", note: '$alias:net made net run net.exe, before the own net' },
 
   // ---- The 14k-char case ----
   { id: 'long01', group: 'long', shell: 'powershell', expect: null, command: long01, note: '14k chars; su only as Spanish prose in a here-string' },
