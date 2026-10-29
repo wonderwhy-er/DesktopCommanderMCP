@@ -511,12 +511,15 @@ show_status() {
 # The process IDs of the Claude Desktop app, one per line, and no others: Claude Code
 # also runs as "claude", and its sessions must keep running.
 # macOS: processes named exactly "Claude", the app's own (Claude Code's are "claude").
-# Linux has no official Claude Desktop; community builds run from a claude-desktop
-# folder or command.
+# Linux: Claude Desktop's Linux package, and the community builds made from it, run a
+# program named claude-desktop; older community builds run electron with the app.asar in
+# their claude-desktop folder. Only the program being run counts, so an editor with a file
+# open in a claude-desktop folder is left alone.
 find_claude_desktop_pids() {
     case "$OS" in
         macos) pgrep -x "Claude" ;;
-        linux) pgrep -f '(^|/)claude-desktop(/| |$)' ;;
+        linux) ps -eo pid=,args= | awk '{ program = $2; sub(/.*\//, "", program) }
+            program == "claude-desktop" || (program ~ /electron/ && ($0 " ") ~ / [^ ]*\/claude-desktop\/([^ ]*\/)?app\.asar /) { print $1 }' ;;
     esac
 }
 
