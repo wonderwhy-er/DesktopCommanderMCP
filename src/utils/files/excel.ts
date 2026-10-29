@@ -525,7 +525,8 @@ ${JSON.stringify(data)}`;
 
     private parseRange(range: string): [string, string | null] {
         if (range.includes('!')) {
-            const idx = range.indexOf('!');
+            // The final ! separates cells from a sheet name that may itself contain !.
+            const idx = range.lastIndexOf('!');
             let sheetName = range.slice(0, idx);
             const cellRange = range.slice(idx + 1);
             // Strip Excel-native single quotes around sheet names with spaces:
