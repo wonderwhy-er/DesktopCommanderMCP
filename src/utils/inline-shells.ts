@@ -82,14 +82,15 @@ function textProgramRuns(found: FoundCommand, program: string): ShellRun {
  * each once also when more than one reading finds it, and one known only at
  * run time as written; and for a shell (`script`), its script file. A part
  * known only at run time, in a text or the word after the options, may hold
- * any command, and so may a script file the readings don't agree on: the
+ * any command, and so may a script file the readings don't agree on, and
+ * texts that aren't among its words at all (parallel :::: jobs.txt): the
  * command is noted then (file null).
  */
-function readingsRun({ operands, texts }: OptionReadings, { words, wordTexts }: FoundCommand, script: boolean): ShellRun {
+function readingsRun({ operands, texts, hidden }: OptionReadings, { words, wordTexts }: FoundCommand, script: boolean): ShellRun {
   const textOf = ({ text, at, to }: OptionReadings['texts'][number]): string =>
     (at === undefined ? text ?? '' : to !== undefined ? wordTexts.slice(at, to).join(' ') : wordTexts[at]);
   const after = [...new Set(operands.filter((at) => at < words.length).map((at) => words[at]))];
-  const atRunTime = texts.some(({ text, at }) => at !== undefined && text === null) || after.includes(null)
+  const atRunTime = hidden || texts.some(({ text, at }) => at !== undefined && text === null) || after.includes(null)
     || (script && after.length > 1);
   const file = script && after.length === 1 ? { file: after[0] } : {};
   return { texts: [...new Set(texts.map(textOf))], ...(atRunTime ? { file: null } : file) };

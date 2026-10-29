@@ -126,6 +126,14 @@ interface PosixWrapper {
    * them: parallel ::: 'sudo ls' 'echo hi' runs both
    */
   commandArguments?: string[];
+  /**
+   * The words after which each word is a file of command texts, when the program is given no text before them
+   * (parallel :::: jobs.txt); and with none of the words in textEnds, its command texts come from its input. The
+   * check can't see those, so the command is noted
+   */
+  commandFiles?: string[];
+  /** The word that ends one of the program's own commands, and the next one starts after it: tmux's ; */
+  separator?: string;
   /** Whether the options are switches that start with / and keep a value after a colon (runas /user:admin) */
   slash?: boolean;
 }
@@ -152,7 +160,7 @@ const TMUX_COMMANDS = new Map<string, PosixWrapper>([
 const TMUX_POPUP: PosixWrapper = { letters: 'bcdehsStTwxy', flags: 'BCEkN' };
 const TMUX_TEXT_COMMANDS = new Map<string, PosixWrapper>(
   ([...TMUX_COMMANDS, ['display-popup', TMUX_POPUP], ['popup', TMUX_POPUP]] as [string, PosixWrapper][])
-    .map(([name, rules]) => [name, { ...rules, textOperands: 0 }]),
+    .map(([name, rules]) => [name, { ...rules, textOperands: 0, textEnds: [';'] }]),
 );
 
 /**
@@ -478,9 +486,10 @@ const TEXT_PROGRAMS = new Map<string, { rules: PosixWrapper; shell: string }>([
   } }],
   ['runas', { shell: 'cmd', rules: { slash: true, textOperands: 0 } }],
   ['wsl', { shell: 'sh', rules: { ...PROGRAMS.get('wsl'), textOperands: 0, operandRoles: { e: 'arguments', exec: 'arguments' } } }],
-  ['tmux', { shell: 'sh', rules: { ...PROGRAMS.get('tmux'), texts: { letters: 'c', long: [] }, subcommands: TMUX_TEXT_COMMANDS } }],
+  ['tmux', { shell: 'sh', rules: { ...PROGRAMS.get('tmux'), texts: { letters: 'c', long: [] }, subcommands: TMUX_TEXT_COMMANDS, separator: ';' } }],
   ['parallel', { shell: 'sh', rules: {
     ...PROGRAMS.get('parallel'), textOperands: 0, textEnds: [':::', ':::+', '::::', '::::+'], commandArguments: [':::', ':::+'],
+    commandFiles: ['::::', '::::+'],
   } }],
 ]);
 
@@ -607,6 +616,8 @@ export interface OptionReadings {
   texts: { text: string | null; at?: number; to?: number; after: number }[];
   /** Each program an option names (start-stop-daemon --exec), null when known only at run time; `at` is its word, unless it is in the option's own */
   programs: { program: string | null; at?: number }[];
+  /** Whether it also runs command texts that aren't among its words, as parallel's from a :::: file (see commandFiles) */
+  hidden: boolean;
 }
 
 /** How a POSIX shell, by its name in POSIX_SHELLS, reads its own options (see BASH_OPTIONS) */
@@ -623,11 +634,16 @@ export function textProgramReadings(program: string, words: (string | null)[]): 
   const found = TEXT_PROGRAMS.get(program);
   if (!found) return undefined;
   const readings = readOptions(words, found.rules);
-  // A command of the program's own reads its words by its own rules (tmux new 'sudo ls')
-  for (const at of readings.operands) {
+  // A command of the program's own reads its words by its own rules (tmux new 'sudo ls'), and so does each one
+  // after a separator (tmux new -d \; new-window 'sudo ls')
+  const first = Math.min(words.length, ...readings.operands);
+  const separated = words.flatMap((word, j) => (j > first && word !== null && word === found.rules.separator ? [j + 1] : []));
+  for (const at of new Set([...readings.operands, ...separated])) {
     const subcommand = subcommandOf(words[at], found.rules);
     if (!subcommand) continue;
-    readings.texts.push(...readOptions(words.slice(at), subcommand).texts.map((text) => ({
+    const own = readOptions(words.slice(at), subcommand);
+    readings.hidden ||= own.hidden;
+    readings.texts.push(...own.texts.map((text) => ({
       ...text, after: text.after + at, ...(text.at === undefined ? {} : { at: text.at + at }), ...(text.to === undefined ? {} : { to: text.to + at }),
     })));
   }
@@ -649,7 +665,7 @@ export function sameShellProgramReadings(program: string, words: (string | null)
  * the words after its options are (bash -c makes the first one the text).
  */
 function readOptions(words: (string | null)[], rules: PosixWrapper): OptionReadings {
-  const readings: OptionReadings = { operands: [], texts: [], programs: [] };
+  const readings: OptionReadings = { operands: [], texts: [], programs: [], hidden: false };
   const read = new Set<string>();
   const isOption = (word: string | null | undefined): word is string =>
     typeof word === 'string' && (word.startsWith('-') || (rules.plus === true && word.length > 1 && word.startsWith('+'))
@@ -674,11 +690,16 @@ function readOptions(words: (string | null)[], rules: PosixWrapper): OptionReadi
         readings.texts.push({ text: text.includes(null) ? null : text.join(' '), at: i, to, after: to });
         return false;
       }
-      // With no text before them, each argument after parallel's ::: is a command of its own
+      // With no text before them, each argument after parallel's ::: is a command of its own, and those in a ::::
+      // file or in its input, when it is given no arguments, can't be seen
       words.forEach((word, j) => {
         if (j < i || word === null || !rules.commandArguments?.includes(word)) return;
         for (let k = j + 1; k < end(j + 1); k++) readings.texts.push({ text: words[k], at: k, after: k + 1 });
       });
+      const after = words.slice(i).filter((word): word is string => word !== null);
+      if (rules.commandFiles && (after.some((word) => rules.commandFiles?.includes(word)) || !after.some((word) => rules.textEnds?.includes(word)))) {
+        readings.hidden = true;
+      }
       return false;
     }
     readings.operands.push(i);
@@ -693,7 +714,16 @@ function readOptions(words: (string | null)[], rules: PosixWrapper): OptionReadi
       // An option with or without a value, or the first word after them
       if (operand(i, role, count)) readFrom(i + 1, role, count + 1);
       readFrom(i + 1, role, count);
-      if (!isOption(words[i + 1])) readFrom(i + 2, role, count);
+      const next = words[i + 1];
+      if (isOption(next)) return;
+      readFrom(i + 2, role, count);
+      // Or an option that gives the command text: its value (fish $X 'sudo ls', su $OPTS 'sudo ls'), or the first
+      // word after the options (bash $X 'sudo ls')
+      if (next !== undefined && rules.texts) {
+        readings.texts.push({ text: next, at: i + 1, after: i + 2 });
+        if (rules.optionsAfterTexts) readFrom(i + 2, role, count);
+      }
+      if (Object.values(rules.operandRoles ?? {}).includes('text')) readFrom(i + 1, 'text', count);
       return;
     }
     if (!isOption(word)) {
