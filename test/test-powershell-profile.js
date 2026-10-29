@@ -10,6 +10,8 @@
  *   - lines the profile prints in the shape of answers aren't taken as answers
  *   - the profile's functions and aliases with the names of the cmdlets the
  *     helper calls don't replace them
+ *   - the profile's aliases with the names of the helper's own functions don't
+ *     replace those
  *
  * Each case writes a profile into this test home, where each PowerShell looks
  * for it ($PROFILE.CurrentUserCurrentHost: Windows PowerShell finds it only
@@ -44,6 +46,15 @@ const CMDLET_CHECKS = [
   ['net user', BLOCKED_NET],
   ["function net { 'x' }; net user", BLOCKED_NET],
   ["function shutdown { 'x' }; shutdown /a", ALLOWED],
+];
+
+// What a profile alias with the name of one of the helper's own functions runs instead: a program name
+// nothing blocks, the word without its drive name (net for function:net), and "no". Each one lets the
+// case's command through.
+const OWN_FUNCTION_STAND_INS = [
+  "function Get-HarmlessName { 'Get-Date' }",
+  "function Get-WordWithoutDrive { $args[0].Extent.Text -replace '^\\w+:', '' }",
+  'function Test-Never { $false }',
 ];
 
 // A case with `windows: true` runs on Windows only, one with `windows: false` everywhere else. An alias to
@@ -88,6 +99,26 @@ const CASES = [
     windows: false,
     profile: ['Set-Alias net /usr/bin/net', ...CMDLET_STAND_INS].join('\n'),
     checks: CMDLET_CHECKS,
+  },
+  {
+    what: "a profile alias with the name of the helper's Get-Meaning",
+    profile: [...OWN_FUNCTION_STAND_INS, 'Set-Alias Get-Meaning Get-HarmlessName'].join('\n'),
+    checks: [['net user', BLOCKED_NET]],
+  },
+  {
+    what: "a profile alias with the name of the helper's Get-WordValue",
+    profile: [...OWN_FUNCTION_STAND_INS, 'Set-Alias Get-WordValue Get-WordWithoutDrive'].join('\n'),
+    checks: [["function net { 'x' }; Remove-Item function:net; net user", BLOCKED_NET]],
+  },
+  {
+    what: "a profile alias with the name of the helper's Test-RemovesFunction",
+    profile: [...OWN_FUNCTION_STAND_INS, 'Set-Alias Test-RemovesFunction Test-Never'].join('\n'),
+    checks: [["function net { 'x' }; Remove-Item function:net; net user", BLOCKED_NET]],
+  },
+  {
+    what: "a profile alias with the name of the helper's Test-RunsUnreadCode",
+    profile: [...OWN_FUNCTION_STAND_INS, 'Set-Alias Test-RunsUnreadCode Test-Never'].join('\n'),
+    checks: [["function net { 'x' }; Invoke-Expression $text; net user", BLOCKED_NET]],
   },
 ];
 
