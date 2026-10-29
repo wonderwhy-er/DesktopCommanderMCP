@@ -18,6 +18,8 @@ import { isTestHome, withEnv } from './helpers/test-env.js';
 const isWindows = process.platform === 'win32';
 // Off Windows the rows below expect Linux's reading. A run started in WSL has WSL_DISTRO_NAME, so they clear it (the runner leaves it out itself)
 const outsideWsl = { WSL_DISTRO_NAME: undefined };
+// Windows' default PATHEXT, so the .com rows don't depend on this machine's (one without .COM keeps format.com)
+const defaultPathExt = '.COM;.EXE;.BAT;.CMD;.VBS;.VBE;.JS;.JSE;.WSF;.WSH;.MSC';
 
 /** Each row: a name, and the form programName() gives */
 function expectNames(rows) {
@@ -47,7 +49,7 @@ async function theNameIsLowercased() {
 }
 
 async function anExtensionIsDropped() {
-  await withEnv(outsideWsl, () => expectNames([
+  await withEnv({ ...outsideWsl, PATHEXT: defaultPathExt }, () => expectNames([
     ['sc.exe', isWindows ? 'sc' : 'sc.exe'],
     ['format.com', isWindows ? 'format' : 'format.com'],
     // Only one extension, and only one from PATHEXT
@@ -68,7 +70,7 @@ async function anExtensionIsDropped() {
  * for what it starts; the other checks run without it.
  */
 async function inWslANameIsReadAsOnWindows() {
-  await withEnv({ WSL_DISTRO_NAME: 'Ubuntu' }, () => expectNames([
+  await withEnv({ WSL_DISTRO_NAME: 'Ubuntu', PATHEXT: defaultPathExt }, () => expectNames([
     ['sc.exe', 'sc'],
     ['/mnt/c/Windows/System32/SC.EXE', 'sc'],
     ['format.com', 'format'],
