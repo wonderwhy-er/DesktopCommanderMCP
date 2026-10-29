@@ -8,7 +8,8 @@ import type { CommandReading, FoundCommand } from './command-reading.js';
  * run, also on later lines and inside $( ), backticks, <( ), { } groups,
  * subshells, functions and if, while, for and case bodies. Words inside
  * quotes and heredoc bodies are text. A command name with a {a,b} brace
- * expansion is the first word it expands to, so {sudo,ls} is sudo. zsh and
+ * expansion is the first word it expands to, so {sudo,ls} is sudo, and so is
+ * {$X,sudo} when $X is empty. zsh and
  * the other shells are read as bash, which covers the commands they have in
  * common.
  *
@@ -23,6 +24,22 @@ const STATIC_PARTS = new Set(['Literal', 'SingleQuoted', 'AnsiCQuoted', 'Glob'])
 
 /** Word parts that bash drops when they are empty and unquoted ($X, ${X}, $(cmd)) */
 const VANISHING_PARTS = new Set(['SimpleExpansion', 'ParameterExpansion', 'CommandExpansion']);
+
+/**
+ * Stand-ins for a piece known only at run time in a brace word's characters,
+ * so that braceWords keeps the words next to it ({$X,sudo} makes $X and sudo):
+ * one for a piece in VANISHING_PARTS, one for any other ("$X"). They start
+ * with a NUL, which no command text holds: Node starts no command that has one.
+ */
+const DROPPED_IF_EMPTY = '\0$';
+const KEPT_IF_EMPTY = '\0"';
+
+/**
+ * A word that brace expansion made and bash may drop: only pieces it drops
+ * when they are empty, and letters, digits or _ after one, which bash may read
+ * into a $X's name ({$X,s}udo makes $Xudo)
+ */
+const MAY_VANISH = /^(?:\0\$\w*)+$/;
 
 /**
  * A word's value as bash reads it (quotes and escapes removed, $'…' decoded),
@@ -44,36 +61,48 @@ function partValue(part: WordPart): string | null {
 }
 
 /**
- * A word's characters for brace expansion, or null when part of it is known
- * only at run time ({$X,ls}). Only the braces unbash reads as an expansion are
- * syntax. The rest of the word is text, and so are the quoted pieces inside
- * the braces: {"a,b",c} gives a,b and c.
+ * A word's characters for brace expansion. Only the braces unbash reads as an
+ * expansion are syntax. The rest of the word is text, and so are the quoted
+ * pieces inside the braces: {"a,b",c} gives a,b and c.
  */
-function braceChars(word: Word): WordChar[] | null {
+function braceChars(word: Word): WordChar[] {
   const chars: WordChar[] = [];
   for (const part of word.parts ?? []) {
     if (part.type !== 'BraceExpansion') {
-      const value = partValue(part);
-      if (value === null) return null;
-      chars.push(...quotedChars(value));
+      chars.push(...partChars(part));
       continue;
     }
     // The braces' text as written, except the quoted or expanded pieces inside, which are parts of their own
     let at = part.pos;
     for (const inner of part.parts ?? []) {
       chars.push(...unquotedChars(part.text.slice(at - part.pos, inner.pos - part.pos)));
-      if (inner.type === 'Literal') {
-        chars.push(...unquotedChars(inner.text));
-      } else {
-        const value = partValue(inner);
-        if (value === null) return null;
-        chars.push(...quotedChars(value));
-      }
+      chars.push(...(inner.type === 'Literal' ? unquotedChars(inner.text) : partChars(inner)));
       at = inner.end;
     }
     chars.push(...unquotedChars(part.text.slice(at - part.pos)));
   }
   return chars;
+}
+
+/** A part's characters, all text: its value, or a stand-in when it is known only at run time */
+function partChars(part: WordPart): WordChar[] {
+  const value = partValue(part);
+  if (value !== null) return quotedChars(value);
+  return quotedChars(VANISHING_PARTS.has(part.type) ? DROPPED_IF_EMPTY : KEPT_IF_EMPTY);
+}
+
+/**
+ * The words bash makes from a word, each with its value (null when it is known
+ * only at run time) and whether bash may drop it, or null past MAX_BRACE_WORDS.
+ * A brace expansion makes several and bash drops the empty ones: {,sudo} ls
+ * runs sudo, {,} sudo runs sudo, and {$X,sudo} id runs sudo when $X is empty.
+ */
+function wordsMade(word: Word): { value: string | null; mayVanish: boolean }[] | null {
+  if (!word.parts?.some((part) => part.type === 'BraceExpansion')) {
+    return [{ value: wordValue(word), mayVanish: mayVanish(word) }];
+  }
+  const made = braceWords(braceChars(word));
+  return made && made.map((text) => ({ value: text.includes('\0') ? null : text, mayVanish: MAY_VANISH.test(text) }));
 }
 
 /** Whether bash may drop the word entirely, so that the next word is the command's name */
@@ -97,22 +126,25 @@ export async function readPosixCommands(command: string): Promise<CommandReading
       const values = words.map(wordValue);
       // The name, and the next word too while the words before it may vanish ($EMPTY sudo ls runs sudo)
       for (let i = 0; i < words.length; i++) {
-        const braced = words[i].parts?.some((part) => part.type === 'BraceExpansion') ? braceChars(words[i]) : null;
-        // bash expands the name's braces before it runs it and drops the empty words: {,sudo} ls runs sudo, {,} sudo runs sudo
-        const expanded: (string | null)[] | null = braced ? braceWords(braced) : [values[i]];
-        if (expanded === null) {
+        const made = wordsMade(words[i]);
+        if (made === null) {
           parseError ??= `brace expansion makes more than ${MAX_BRACE_WORDS} words`;
           break;
         }
-        if (expanded.length === 0) continue;
-        const nameAtRunTime = expanded[0] === null;
-        commands.push({
-          name: nameAtRunTime ? words[i].text : expanded[0] as string,
-          words: [...expanded, ...values.slice(i + 1)],
-          start: backticksStart ?? (i === 0 ? node.pos : words[i].pos),
-          nameAtRunTime,
+        // Each word made is the name while the ones before it may vanish; those known only at run time all
+        // give the word's text as the name, so it is given once
+        const kept = made.findIndex((word) => !word.mayVanish);
+        const names = kept < 0 ? made : made.slice(0, kept + 1);
+        names.forEach((name, k) => {
+          if (name.value === null && names.findIndex((other) => other.value === null) < k) return;
+          commands.push({
+            name: name.value ?? words[i].text,
+            words: [...made.slice(k).map((word) => word.value), ...values.slice(i + 1)],
+            start: backticksStart ?? (i === 0 ? node.pos : words[i].pos),
+            nameAtRunTime: name.value === null,
+          });
         });
-        if (!mayVanish(words[i])) break;
+        if (kept >= 0) break;
       }
     }
     const inBackticks = node.type === 'CommandExpansion' && node.text.startsWith('`');
