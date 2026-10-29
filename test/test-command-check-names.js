@@ -61,6 +61,20 @@ async function anExtensionIsDropped() {
 }
 
 /**
+ * WSL runs Windows programs from Linux by their full name (sc.exe stop
+ * Spooler), so there a name is read as on Windows. WSL sets WSL_DISTRO_NAME
+ * for what it starts; the runner leaves it out, so only this check has it.
+ */
+async function inWslANameIsReadAsOnWindows() {
+  await withEnv({ WSL_DISTRO_NAME: 'Ubuntu' }, () => expectNames([
+    ['sc.exe', 'sc'],
+    ['/mnt/c/Windows/System32/SC.EXE', 'sc'],
+    ['format.com', 'format'],
+    ['deploy.ps1', 'deploy'],
+  ]));
+}
+
+/**
  * An entry written with capitals, a path or .exe blocks its program, and the
  * answer names the entry as written. The PowerShell reader gives sc.exe as sc,
  * so an entry sc.exe matches only in this form.
@@ -88,7 +102,7 @@ async function anEntryIsComparedInTheSameForm() {
 
 export default async function runTests() {
   const failures = [];
-  for (const check of [thePathIsRemoved, theNameIsLowercased, anExtensionIsDropped, anEntryIsComparedInTheSameForm]) {
+  for (const check of [thePathIsRemoved, theNameIsLowercased, anExtensionIsDropped, inWslANameIsReadAsOnWindows, anEntryIsComparedInTheSameForm]) {
     try {
       console.log(`${await check() === SKIPPED ? '- skipped:' : '✓'} ${check.name}`);
     } catch (error) {
