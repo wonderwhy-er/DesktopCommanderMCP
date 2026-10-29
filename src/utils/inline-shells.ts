@@ -10,7 +10,8 @@ import type { FoundCommand } from './command-reading.js';
  * checkCommand() checks the text like any command, read for the shell that
  * runs it. A script file's commands aren't in the text, so the check notes it.
  * eval and Invoke-Expression run a command text too, in the same shell
- * (eval 'sudo ls', Invoke-Expression 'net user'): see sameShellTexts().
+ * (eval 'sudo ls', Invoke-Expression 'net user'), and their texts follow the
+ * same rules: see sameShellTexts().
  *
  * The rules are which option gives the command text or the file, and which
  * options take a value. They work on the words a reader found, so they read
@@ -22,9 +23,9 @@ import type { FoundCommand } from './command-reading.js';
  * only at run time does.
  */
 
-/** What a shell runs */
+/** What a shell runs, or eval or Invoke-Expression in the shell they are in */
 export interface ShellRun {
-  /** The command texts it is given, each to be read by the shell the command names */
+  /** The command texts it is given, each to be read by the shell that runs it */
   texts: string[];
   /**
    * The script file it is given, undefined when it is given none; null when the file, or a part of a command
@@ -189,28 +190,35 @@ function cmdRuns({ words, wordTexts }: FoundCommand): ShellRun {
 }
 
 /**
- * The command texts eval (in a POSIX shell) or Invoke-Expression (in
- * PowerShell, also written iex) runs in the shell it is in. eval joins its
+ * What eval (in a POSIX shell) or Invoke-Expression (in PowerShell, also
+ * written iex) runs in the shell it is in: its command texts. eval joins its
  * words with spaces. Invoke-Expression runs one text, its Command; PowerShell
  * binds one of the words that aren't parameter names to it, and the others
  * may be values of other parameters (iex -ea 0 'net user'), so each of them
- * is a text. Null when a text is known only at run time, in whole or in part
- * (eval "$CMD", eval "ls $X"), or comes from the pipeline ('net user' | iex),
- * so the check can't read it; none for any other command.
+ * is a text. A text with a part known only at run time is read as written,
+ * as the text of bash -c is, so the programs written in it are checked
+ * (eval "cd $HOME && sudo ls"). That part may hold any command, so file is
+ * null then, and the command is noted; so is a text that comes from the
+ * pipeline ('net user' | iex). No texts for any other command.
  */
-export function sameShellTexts({ name, words }: FoundCommand, shellType: ShellType): string[] | null {
+export function sameShellTexts({ name, words, wordTexts }: FoundCommand, shellType: ShellType): ShellRun {
   const program = programName(name);
   if (shellType === 'posix' && program === 'eval') {
-    const args = words[1] === '--' ? words.slice(2) : words.slice(1);
-    if (args.includes(null)) return null;
-    return args.length > 0 ? [args.join(' ')] : [];
+    const from = words[1] === '--' ? 2 : 1;
+    return {
+      texts: from < words.length ? [wordTexts.slice(from).join(' ')] : [],
+      ...(words.slice(from).includes(null) ? { file: null } : {}),
+    };
   }
   if (shellType === 'powershell' && program === 'invoke-expression') {
-    const texts = words.slice(1).filter((word) => word === null || !word.startsWith('-'));
-    if (texts.length === 0 || texts.includes(null)) return null;
-    return texts as string[];
+    // Where the words that aren't parameter names are; with none, the text comes from the pipeline
+    const at = words.flatMap((word, i) => (i > 0 && (word === null || !word.startsWith('-')) ? [i] : []));
+    return {
+      texts: at.map((i) => wordTexts[i]),
+      ...(at.length === 0 || at.some((i) => words[i] === null) ? { file: null } : {}),
+    };
   }
-  return [];
+  return { texts: [] };
 }
 
 /**
