@@ -306,7 +306,9 @@ class CommandManager {
      *   given a text known only at run time (eval "$CMD");
      * - a script file given to a shell (bash deploy.sh): the commands in it
      *   aren't in the text. A file named only when the command runs ("$SCRIPT")
-     *   counts as a program chosen at run time, named by the shell.
+     *   counts as a program chosen at run time, named by the shell, and so does
+     *   a command text given to a shell with a part known only at run time
+     *   (bash -c "ls $X", pwsh -Command $cmd: see shellRuns).
      */
     private findUnseen(cmd: FoundCommand, shellType: ShellType): UnseenProgram | undefined {
         if (cmd.nameAtRunTime) return { what: cmd.name, inFile: false };
@@ -319,7 +321,8 @@ class CommandManager {
      * What hides the program when a command gives a shell a script file to run
      * (bash deploy.sh, pwsh -File deploy.ps1, source deploy.sh), or when
      * PowerShell runs one named as the command (./deploy.ps1): the file, or the
-     * shell when the file is named only when the command runs ("$SCRIPT").
+     * shell when the file, or a part of the command text it is given, is known
+     * only when the command runs ("$SCRIPT", bash -c "ls $X").
      * Undefined when the command runs no script file: a shell given its
      * commands as text (bash -c '…') or reading its input. A shell's own
      * arguments are read by shellRuns().

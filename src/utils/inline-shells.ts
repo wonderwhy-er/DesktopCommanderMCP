@@ -16,13 +16,20 @@ import type { FoundCommand } from './command-reading.js';
  * options take a value. They work on the words a reader found, so they read
  * no shell grammar of their own. A word known only at run time is used as its
  * text ("cd $HOME && sudo ls"), so the programs written in it are still seen.
+ * The shell that starts the shell fills that word in before the started shell
+ * reads it, so it may hold any command (pwsh -Command $cmd, bash -c "ls $X"):
+ * such a command text notes the shell too (file null), as a script file named
+ * only at run time does.
  */
 
 /** What a shell runs */
 export interface ShellRun {
   /** The command texts it is given, each to be read by the shell the command names */
   texts: string[];
-  /** The script file it is given; null when that is known only at run time, undefined when it is given none */
+  /**
+   * The script file it is given, undefined when it is given none; null when the file, or a part of a command
+   * text it is given, is known only at run time
+   */
   file?: string | null;
 }
 
@@ -53,6 +60,11 @@ function posixShellRuns({ words, wordTexts }: FoundCommand): ShellRun {
   // A word known only at run time before the first one that isn't an option may be the script file or an
   // option: both readings count, so the shell is noted (file null) and the words after it are read on
   let atRunTime = false;
+  // The command text in the word at `at`: one known only at run time, in whole or in part, notes the shell too
+  const textAt = (at: number): ShellRun => ({
+    texts: at < words.length ? [wordTexts[at]] : [],
+    ...(atRunTime || words[at] === null ? { file: null } : {}),
+  });
   let first = words.length;
   for (let i = 1; i < words.length; i++) {
     const word = words[i];
@@ -68,7 +80,7 @@ function posixShellRuns({ words, wordTexts }: FoundCommand): ShellRun {
       first = i + 1;
       break;
     }
-    if (word === '--command') return { texts: i + 1 < words.length ? [wordTexts[i + 1]] : [] };
+    if (word === '--command') return textAt(i + 1);
     if (POSIX_SHELL_VALUE_OPTIONS.has(word)) {
       i++;
       continue;
@@ -81,9 +93,8 @@ function posixShellRuns({ words, wordTexts }: FoundCommand): ShellRun {
     first = i;
     break;
   }
-  const noted = atRunTime ? { file: null } : {};
-  if (runsText) return { texts: first < words.length ? [wordTexts[first]] : [], ...noted };
-  if (readsInput || atRunTime || first >= words.length) return { texts: [], ...noted };
+  if (runsText) return textAt(first);
+  if (readsInput || atRunTime || first >= words.length) return { texts: [], ...(atRunTime ? { file: null } : {}) };
   return { texts: [], file: words[first] };
 }
 
@@ -96,30 +107,39 @@ function posixShellRuns({ words, wordTexts }: FoundCommand): ShellRun {
  * Parameters start with -, -- or /.
  */
 function powerShellRuns({ words, wordTexts }: FoundCommand, program: string): ShellRun {
+  // A word known only at run time may be a parameter, the command or the script file, so the shell is noted (file null)
+  let atRunTime = false;
+  // The command texts made of the words `parts`: a part known only at run time notes the shell too
+  const textOf = (texts: string[], parts: (string | null | undefined)[]): ShellRun =>
+    (atRunTime || parts.includes(null) ? { texts, file: null } : { texts });
   for (let i = 1; i < words.length; i++) {
     const word = words[i];
-    if (word === null) continue;
+    if (word === null) {
+      atRunTime = true;
+      continue;
+    }
     const parameter = /^(?:--?|\/)([a-z]+)$/i.exec(word)?.[1].toLowerCase();
     if (parameter === undefined) {
       if (program === 'pwsh' || /\.ps1$/i.test(word)) return { texts: [], file: word };
-      return { texts: [wordTexts.slice(i).join(' ')] };
+      return textOf([wordTexts.slice(i).join(' ')], words.slice(i));
     }
     if (parameter === 'ec' || 'encodedcommand'.startsWith(parameter)) {
       const encoded = words[i + 1];
-      return { texts: encoded ? [Buffer.from(encoded, 'base64').toString('utf16le')] : [] };
+      return textOf(encoded ? [Buffer.from(encoded, 'base64').toString('utf16le')] : [], [encoded]);
     }
     if ('command'.startsWith(parameter)) {
       // -Command - reads the command from standard input
       const text = words[i + 1] === '-' ? '' : wordTexts.slice(i + 1).join(' ');
-      return { texts: text ? [text] : [] };
+      return textOf(text ? [text] : [], words.slice(i + 1));
     }
     // -CommandWithArgs: the next word is the command, and the words after it are its $args
-    if (parameter === 'cwa' || parameter === 'commandwithargs') return { texts: i + 1 < words.length ? [wordTexts[i + 1]] : [] };
+    if (parameter === 'cwa' || parameter === 'commandwithargs') return textOf(i + 1 < words.length ? [wordTexts[i + 1]] : [], [words[i + 1]]);
     if ('file'.startsWith(parameter)) return { texts: [], file: words[i + 1] };
-    // A parameter's value, unless the next word is a parameter (pwsh's -i is a switch, Windows PowerShell's -i takes a value)
-    if (POWERSHELL_VALUE_PARAMETERS.some((name) => name.startsWith(parameter)) && !/^[-/]/.test(words[i + 1] ?? '-')) i++;
+    // A parameter's value, also one known only at run time, unless the next word is a parameter (pwsh's -i is a
+    // switch, Windows PowerShell's -i takes a value)
+    if (POWERSHELL_VALUE_PARAMETERS.some((name) => name.startsWith(parameter)) && i + 1 < words.length && !/^[-/]/.test(words[i + 1] ?? '')) i++;
   }
-  return { texts: [] };
+  return textOf([], []);
 }
 
 /**
@@ -145,7 +165,9 @@ function cmdQuoteReadings(line: string, alwaysDropsQuotes: boolean): string[] {
  * where a word with whitespace in it is in quotes, as PowerShell and Git Bash
  * pass it.
  */
-function cmdRuns({ wordTexts }: FoundCommand): ShellRun {
+function cmdRuns({ words, wordTexts }: FoundCommand): ShellRun {
+  // Each word is a switch or a part of the command, so one known only at run time may hold any command (cmd $opts)
+  const noted = words.slice(1).includes(null) ? { file: null } : {};
   let alwaysDropsQuotes = false;
   for (let i = 1; i < wordTexts.length; i++) {
     const word = wordTexts[i];
@@ -157,9 +179,9 @@ function cmdRuns({ wordTexts }: FoundCommand): ShellRun {
     const lineWords = run[2] ? [run[2], ...wordTexts.slice(i + 1)] : wordTexts.slice(i + 1);
     if (lineWords.length === 0) break;
     const line = lineWords.map((lineWord) => (lineWord === '' || /\s/.test(lineWord) ? `"${lineWord}"` : lineWord)).join(' ');
-    return { texts: cmdQuoteReadings(line, alwaysDropsQuotes) };
+    return { texts: cmdQuoteReadings(line, alwaysDropsQuotes), ...noted };
   }
-  return { texts: [] };
+  return { texts: [], ...noted };
 }
 
 /**
