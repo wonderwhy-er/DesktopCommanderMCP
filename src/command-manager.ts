@@ -331,7 +331,8 @@ class CommandManager {
 
     /**
      * What hides the program when a command gives a shell a script file to run
-     * (bash deploy.sh, pwsh -File deploy.ps1, source deploy.sh): the file, or the
+     * (bash deploy.sh, pwsh -File deploy.ps1, source deploy.sh), or when
+     * PowerShell runs one named as the command (./deploy.ps1): the file, or the
      * shell when the file is named only when the command runs ("$SCRIPT").
      * Undefined when the command runs no script file: a shell given its
      * commands as text (bash -c '…') or reading its input.
@@ -345,6 +346,10 @@ class CommandManager {
         };
         if (shellType === 'posix' && (program === 'source' || program === '.')) {
             return hidden(args[0]);
+        }
+        // PowerShell runs a .ps1 named as the command (./deploy.ps1, & ./deploy.ps1) as a script file
+        if (shellType === 'powershell' && /\.ps1$/i.test(cmd.name)) {
+            return hidden(cmd.name);
         }
         if (POSIX_SHELLS.has(program)) {
             for (let i = 0; i < args.length; i++) {
