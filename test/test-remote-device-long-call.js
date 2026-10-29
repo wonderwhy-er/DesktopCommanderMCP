@@ -17,12 +17,15 @@ import { runIfMain } from './helpers/run-if-main.js';
 
 /** How long the slow file takes to arrive: past the MCP SDK's default 60 seconds */
 const SLOW_READ_MS = 65_000;
+/** The test's own limit for that call: the device waits up to 30 minutes, which would hold up the whole run */
+const CALL_DEADLINE_MS = SLOW_READ_MS + 15_000;
 const TEXT = 'the slow file has arrived';
 
 export default async function runTests() {
   // The headers go at once and the text after SLOW_READ_MS, because read_file's
   // own 30-second limit for a URL covers only the wait for the headers
   let textTimer;
+  let deadlineTimer;
   const server = http.createServer((request, response) => {
     response.writeHead(200, { 'Content-Type': 'text/plain' });
     response.flushHeaders();
@@ -33,10 +36,14 @@ export default async function runTests() {
   try {
     await integration.initialize();
     const started = Date.now();
-    const answer = await integration.callClientTool('read_file', {
+    const deadline = new Promise((_, reject) => {
+      deadlineTimer = setTimeout(() => reject(new Error(
+        `a read that takes ${SLOW_READ_MS / 1000} s should get its result, but the device had not answered after ${CALL_DEADLINE_MS / 1000} s`)), CALL_DEADLINE_MS);
+    });
+    const answer = await Promise.race([integration.callClientTool('read_file', {
       path: `http://127.0.0.1:${server.address().port}/slow.txt`,
       isUrl: true,
-    }).catch((error) => error);
+    }).catch((error) => error), deadline]);
     const seconds = ((Date.now() - started) / 1000).toFixed(1);
     assert(!(answer instanceof Error),
       `a read that takes ${SLOW_READ_MS / 1000} s should get its result, but the device gave up after ${seconds} s: ${answer.message}`);
@@ -45,6 +52,7 @@ export default async function runTests() {
     console.log(`✓ a device call that takes ${seconds} s gets its result`);
   } finally {
     clearTimeout(textTimer);
+    clearTimeout(deadlineTimer);
     await integration.shutdown();
     server.closeAllConnections();
     server.close();
