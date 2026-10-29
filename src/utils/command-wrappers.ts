@@ -1,4 +1,4 @@
-import { programName, type ShellType } from './shell.js';
+import { getShellType, programName } from './shell.js';
 import type { FoundCommand } from './command-reading.js';
 
 /**
@@ -17,6 +17,9 @@ import type { FoundCommand } from './command-reading.js';
  *   \\server sudo ls runs sudo on another computer, which the check leaves
  *   out, as it leaves out ssh's;
  * - exec and command are commands of the POSIX shells;
+ * - and, or and not are fish's: fish runs the command after them (false; or
+ *   sudo ls runs sudo). fish is read with bash's grammar, where and is a
+ *   program like any other, so they are wrappers only when the shell is fish;
  * - Start-Process (also written start or saps) is PowerShell's: the PowerShell
  *   reader gives the programs it starts, as PowerShell itself binds its
  *   FilePath (FoundCommand's filePaths);
@@ -345,6 +348,13 @@ const POSIX_SHELL_COMMANDS = new Map<string, PosixWrapper>([
   ['command', { flags: 'p', noProgram: 'vV' }],
 ]);
 
+/** fish's commands that start the command after them */
+const FISH_COMMANDS = new Map<string, PosixWrapper>([
+  ['and', {}],
+  ['or', {}],
+  ['not', {}],
+]);
+
 /** cmd's start switches that take the next word as their value (/D also takes it in the same word: /Dpath) */
 const CMD_START_VALUE_SWITCHES = ['/d', '/node', '/affinity', '/machine'];
 
@@ -352,16 +362,16 @@ const CMD_START_VALUE_SWITCHES = ['/d', '/node', '/affinity', '/machine'];
 type Started = Pick<FoundCommand, 'words' | 'written' | 'wordTexts'>;
 
 /**
- * The commands that run: each of `commands`, followed by the programs that
- * the wrappers among them start (for env sudo ls: env, then sudo). A started
- * program has its wrapper's start.
+ * The commands that run in `shell`: each of `commands`, followed by the
+ * programs that the wrappers among them start (for env sudo ls: env, then
+ * sudo). A started program has its wrapper's start.
  */
-export function withStartedPrograms(commands: FoundCommand[], shellType: ShellType): FoundCommand[] {
+export function withStartedPrograms(commands: FoundCommand[], shell: string): FoundCommand[] {
   const running: FoundCommand[] = [];
   const add = (command: FoundCommand): void => {
     running.push(command);
     if (command.nameAtRunTime) return;
-    for (const { words, written, wordTexts } of startedPrograms(command, shellType)) {
+    for (const { words, written, wordTexts } of startedPrograms(command, shell)) {
       add({ name: words[0] ?? written[0], words, written, wordTexts, start: command.start, nameAtRunTime: words[0] === null });
     }
   };
@@ -370,11 +380,14 @@ export function withStartedPrograms(commands: FoundCommand[], shellType: ShellTy
 }
 
 /** The programs a command starts when it is a wrapper: none for any other command */
-function startedPrograms(command: FoundCommand, shellType: ShellType): Started[] {
+function startedPrograms(command: FoundCommand, shell: string): Started[] {
+  const shellType = getShellType(shell);
   const name = programName(command.name);
   const { words, written, wordTexts } = command;
   const from = (at: number): Started => ({ words: words.slice(at), written: written.slice(at), wordTexts: wordTexts.slice(at) });
-  const posix = PROGRAMS.get(name) ?? (shellType === 'posix' ? POSIX_SHELL_COMMANDS.get(name) : undefined);
+  const posix = PROGRAMS.get(name)
+    ?? (shellType === 'posix' ? POSIX_SHELL_COMMANDS.get(name) : undefined)
+    ?? (programName(shell) === 'fish' ? FISH_COMMANDS.get(name) : undefined);
   if (posix) return posixPrograms(command, posix);
   // Its own arguments are in -ArgumentList, a text the check doesn't read, so a program Start-Process starts has only its name
   if (shellType === 'powershell' && name === 'start-process') return (command.filePaths ?? []).map(({ word, written }) => ({ words: [word], written: [written], wordTexts: [word ?? written] }));

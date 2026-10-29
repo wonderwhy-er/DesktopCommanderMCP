@@ -379,7 +379,7 @@ class CommandManager {
             }
 
             // A wrapper starts the program itself, never the script's own function of that name
-            const running = withStartedPrograms(this.withoutOwnFunctionCalls(reading, shellType), shellType);
+            const running = withStartedPrograms(this.withoutOwnFunctionCalls(reading, shellType), shell);
             // set_config_value checks only that the list is an array
             const entries = blockedCommands.filter((entry): entry is string => typeof entry === 'string');
             for (const found of running) {
