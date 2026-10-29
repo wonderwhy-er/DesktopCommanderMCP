@@ -28,7 +28,8 @@
  * ownfunc = a script's own function named like a blocked program;
  * wrapper = a program a wrapper starts, past the wrapper's own options (env
  * sudo ls runs sudo) or in the text env -S splits (env -S 'sudo ls'), and
- * words of a wrapper that are no program (command -v sudo);
+ * words of a wrapper that are no program (command -v sudo, Windows' timeout
+ * /t 5);
  * runtime = a program chosen when the command runs; file = the commands in a
  * script file given to a shell; long = the 14k-char case; control = a plain
  * blocked program, to keep every approach honest.
@@ -297,6 +298,11 @@ export const CORPUS = [
   { id: 'wrap_option_value', group: 'wrapper', shell: 'bash', expect: null, command: 'env -u sudo ls', note: 'sudo is the variable env unsets; env runs ls' },
   { id: 'wrap_argument', group: 'wrapper', shell: 'bash', expect: null, command: 'timeout 5 echo reboot', note: 'reboot is what echo prints' },
   { id: 'wrap_command_v', group: 'wrapper', shell: 'bash', expect: null, command: 'command -v sudo', note: 'command -v only says where sudo is' },
+  { id: 'wrap_timeout_wait', group: 'wrapper', shell: 'cmd', expect: null, command: 'timeout /t 5', note: "Windows' timeout only waits, here for 5 seconds" },
+  { id: 'wrap_timeout_wait_runtime', group: 'wrapper', shell: 'powershell', expect: null, command: 'timeout /t $n', note: "Windows' timeout only waits, for $n seconds, and GNU's stops at /t, which is no duration: no program runs" },
+  { id: 'wrap_timeout_wait_case', group: 'wrapper', shell: 'cmd', expect: null, command: 'timeout /T %n% /NOBREAK', note: "Windows' timeout takes its switches in any case" },
+  { id: 'wrap_timeout_wait_nobreak', group: 'wrapper', shell: 'cmd', expect: null, command: 'timeout /nobreak %n%', note: "/t may be left out: Windows' timeout /nobreak 5 only waits too" },
+  { id: 'wrap_timeout_wait_gnu', group: 'wrapper', shell: 'bash', expect: null, command: 'timeout /t $n', note: "in Git Bash timeout is GNU's, which stops at /t, no duration, and runs nothing" },
   { id: 'wrap_runtime', group: 'wrapper', shell: 'bash', expect: 'unknowable', command: 'env "$CMD"', note: 'env runs the program in $CMD, known only at run time' },
   { id: 'wrap_env_split', group: 'wrapper', shell: 'bash', expect: 'sudo', command: "env -S 'sudo ls'", note: 'env -S splits its text into words and runs them' },
   { id: 'wrap_env_split_long', group: 'wrapper', shell: 'bash', expect: 'reboot', command: "env --split-string='reboot now'", note: 'the long form of -S, with its text after =' },
