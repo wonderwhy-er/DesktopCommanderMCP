@@ -1,5 +1,6 @@
 import { getShellType, POSIX_SHELLS, programName, type ShellType } from './shell.js';
 import type { FoundCommand } from './command-reading.js';
+import { shellOptionReadings } from './command-wrappers.js';
 
 /**
  * What a shell started by a command runs, by the shell's own rules for its
@@ -15,7 +16,9 @@ import type { FoundCommand } from './command-reading.js';
  *
  * The rules are which option gives the command text or the file, and which
  * options take a value. They work on the words a reader found, so they read
- * no shell grammar of their own. A word known only at run time is used as its
+ * no shell grammar of their own. A POSIX shell's options are read by the
+ * wrappers' reader, from its rules there (see command-wrappers.ts), in every
+ * way they can be read. A word known only at run time is used as its
  * text ("cd $HOME && sudo ls"), so the programs written in it are still seen.
  * The shell that starts the shell fills that word in before the started shell
  * reads it, so it may hold any command (pwsh -Command $cmd, bash -c "ls $X"):
@@ -29,14 +32,10 @@ export interface ShellRun {
   texts: string[];
   /**
    * The script file it is given, undefined when it is given none; null when the file, or a part of a command
-   * text it is given, is known only at run time
+   * text it is given, is known only at run time, or when its options can be read as naming different files
    */
   file?: string | null;
 }
-
-// POSIX shell long options that take the next word as their value, so it is neither the script file nor the command
-// text; of the one-letter options, o and O do (see posixShellRuns)
-const POSIX_SHELL_VALUE_OPTIONS = new Set(['--rcfile', '--init-file']);
 
 /**
  * PowerShell's parameters that take the next word as their value. A
@@ -50,57 +49,24 @@ const POWERSHELL_VALUE_PARAMETERS = [
 ];
 
 /**
- * What a POSIX shell runs: its first word that isn't an option, or what
- * follows -- (bash -o pipefail -x deploy.sh). That word is the command text
- * when -c is among the options (bash -lc, bash -c -e), and the script file
- * otherwise; fish's --command gives the text in the next word. With -s the
- * shell reads its input, and the words are its $1, $2 and so on. Each o and O
- * takes the next word as its value, also in a group of options
- * (bash -euo pipefail deploy.sh, bash -co pipefail 'sudo ls').
+ * What a POSIX shell runs, by its options as the wrappers' reader reads them
+ * (shellOptionReadings()): the command text, which is the first word after
+ * bash's options with -c (bash -lc make, bash -c -e 'sudo ls') or the value
+ * of fish's -c, --command or -C (fish -C : -c 'sudo ls'), or else the script
+ * file, the first word after the options (bash -o pipefail -x deploy.sh).
+ * With bash -s or fish -c, the words after the options are the command's
+ * arguments. Where the options can be read more than one way, every reading
+ * counts.
  */
-function posixShellRuns({ words, wordTexts }: FoundCommand): ShellRun {
-  let runsText = false;
-  let readsInput = false;
-  // A word known only at run time before the first one that isn't an option may be the script file or an
-  // option: both readings count, so the shell is noted (file null) and the words after it are read on
-  let atRunTime = false;
-  // The command text in the word at `at`: one known only at run time, in whole or in part, notes the shell too
-  const textAt = (at: number): ShellRun => ({
-    texts: at < words.length ? [wordTexts[at]] : [],
-    ...(atRunTime || words[at] === null ? { file: null } : {}),
-  });
-  let first = words.length;
-  for (let i = 1; i < words.length; i++) {
-    const word = words[i];
-    if (word === null) {
-      if (runsText) {
-        first = i;
-        break;
-      }
-      atRunTime = true;
-      continue;
-    }
-    if (word === '--' || word === '-') {
-      first = i + 1;
-      break;
-    }
-    if (word === '--command') return textAt(i + 1);
-    if (POSIX_SHELL_VALUE_OPTIONS.has(word)) {
-      i++;
-      continue;
-    }
-    if (word.startsWith('-') || word.startsWith('+')) {
-      if (/^-[a-zA-Z]*c/.test(word)) runsText = true;
-      if (/^-[a-zA-Z]*s/.test(word)) readsInput = true;
-      if (/^[-+][a-zA-Z]+$/.test(word)) i += (word.match(/[oO]/g) ?? []).length;
-      continue;
-    }
-    first = i;
-    break;
-  }
-  if (runsText) return textAt(first);
-  if (readsInput || atRunTime || first >= words.length) return { texts: [], ...(atRunTime ? { file: null } : {}) };
-  return { texts: [], file: words[first] };
+function posixShellRuns({ words, wordTexts }: FoundCommand, program: string): ShellRun {
+  const { operands, texts } = shellOptionReadings(program, words);
+  // Each text once, also when more than one reading finds it; one known only at run time is used as written
+  const found = new Map(texts.map(({ text, at }) => [at ?? text, at === undefined ? text ?? '' : wordTexts[at]]));
+  const files = [...new Set(operands.filter((at) => at < words.length).map((at) => words[at]))];
+  // A part known only at run time, in a command text or the script file, may hold any command, and so may a file
+  // the readings don't agree on: the shell is noted
+  const atRunTime = texts.some(({ at }) => at !== undefined && words[at] === null) || files.includes(null) || files.length > 1;
+  return { texts: [...found.values()], ...(atRunTime ? { file: null } : files.length === 1 ? { file: files[0] } : {}) };
 }
 
 /**
@@ -109,23 +75,28 @@ function posixShellRuns({ words, wordTexts }: FoundCommand): ShellRun {
  * script file after -File (-f). Without these, its first word that isn't a
  * parameter is a script file in PowerShell 7; Windows PowerShell runs it, and
  * the words after it, as a command, or as a script file when it is a .ps1.
- * Parameters start with -, -- or /.
+ * Parameters start with -, -- or /. A word known only at run time where a
+ * parameter can be may be any of them: a switch, -Command or -File.
  */
 function powerShellRuns({ words, wordTexts }: FoundCommand, program: string): ShellRun {
   // A word known only at run time may be a parameter, the command or the script file, so the shell is noted (file null)
   let atRunTime = false;
+  // Such a word may be -Command, and then the words after it are the command text (pwsh $mode net user)
+  const runTimeTexts: string[] = [];
   // The command texts made of the words `parts`: a part known only at run time notes the shell too
   const textOf = (texts: string[], parts: (string | null | undefined)[]): ShellRun =>
-    (atRunTime || parts.includes(null) ? { texts, file: null } : { texts });
+    (atRunTime || parts.includes(null) ? { texts: [...runTimeTexts, ...texts], file: null } : { texts });
   for (let i = 1; i < words.length; i++) {
     const word = words[i];
     if (word === null) {
       atRunTime = true;
+      if (i + 1 < words.length) runTimeTexts.push(wordTexts.slice(i + 1).join(' '));
       continue;
     }
     const parameter = /^(?:--?|\/)([a-z]+)$/i.exec(word)?.[1].toLowerCase();
     if (parameter === undefined) {
-      if (program === 'pwsh' || /\.ps1$/i.test(word)) return { texts: [], file: word };
+      // After a word known only at run time, the script file is one reading of several: the shell is noted
+      if (program === 'pwsh' || /\.ps1$/i.test(word)) return atRunTime ? textOf([], []) : { texts: [], file: word };
       return textOf([wordTexts.slice(i).join(' ')], words.slice(i));
     }
     if (parameter === 'ec' || 'encodedcommand'.startsWith(parameter)) {
@@ -139,7 +110,7 @@ function powerShellRuns({ words, wordTexts }: FoundCommand, program: string): Sh
     }
     // -CommandWithArgs: the next word is the command, and the words after it are its $args
     if (parameter === 'cwa' || parameter === 'commandwithargs') return textOf(i + 1 < words.length ? [wordTexts[i + 1]] : [], [words[i + 1]]);
-    if ('file'.startsWith(parameter)) return { texts: [], file: words[i + 1] };
+    if ('file'.startsWith(parameter)) return atRunTime ? textOf([], []) : { texts: [], file: words[i + 1] };
     // A parameter's value, also one known only at run time, unless the next word is a parameter (pwsh's -i is a
     // switch, Windows PowerShell's -i takes a value)
     if (POWERSHELL_VALUE_PARAMETERS.some((name) => name.startsWith(parameter)) && i + 1 < words.length && !/^[-/]/.test(words[i + 1] ?? '')) i++;
@@ -235,6 +206,6 @@ export function shellRuns(found: FoundCommand): ShellRun {
       return cmdRuns(found);
     default:
       // getShellType() takes every other program for a POSIX shell
-      return POSIX_SHELLS.has(program) ? posixShellRuns(found) : { texts: [] };
+      return POSIX_SHELLS.has(program) ? posixShellRuns(found, program) : { texts: [] };
   }
 }

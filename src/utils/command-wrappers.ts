@@ -36,13 +36,13 @@ import type { FoundCommand } from './command-reading.js';
  */
 
 /**
- * A wrapper's options. The programs read them with getopt, and the shells
- * read exec's and command's the same way: -abc is -a -b -c, a value follows
- * its option in the same word (-uroot, --user=root) or in the next one (-u
- * root, --user root), a long option may be shortened while it stays
- * unambiguous (--us), and -- ends the options.
+ * A wrapper's options, or a POSIX shell's own. The programs read them with
+ * getopt, and the shells read exec's and command's the same way: -abc is -a
+ * -b -c, a value follows its option in the same word (-uroot, --user=root) or
+ * in the next one (-u root, --user root), a long option may be shortened while
+ * it stays unambiguous (--us), and -- ends the options.
  */
-interface PosixWrapper {
+export interface PosixWrapper {
   /** The one-letter options that take a value */
   letters?: string;
   /** The one-letter options whose value can only be in the same word (xargs -i{}, and nice -10, the old nice -n 10) */
@@ -59,7 +59,7 @@ interface PosixWrapper {
   equalsOnly?: boolean;
   /** Whether its options are whole words after one dash, not letters, read as long options (xterm -title, arch -x86_64) */
   wordOptions?: boolean;
-  /** Whether an option can also start with +, which turns it off (xterm +sb) */
+  /** Whether an option can also start with +, which turns it off (xterm +sb, bash +o pipefail) */
   plus?: boolean;
   /** The options with which no program runs: command -v sudo only says what sudo is */
   noProgram?: string;
@@ -93,7 +93,24 @@ interface PosixWrapper {
   subcommands?: Map<string, PosixWrapper>;
   /** How the words that name other computers start: psexec \\server runs its program there, not here */
   remote?: string[];
+  /** Whether the reading of options goes on after an option's command text (fish -C : -c 'sudo ls'); env's -S ends it */
+  optionsAfterTexts?: boolean;
+  /**
+   * How a group of letters takes its values: as getopt does when unset (the letter takes the rest of the word, or
+   * the next word), or 'words' as bash does: each letter that takes a value takes one of the words after the group,
+   * in order (bash -eoo pipefail nounset, and bash -oe pipefail, where o takes pipefail)
+   */
+  groupValues?: 'words';
+  /**
+   * For a shell, the options that decide what the words after the options are: 'text' when the first of them is
+   * the command text (bash -c 'sudo ls'), 'arguments' when they are the command's $1, $2 and so on, not a script
+   * file (bash -s, fish -c)
+   */
+  operandRoles?: Record<string, OperandRole>;
 }
+
+/** What the words after a shell's options are, by its options: see PosixWrapper's operandRoles */
+type OperandRole = 'text' | 'arguments';
 
 /** tmux's commands that start the program after their options (tmux new-session -d sudo ls), by name and alias */
 const TMUX_NEW_SESSION: PosixWrapper = { letters: 'cefFnstxy', flags: 'AdDEPX' };
@@ -355,6 +372,29 @@ const FISH_COMMANDS = new Map<string, PosixWrapper>([
   ['not', {}],
 ]);
 
+/**
+ * How a POSIX shell reads its own options, for shellRuns(): bash's, from bash
+ * 5.3's --help and bash(1), for every shell but fish (sh, dash, zsh and ksh
+ * have the same -c, -s, -o and +o), and fish's, from fish(1). bash's -c makes
+ * the first word after the options the command text, and its other words are
+ * the command's $0, $1 and so on; fish's -c and -C (--init-command) take the
+ * command text as their value, and fish runs -C's before the rest.
+ */
+const BASH_OPTIONS: PosixWrapper = {
+  letters: 'oO', flags: 'abcefhiklmnprstuvxBCDEHPT', long: ['init-file', 'rcfile'],
+  longFlags: [
+    'debug', 'debugger', 'dump-po-strings', 'dump-strings', 'help', 'login', 'noediting', 'noprofile', 'norc', 'posix',
+    'pretty-print', 'protected', 'restricted', 'verbose', 'version', 'wordexp',
+  ],
+  plus: true, groupValues: 'words', operandRoles: { c: 'text', s: 'arguments' },
+};
+const FISH_OPTIONS: PosixWrapper = {
+  letters: 'dfop', flags: 'hilnNPv', long: ['debug', 'debug-output', 'features', 'profile', 'profile-startup'],
+  longFlags: ['help', 'interactive', 'login', 'no-config', 'no-execute', 'print-debug-categories', 'print-rusage-self', 'private', 'version'],
+  texts: { letters: 'cC', long: ['command', 'init-command'] }, optionsAfterTexts: true,
+  operandRoles: { c: 'arguments', command: 'arguments' },
+};
+
 /** cmd's start switches that take the next word as their value (/D also takes it in the same word: /Dpath) */
 const CMD_START_VALUE_SWITCHES = ['/d', '/node', '/affinity', '/machine'];
 
@@ -443,8 +483,10 @@ function posixPrograms({ words, written, wordTexts }: Started, rules: PosixWrapp
     const subcommand = subcommandOf(words[i], rules);
     return subcommand ? posixPrograms(from(i), subcommand) : [from(i)];
   });
-  // A wrapper's command text is more of its own words, split as env splits -S's: env is the one wrapper with one
+  // A wrapper's command text is more of its own words, split as env splits -S's: env is the one wrapper with one.
+  // One known only at run time is read on as a word known only at run time (see readOptions)
   return [...programs, ...texts.flatMap(({ text, after }) => {
+    if (text === null) return [];
     const split = envSplitWords(text);
     return posixPrograms({
       words: [words[0], ...split.words, ...words.slice(after)],
@@ -455,64 +497,84 @@ function posixPrograms({ words, written, wordTexts }: Started, rules: PosixWrapp
 }
 
 /** Where a program's options end, in each way they can be read, and the command texts and programs they give */
-interface OptionReadings {
-  /** The first word after the options, in each reading */
+export interface OptionReadings {
+  /** The first word after the options, in each reading: a wrapper's program, or a shell's script file */
   operands: number[];
-  /** Each command text an option gives, and the first word after it */
-  texts: { text: string; after: number }[];
+  /**
+   * Each command text an option gives, or for a shell the first word after its options (bash -c 'sudo ls'), with
+   * the first word after it. The text is null when it is known only at run time, in whole or in part; `at` is then
+   * the word that holds it. It has no `at` when it is in the option's own word (--command='sudo ls')
+   */
+  texts: { text: string | null; at?: number; after: number }[];
   /** Each program an option names (start-stop-daemon --exec), null when known only at run time; `at` is its word, unless it is in the option's own */
   programs: { program: string | null; at?: number }[];
+}
+
+/** How a POSIX shell, by its name in POSIX_SHELLS, reads its own options (see BASH_OPTIONS) */
+export function shellOptionReadings(program: string, words: (string | null)[]): OptionReadings {
+  return readOptions(words, program === 'fish' ? FISH_OPTIONS : BASH_OPTIONS);
 }
 
 /**
  * Reads a program's options by its rules, in every way they can be read: an
  * option the rules don't list, and a word known only at run time, may take the
  * next word as its value or not, though not a word that is an option itself.
- * A command text known only at run time (env -S "$CMD") is read on as a word
- * known only at run time.
+ * A wrapper's command text known only at run time (env -S "$CMD") is read on
+ * as a word known only at run time. For a shell, each reading also knows what
+ * the words after its options are (bash -c makes the first one the text).
  */
 function readOptions(words: (string | null)[], rules: PosixWrapper): OptionReadings {
   const readings: OptionReadings = { operands: [], texts: [], programs: [] };
-  const read = new Set<number>();
+  const read = new Set<string>();
   const isOption = (word: string | null | undefined): word is string =>
     typeof word === 'string' && (word.startsWith('-') || (rules.plus === true && word.length > 1 && word.startsWith('+')));
-  const readFrom = (i: number): void => {
-    if (read.has(i)) return;
-    read.add(i);
+  // The first word after the options, by what the options before it made it
+  const operand = (i: number, role: OperandRole | undefined): void => {
+    if (role === undefined) readings.operands.push(i);
+    else if (role === 'text' && i < words.length) readings.texts.push({ text: words[i], at: i, after: i + 1 });
+  };
+  const readFrom = (i: number, role?: OperandRole): void => {
+    const key = `${i} ${role ?? ''}`;
+    if (read.has(key)) return;
+    read.add(key);
     const word = words[i];
     if (word === null) {
       // An option with or without a value, or the first word after them
-      readings.operands.push(i);
-      readFrom(i + 1);
-      if (!isOption(words[i + 1])) readFrom(i + 2);
+      operand(i, role);
+      readFrom(i + 1, role);
+      if (!isOption(words[i + 1])) readFrom(i + 2, role);
       return;
     }
     if (!isOption(word)) {
-      readings.operands.push(i);
+      operand(i, role);
       return;
     }
     if (word === '--') {
-      readings.operands.push(i + 1);
+      operand(i + 1, role);
       return;
     }
     for (const reading of optionReadings(word, rules)) {
       if (reading === null) continue;
       // A value the rules don't know of isn't a word that is an option itself
       if (reading.uncertain && reading.next > 0 && isOption(words[i + reading.next])) continue;
+      const next = reading.role === 'text' || role === 'text' ? 'text' : reading.role ?? role;
       if (reading.program !== undefined) {
         const at = reading.next === 1 ? i + 1 : undefined;
         const program = at === undefined ? reading.program : words[at];
         if (program !== undefined) readings.programs.push({ program, at });
-        readFrom(i + 1 + reading.next);
+        readFrom(i + 1 + reading.next, next);
         continue;
       }
       if (reading.text === undefined) {
-        readFrom(i + 1 + reading.next);
+        readFrom(i + 1 + reading.next, next);
         continue;
       }
-      const text = reading.next === 1 ? words[i + 1] : reading.text;
-      if (text === null) readFrom(i + 1);
-      else if (text !== undefined) readings.texts.push({ text, after: i + 1 + reading.next });
+      const at = reading.next === 1 ? i + 1 : undefined;
+      const text = at === undefined ? reading.text : words[at];
+      if (text === undefined) continue;
+      readings.texts.push({ text, at, after: i + 1 + reading.next });
+      if (rules.optionsAfterTexts) readFrom(i + 1 + reading.next, next);
+      else if (text === null) readFrom(i + 1, role);
     }
   };
   readFrom(1);
@@ -529,6 +591,8 @@ interface OptionReading {
   text?: string;
   /** For an option whose value is the program: the program in the same word, or '' when it is the next word */
   program?: string;
+  /** For a shell, what the words after its options are with this option (see PosixWrapper's operandRoles) */
+  role?: OperandRole;
 }
 
 /**
@@ -546,27 +610,51 @@ function optionReadings(option: string, rules: PosixWrapper): (OptionReading | n
     if (name !== undefined && rules.noProgramLong?.includes(name)) return [null];
     const isText = name !== undefined && rules.texts?.long.includes(name);
     const isProgram = name !== undefined && rules.programOptions?.long.includes(name);
+    const role = name === undefined ? undefined : rules.operandRoles?.[name];
     const value = long.slice(equals + 1);
-    if (equals !== -1) return [isText ? { next: 0, text: value } : isProgram ? { next: 0, program: value } : { next: 0 }];
-    if (rules.equalsOnly) return [{ next: 0 }];
+    if (equals !== -1) return [isText ? { next: 0, text: value, role } : isProgram ? { next: 0, program: value } : { next: 0, role }];
+    if (rules.equalsOnly) return [{ next: 0, role }];
     if (name === undefined) return [{ next: 0 }, { next: 1, uncertain: true }];
-    if (isText) return [{ next: 1, text: '' }];
+    if (isText) return [{ next: 1, text: '', role }];
     if (isProgram) return [{ next: 1, program: '' }];
-    return [{ next: rules.longPairs?.includes(name) ? 2 : rules.long?.includes(name) ? 1 : 0 }];
+    return [{ next: rules.longPairs?.includes(name) ? 2 : rules.long?.includes(name) ? 1 : 0, role }];
   }
+  if (rules.groupValues === 'words') return groupWordReadings(option, rules);
   const readings: (OptionReading | null)[] = [];
+  let role: OperandRole | undefined;
   for (let i = 1; i < option.length; i++) {
     const letter = option[i];
-    const value: OptionReading = i === option.length - 1 ? { next: 1 } : { next: 0 };
+    role = role === 'text' ? role : rules.operandRoles?.[letter] ?? role;
+    const value: OptionReading = i === option.length - 1 ? { next: 1, role } : { next: 0, role };
     if (rules.noProgram?.includes(letter)) return [...readings, null];
     if (rules.texts?.letters.includes(letter)) return [...readings, { ...value, text: option.slice(i + 1) }];
     if (rules.programOptions?.letters?.includes(letter)) return [...readings, { ...value, program: option.slice(i + 1) }];
-    if (rules.attachedLetters?.includes(letter)) return [...readings, { next: 0 }];
+    if (rules.attachedLetters?.includes(letter)) return [...readings, { next: 0, role }];
     if (rules.letters?.includes(letter)) return [...readings, value];
     // An option the rules don't list may take a value, and the next letters read on as if it takes none
     if (!rules.flags?.includes(letter)) readings.push({ ...value, uncertain: true });
   }
-  return [...readings, { next: 0 }];
+  return [...readings, { next: 0, role }];
+}
+
+/**
+ * The ways to read a group of letters as bash reads it: each letter that
+ * takes a value takes one of the words after the group, in order (bash -euo
+ * pipefail deploy.sh), and one the rules don't list may take one too.
+ */
+function groupWordReadings(option: string, rules: PosixWrapper): (OptionReading | null)[] {
+  let values = 0;
+  let unlisted = 0;
+  let role: OperandRole | undefined;
+  for (const letter of option.slice(1)) {
+    if (rules.noProgram?.includes(letter)) return [null];
+    role = role === 'text' ? role : rules.operandRoles?.[letter] ?? role;
+    if (rules.letters?.includes(letter)) values++;
+    else if (!rules.flags?.includes(letter)) unlisted++;
+  }
+  return Array.from({ length: unlisted + 1 }, (_, taken): OptionReading => ({
+    next: values + taken, role, ...(taken > 0 ? { uncertain: true } : {}),
+  }));
 }
 
 /** The long option a name means: the one it names, or the only one it shortens */
