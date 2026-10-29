@@ -16,6 +16,8 @@ import { runIfMain, skip, SKIPPED } from './helpers/run-if-main.js';
 import { isTestHome, withEnv } from './helpers/test-env.js';
 
 const isWindows = process.platform === 'win32';
+// Off Windows the rows below expect Linux's reading. A run started in WSL has WSL_DISTRO_NAME, so they clear it (the runner leaves it out itself)
+const outsideWsl = { WSL_DISTRO_NAME: undefined };
 
 /** Each row: a name, and the form programName() gives */
 function expectNames(rows) {
@@ -25,7 +27,7 @@ function expectNames(rows) {
 }
 
 async function thePathIsRemoved() {
-  expectNames([
+  await withEnv(outsideWsl, () => expectNames([
     ['/usr/bin/sudo', 'sudo'],
     ['C:\\Windows\\System32\\net.exe', isWindows ? 'net' : 'net.exe'],
     ['C:/Windows/System32/net.exe', isWindows ? 'net' : 'net.exe'],
@@ -33,27 +35,27 @@ async function thePathIsRemoved() {
     ['Microsoft.PowerShell.Management\\Set-Content', 'set-content'],
     // A drive-relative path: sc.exe in the current folder of drive C:
     ['C:sc.exe', isWindows ? 'sc' : 'sc.exe'],
-  ]);
+  ]));
 }
 
 async function theNameIsLowercased() {
-  expectNames([
+  await withEnv(outsideWsl, () => expectNames([
     ['SUDO', 'sudo'],
     ['C:\\Windows\\System32\\SC.EXE', isWindows ? 'sc' : 'sc.exe'],
     ['Set-Content', 'set-content'],
-  ]);
+  ]));
 }
 
 async function anExtensionIsDropped() {
-  expectNames([
+  await withEnv(outsideWsl, () => expectNames([
     ['sc.exe', isWindows ? 'sc' : 'sc.exe'],
     ['format.com', isWindows ? 'format' : 'format.com'],
     // Only one extension, and only one from PATHEXT
     ['sc.exe.exe', isWindows ? 'sc.exe' : 'sc.exe.exe'],
     ['deploy.ps1', 'deploy'],
-  ]);
+  ]));
   // The list is the one commands run with: a PATHEXT broken to ".CPL" is repaired first (#481). Elsewhere PATHEXT isn't read
-  await withEnv({ PATHEXT: '.CPL' }, () => expectNames([
+  await withEnv({ ...outsideWsl, PATHEXT: '.CPL' }, () => expectNames([
     ['sc.exe', isWindows ? 'sc' : 'sc.exe'],
     ['format.com', isWindows ? 'format' : 'format.com'],
     ['tool.cpl', isWindows ? 'tool' : 'tool.cpl'],
@@ -63,7 +65,7 @@ async function anExtensionIsDropped() {
 /**
  * WSL runs Windows programs from Linux by their full name (sc.exe stop
  * Spooler), so there a name is read as on Windows. WSL sets WSL_DISTRO_NAME
- * for what it starts; the runner leaves it out, so only this check has it.
+ * for what it starts; the other checks run without it.
  */
 async function inWslANameIsReadAsOnWindows() {
   await withEnv({ WSL_DISTRO_NAME: 'Ubuntu' }, () => expectNames([
