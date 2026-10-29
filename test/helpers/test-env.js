@@ -34,6 +34,23 @@ export function createTestEnv() {
   };
 }
 
+/** Runs fn with these variables in process.env (undefined: unset), then puts the old values back */
+export async function withEnv(values, fn) {
+  const saved = Object.fromEntries(Object.keys(values).map((name) => [name, process.env[name]]));
+  const apply = (entries) => {
+    for (const [name, value] of Object.entries(entries)) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+  };
+  try {
+    apply(values);
+    return await fn();
+  } finally {
+    apply(saved);
+  }
+}
+
 /**
  * A new temporary folder (`prefix` plus random characters), by its real path.
  * macOS's temporary folder is under /var, a link to /private/var, and the

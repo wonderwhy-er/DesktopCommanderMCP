@@ -14,14 +14,10 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { createRequire } from 'module';
-import { fileURLToPath } from 'url';
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { runIfMain } from './helpers/run-if-main.js';
-import { closeClient } from './helpers/close-client.js';
+import { closeClient, connectToServer } from './helpers/mcp-client.js';
 import { callToolOnceLoaded } from './helpers/heavy-packages.js';
 
-const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const PizZip = createRequire(import.meta.url)('pizzip');
 const W = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
 const R = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships';
@@ -66,17 +62,10 @@ const partText = (file, name) => new PizZip(fs.readFileSync(file)).file(`word/${
 
 export default async function runTests() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dc-docx-header-footer-'));
-  const transport = new StdioClientTransport({
-    command: process.execPath,
-    args: [path.join(PROJECT_ROOT, 'dist/index.js'), '--no-onboarding'],
-    cwd: PROJECT_ROOT,
-    stderr: 'pipe',
-    env: { ...process.env },
-  });
-  const client = new Client({ name: 'docx-header-footer-test', version: '1.0.0' }, { capabilities: {} });
+  let client;
   const failures = [];
   try {
-    await client.connect(transport, { timeout: 30_000 });
+    client = await connectToServer('docx-header-footer-test');
     const file = path.join(dir, 'sections.docx');
     await callToolOnceLoaded(client, { name: 'write_file', arguments: { path: file, content: '# Title\n\nBody text' } });
     const texts = addSections(file);

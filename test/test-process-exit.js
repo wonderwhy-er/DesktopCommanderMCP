@@ -23,6 +23,7 @@ import { fileURLToPath } from 'url';
 import { startProcess, readProcessOutput, interactWithProcess, forceTerminate, listSessions } from '../dist/tools/improved-process-tools.js';
 import { terminalManager } from '../dist/terminal-manager.js';
 import { runIfMain } from './helpers/run-if-main.js';
+import { waitUntil } from './helpers/wait.js';
 
 const FIXTURE = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures', 'process-exit.js');
 // A wait that should end when the process exits, and the time it may take to
@@ -45,14 +46,6 @@ function newTrigger() {
   return path.join(dir, 'go');
 }
 const pull = (trigger) => fs.writeFileSync(trigger, '');
-
-async function waitUntil(condition, timeoutMs, what) {
-  const deadline = Date.now() + timeoutMs;
-  while (!(await condition())) {
-    if (Date.now() > deadline) throw new Error(`timed out after ${timeoutMs}ms waiting until ${what}`);
-    await sleep(50);
-  }
-}
 
 function check(ok, message) {
   if (!ok) throw new Error(message);
