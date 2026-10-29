@@ -8,6 +8,7 @@
  * which only parses them.
  */
 import assert from 'assert';
+import { spawnSync } from 'child_process';
 import { configManager } from '../dist/config-manager.js';
 import { commandManager } from '../dist/command-manager.js';
 import { programName } from '../dist/utils/shell.js';
@@ -20,6 +21,20 @@ const isWindows = process.platform === 'win32';
 const outsideWsl = { WSL_DISTRO_NAME: undefined };
 // Windows' default PATHEXT, so the .com rows don't depend on this machine's (one without .COM keeps format.com)
 const defaultPathExt = '.COM;.EXE;.BAT;.CMD;.VBS;.VBE;.JS;.JSE;.WSF;.WSH;.MSC';
+
+/**
+ * A module that makes WSL's interop entry in binfmt_misc, which lets Linux run
+ * Windows programs, there or not, whatever this machine has: it replaces
+ * fs.existsSync for that entry.
+ */
+const interopEntry = (present) => `data:text/javascript,${encodeURIComponent(`
+  import fs from 'fs';
+  import { syncBuiltinESMExports } from 'module';
+  const existsSync = fs.existsSync;
+  fs.existsSync = (file) => String(file).startsWith('/proc/sys/fs/binfmt_misc/WSLInterop') ? ${present} : existsSync(file);
+  syncBuiltinESMExports();`)}`;
+// programName() reads the system once per process. This one reads it as without the entry, so the rows below expect Linux's reading on a WSL test machine too
+await import(interopEntry(false));
 
 /** Each row: a name, and the form programName() gives */
 function expectNames(rows) {
@@ -78,6 +93,30 @@ async function inWslANameIsReadAsOnWindows() {
   ]));
 }
 
+/** The names programName() gives in another node, started without WSL_DISTRO_NAME and with the interop entry there or not */
+function namesInAnotherNode(withInteropEntry, names) {
+  const { WSL_DISTRO_NAME, ...env } = process.env;
+  const shell = new URL('../dist/utils/shell.js', import.meta.url).href;
+  const code = `import { programName } from ${JSON.stringify(shell)}; console.log(JSON.stringify(${JSON.stringify(names)}.map((name) => programName(name))));`;
+  const child = spawnSync(process.execPath, ['--import', interopEntry(withInteropEntry), '--input-type=module', '--eval', code], {
+    env: { ...env, PATHEXT: defaultPathExt }, encoding: 'utf8',
+  });
+  assert.strictEqual(child.status, 0, child.stderr);
+  return JSON.parse(child.stdout);
+}
+
+/**
+ * What WSL starts without WSL_DISTRO_NAME (a command through sudo, which
+ * clears the environment, or a service) is known as WSL by the interop entry.
+ * A Docker container on WSL's kernel has no such entry and can't run Windows
+ * programs, so there a name keeps Linux's reading.
+ */
+function wslIsKnownByItsInteropEntryToo() {
+  const names = ['sc.exe', '/mnt/c/Windows/System32/SC.EXE', 'format.com'];
+  assert.deepStrictEqual(namesInAnotherNode(true, names), ['sc', 'sc', 'format'], 'with the interop entry');
+  assert.deepStrictEqual(namesInAnotherNode(false, names), isWindows ? ['sc', 'sc', 'format'] : ['sc.exe', 'sc.exe', 'format.com'], 'without it');
+}
+
 /**
  * An entry written with capitals, a path or .exe blocks its program, and the
  * answer names the entry as written. The PowerShell reader gives sc.exe as sc,
@@ -106,7 +145,7 @@ async function anEntryIsComparedInTheSameForm() {
 
 export default async function runTests() {
   const failures = [];
-  for (const check of [thePathIsRemoved, theNameIsLowercased, anExtensionIsDropped, inWslANameIsReadAsOnWindows, anEntryIsComparedInTheSameForm]) {
+  for (const check of [thePathIsRemoved, theNameIsLowercased, anExtensionIsDropped, inWslANameIsReadAsOnWindows, wslIsKnownByItsInteropEntryToo, anEntryIsComparedInTheSameForm]) {
     try {
       console.log(`${await check() === SKIPPED ? '- skipped:' : '✓'} ${check.name}`);
     } catch (error) {
