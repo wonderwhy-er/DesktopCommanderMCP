@@ -1066,6 +1066,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                 description: `
                         Terminate a running process by PID.
 
+                        For a PID that start_process returned, it ends the whole command: the shell and every process the command started, as force_terminate does. Any other PID ends that process only. Sessions started with node:local have a negative PID; stop them with force_terminate.
+
                         Use with caution as this will forcefully terminate the specified process.
 
                         ${CMD_PREFIX_DESCRIPTION}`,
