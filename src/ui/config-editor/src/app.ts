@@ -552,9 +552,7 @@ function render(container: HTMLElement, controller: ReturnType<typeof createConf
                 </div>
             `;
         } else if (entry.valueType === 'boolean') {
-            // The server counts a boolean setting as on unless config.json says false,
-            // so one missing from an older config.json shows as on
-            const checked = String(entry.value) === 'false' ? '' : 'checked';
+            const checked = entry.value ? 'checked' : '';
             controlHtml = `<label class="setting-switch"><input type="checkbox" data-action="toggle-boolean" data-key-index="${index}" ${checked}/><span class="config-boolean-slider"></span></label>`;
         } else if (entry.valueType === 'number') {
             controlHtml = `<input class="setting-inline-input" data-action="edit-number" data-key-index="${index}" type="number" step="any" value="${escapeHtml(String(entry.value ?? ''))}"/>`;
