@@ -537,6 +537,7 @@ export const CORPUS = [
   { id: 'inline_pwsh_wd_path_ok', group: 'inline', shell: 'bash', expect: null, command: "pwsh -wd /home/me -Command 'Get-Date'", note: '/home/me is the value of -wd, so no script file runs' },
   { id: 'inline_pwsh_i_file', group: 'inline', shell: 'bash', expect: 'unknowable', command: 'pwsh -i deploy.ps1', note: "pwsh's -i is the switch -Interactive, and deploy.ps1 the script file; Windows PowerShell's -i may be -InputFormat, which takes a value" },
   { id: 'inline_ps_slash_command', group: 'inline', shell: 'powershell', expect: 'net', command: "powershell /Command 'net user'", note: 'a parameter may start with / too' },
+  { id: 'inline_pwsh_value_param_runtime', group: 'inline', shell: 'bash', expect: 'sudo', command: "pwsh $OPT /home/me -Command 'sudo ls'", note: '$OPT may be -wd, and /home/me its value' },
   { id: 'inline_pwsh_var', group: 'inline', shell: 'powershell', expect: 'net', command: 'pwsh -Command "net user $name"', note: 'PowerShell fills in $name, and net runs whatever it is' },
   { id: 'inline_cmd_from_ps', group: 'inline', shell: 'powershell', expect: 'net', command: 'cmd /c net stop Spooler', note: 'cmd started from PowerShell' },
   { id: 'inline_cmd_from_ps_quoted', group: 'inline', shell: 'powershell', expect: 'net', command: 'cmd /c "net stop Spooler"', note: 'cmd drops the quotes around the command' },
