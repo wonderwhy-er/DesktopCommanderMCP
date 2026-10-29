@@ -20,9 +20,11 @@ import type { FoundCommand } from './command-reading.js';
  * - and, or and not are fish's: fish runs the command after them (false; or
  *   sudo ls runs sudo). fish is read with bash's grammar, where and is a
  *   program like any other, so they are wrappers only when the shell is fish;
- * - su, runuser, sg, script, flock, watch, runas and wsl run one command text
- *   in a shell, as bash -c does (su -c 'sudo ls', watch 'sudo ls'): their
- *   rules are TEXT_PROGRAMS, and shellRuns() gives their texts to the check;
+ * - su, runuser, sg, script, flock, watch, runas, wsl, tmux and parallel run
+ *   one command text in a shell, as bash -c does (su -c 'sudo ls', watch
+ *   'sudo ls'): their rules are TEXT_PROGRAMS, and shellRuns() gives their
+ *   texts to the check. gsudo runs its text in the shell it was started from,
+ *   as eval does: see SAME_SHELL_PROGRAMS and sameShellTexts();
  * - Start-Process (also written start or saps) is PowerShell's: the PowerShell
  *   reader gives the programs it starts, as PowerShell itself binds its
  *   FilePath (FoundCommand's filePaths);
@@ -117,6 +119,13 @@ interface PosixWrapper {
    * which is that word and the ones after it, joined with spaces (watch's 0, sg's 1, after its group)
    */
   textOperands?: number;
+  /** The words that end that text, and the words after them are no part of it: parallel's ::: before its arguments */
+  textEnds?: string[];
+  /**
+   * The words after which each word is a command text of its own, when the program is given no text before
+   * them: parallel ::: 'sudo ls' 'echo hi' runs both
+   */
+  commandArguments?: string[];
   /** Whether the options are switches that start with / and keep a value after a colon (runas /user:admin) */
   slash?: boolean;
 }
@@ -143,6 +152,16 @@ const FIND_VALUES = [
   'maxdepth', 'mindepth', 'mmin', 'mtime', 'name', 'newer', 'path', 'perm', 'printf', 'regex', 'regextype', 'samefile', 'size', 'type', 'uid',
   'used', 'user', 'wholename', 'xattrname', 'xtype', ...[...'aBcmt'].flatMap((x) => [...'aBcmt'].map((y) => `newer${x}${y}`)),
 ].map((name) => `-${name}`);
+
+/**
+ * tmux's commands that run a shell-command, read for its text (see
+ * TEXT_PROGRAMS): those in TMUX_COMMANDS, and display-popup (popup)
+ */
+const TMUX_POPUP: PosixWrapper = { letters: 'bcdehsStTwxy', flags: 'BCEkN' };
+const TMUX_TEXT_COMMANDS = new Map<string, PosixWrapper>(
+  ([...TMUX_COMMANDS, ['display-popup', TMUX_POPUP], ['popup', TMUX_POPUP]] as [string, PosixWrapper][])
+    .map(([name, rules]) => [name, { ...rules, textOperands: 0 }]),
+);
 
 /**
  * The wrappers that are programs, with their options from each one's manual
@@ -420,7 +439,8 @@ const FISH_OPTIONS: PosixWrapper = {
  * the shell that reads it: shellRuns() gives their texts to the check. Their
  * options are from their --help on Debian 12 (util-linux's su, runuser,
  * script and flock, procps' watch, sg from login) and on this PC (runas);
- * wsl's are its row in PROGRAMS.
+ * wsl's, tmux's and parallel's are their rows in PROGRAMS, and display-popup's
+ * are from OpenBSD's tmux(1).
  * - su, runuser and script run the text of -c (--command) in the user's
  *   shell, and -c can come after the user or the file too; runuser -u runs
  *   the program after the user itself, which is read the same way;
@@ -428,7 +448,12 @@ const FISH_OPTIONS: PosixWrapper = {
  * - flock runs -c's text with sh -c, or the program after the lock file;
  * - watch runs its words with sh -c;
  * - runas runs its quoted command line, which is read as cmd reads one;
- * - wsl without --exec gives its words to the Linux shell as one command line.
+ * - wsl without --exec gives its words to the Linux shell as one command line;
+ * - tmux runs -c's text in the user's shell, and the shell-command of new,
+ *   split-window, respawn-pane, display-popup and the like with sh -c when it
+ *   is one word (tmux new 'sudo ls'), the program after their options otherwise;
+ * - parallel runs its command line with a shell, once for each argument after
+ *   :::, and without a command each of those arguments is a command.
  */
 const TEXT_PROGRAMS = new Map<string, { rules: PosixWrapper; shell: string }>([
   ['su', { shell: 'sh', rules: {
@@ -461,6 +486,19 @@ const TEXT_PROGRAMS = new Map<string, { rules: PosixWrapper; shell: string }>([
   } }],
   ['runas', { shell: 'cmd', rules: { slash: true, textOperands: 0 } }],
   ['wsl', { shell: 'sh', rules: { ...PROGRAMS.get('wsl'), textOperands: 0, operandRoles: { e: 'arguments', exec: 'arguments' } } }],
+  ['tmux', { shell: 'sh', rules: { ...PROGRAMS.get('tmux'), texts: { letters: 'c', long: [] }, subcommands: TMUX_TEXT_COMMANDS } }],
+  ['parallel', { shell: 'sh', rules: {
+    ...PROGRAMS.get('parallel'), textOperands: 0, textEnds: [':::', ':::+', '::::', '::::+'], commandArguments: [':::', ':::+'],
+  } }],
+]);
+
+/**
+ * The programs that run one command text in the shell they were started
+ * from, as eval does: gsudo 'net user' runs net there (gsudo's README).
+ * sameShellTexts() gives their texts to the check.
+ */
+const SAME_SHELL_PROGRAMS = new Map<string, PosixWrapper>([
+  ['gsudo', { ...PROGRAMS.get('gsudo'), textOperands: 0 }],
 ]);
 
 /** cmd's start switches that take the next word as their value (/D also takes it in the same word: /Dpath) */
@@ -620,10 +658,10 @@ export interface OptionReadings {
   /**
    * Each command text an option gives, or for a shell the first word after its options (bash -c 'sudo ls'), with
    * the first word after it. The text is null when it is known only at run time, in whole or in part; `at` is then
-   * the word that holds it. It has no `at` when it is in the option's own word (--command='sudo ls'), and `rest`
-   * when it is the words from `at` to the end, joined with spaces (watch -n 5 sudo ls)
+   * the word that holds it. It has no `at` when it is in the option's own word (--command='sudo ls'), and `to`
+   * when it is the words from `at` up to that one, joined with spaces (watch -n 5 sudo ls)
    */
-  texts: { text: string | null; at?: number; rest?: true; after: number }[];
+  texts: { text: string | null; at?: number; to?: number; after: number }[];
   /** Each program an option names (start-stop-daemon --exec), null when known only at run time; `at` is its word, unless it is in the option's own */
   programs: { program: string | null; at?: number }[];
 }
@@ -640,7 +678,23 @@ export function shellOptionReadings(program: string, words: (string | null)[]): 
  */
 export function textProgramReadings(program: string, words: (string | null)[]): { readings: OptionReadings; shell: string } | undefined {
   const found = TEXT_PROGRAMS.get(program);
-  return found && { readings: readOptions(words, found.rules), shell: found.shell };
+  if (!found) return undefined;
+  const readings = readOptions(words, found.rules);
+  // A command of the program's own reads its words by its own rules (tmux new 'sudo ls')
+  for (const at of readings.operands) {
+    const subcommand = subcommandOf(words[at], found.rules);
+    if (!subcommand) continue;
+    readings.texts.push(...readOptions(words.slice(at), subcommand).texts.map((text) => ({
+      ...text, after: text.after + at, ...(text.at === undefined ? {} : { at: text.at + at }), ...(text.to === undefined ? {} : { to: text.to + at }),
+    })));
+  }
+  return { readings, shell: found.shell };
+}
+
+/** For a program that runs one command text in the shell it was started from (see SAME_SHELL_PROGRAMS): its options read in every way */
+export function sameShellProgramReadings(program: string, words: (string | null)[]): OptionReadings | undefined {
+  const rules = SAME_SHELL_PROGRAMS.get(program);
+  return rules && readOptions(words, rules);
 }
 
 /**
@@ -666,8 +720,22 @@ function readOptions(words: (string | null)[], rules: PosixWrapper): OptionReadi
     }
     if (role === 'arguments') return false;
     if (count === rules.textOperands) {
-      const rest = words.slice(i);
-      if (rest.length > 0) readings.texts.push({ text: rest.includes(null) ? null : rest.join(' '), at: i, rest: true, after: words.length });
+      // The text goes on to the end, or to a word that ends it (parallel's :::)
+      const end = (from: number): number => {
+        const found = words.findIndex((word, j) => j >= from && word !== null && rules.textEnds?.includes(word));
+        return found === -1 ? words.length : found;
+      };
+      const to = end(i);
+      if (to > i) {
+        const text = words.slice(i, to);
+        readings.texts.push({ text: text.includes(null) ? null : text.join(' '), at: i, to, after: to });
+        return false;
+      }
+      // With no text before them, each argument after parallel's ::: is a command of its own
+      words.forEach((word, j) => {
+        if (j < i || word === null || !rules.commandArguments?.includes(word)) return;
+        for (let k = j + 1; k < end(j + 1); k++) readings.texts.push({ text: words[k], at: k, after: k + 1 });
+      });
       return false;
     }
     readings.operands.push(i);
