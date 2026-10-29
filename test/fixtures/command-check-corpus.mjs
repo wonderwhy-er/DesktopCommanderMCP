@@ -460,6 +460,7 @@ export const CORPUS = [
   { id: 'inline_ps_positional_runtime', group: 'inline', shell: 'powershell', expect: 'unknowable', command: 'powershell $cmd', note: 'Windows PowerShell runs the value of $cmd as a command, pwsh as a script file' },
   { id: 'inline_cmd_from_bash_runtime', group: 'inline', shell: 'bash', expect: 'unknowable', command: 'cmd //c "$CMD"', note: 'cmd runs the value of $CMD; cmd itself fills in only %VAR%' },
   { id: 'inline_bash_from_cmd_runtime', group: 'inline', shell: 'cmd', expect: 'unknowable', command: 'bash -c %CMD%', note: 'cmd fills in %CMD% before bash reads it' },
+  { id: 'inline_cmd_switches_runtime', group: 'inline', shell: 'powershell', expect: 'unknowable', command: 'cmd $opts', note: "cmd's switches and its command are the value of $opts (/c net user)" },
   { id: 'inline_pwsh_value_runtime_ok', group: 'inline', shell: 'powershell', expect: null, command: "powershell -ExecutionPolicy $p -Command 'Get-Date'", note: '$p is the value of -ExecutionPolicy, not part of the command' },
   // eval and Invoke-Expression run a command text in the same shell
   { id: 'inline_eval', group: 'inline', shell: 'bash', expect: 'sudo', command: "eval 'sudo ls'", note: 'eval runs sudo' },
