@@ -1,32 +1,43 @@
 #!/usr/bin/env node
 
 /**
- * The config editor shows a boolean setting that config.json doesn't have as on,
- * because the server treats it as on.
+ * The config editor shows the on/off settings as the server reads them from
+ * config.json.
  *
- * The server counts telemetryEnabled and toolCallAuditLogEnabled as on unless
- * config.json says false. A config.json written before a setting existed has no
- * value for it, so get_config sends that entry without a value, and the editor
- * showed its switch as off. The test opens the editor page as a client gets it
- * (getConfigEditorResourceText()) in jsdom, answers the host's side of the
- * connection, and answers get_config with every boolean setting missing, then
- * with every one false.
+ * telemetryEnabled and toolCallAuditLogEnabled count as on unless config.json
+ * says false. A config.json written before a setting existed has no value for
+ * it, which the server reads as on, and one edited by hand can say " FALSE ",
+ * which it reads as off; the editor must show the same. The test edits
+ * config.json by hand, starts the server, opens the editor page as a client
+ * gets it (getConfigEditorResourceText()) in jsdom, answers the host's side of
+ * the connection, and gives the editor the server's get_config answer.
  *
  * Runs as part of `npm test`, or standalone:
- *   node test/test-config-editor-missing-setting.js
+ *   node test/run-all-tests.js test-config-editor-missing-setting.js
  */
 import assert from 'assert';
+import fs from 'fs';
 import { JSDOM, VirtualConsole } from 'jsdom';
-import { CONFIG_FIELD_DEFINITIONS } from '../dist/config-field-definitions.js';
+import { CONFIG_FILE } from '../dist/config.js';
 import { getConfigEditorResourceText } from '../dist/ui/resources.js';
-import { runIfMain } from './helpers/run-if-main.js';
+import { connectToServer, closeClient } from './helpers/mcp-client.js';
+import { runIfMain, skip } from './helpers/run-if-main.js';
+import { isTestHome } from './helpers/test-env.js';
 import { waitUntil } from './helpers/wait.js';
 
-const BOOLEAN_KEYS = Object.keys(CONFIG_FIELD_DEFINITIONS)
-  .filter((key) => CONFIG_FIELD_DEFINITIONS[key].valueType === 'boolean');
+/** The server's get_config answer */
+async function getConfig() {
+  const client = await connectToServer('config-editor-test');
+  try {
+    return await client.callTool({ name: 'get_config', arguments: {} });
+  } finally {
+    await closeClient(client);
+  }
+}
 
-/** Opens the editor with get_config answering `entries`, and returns the keys whose switch is on */
-async function keysShownOn(entries) {
+/** Opens the editor with get_config answering `configAnswer`, and returns the keys whose switch is on */
+async function keysShownOn(configAnswer) {
+  const entries = configAnswer.structuredContent.entries;
   // The page logs every message it sends and receives: show only its errors
   const virtualConsole = new VirtualConsole();
   virtualConsole.on('error', (...args) => console.error(...args));
@@ -40,7 +51,7 @@ async function keysShownOn(entries) {
       window.ResizeObserver = class { observe() {} disconnect() {} };
       // The editor calls tools through window.mcp when the host provides it
       window.mcp = {
-        callTool: async (name) => (name === 'get_config' ? { structuredContent: { entries } } : { content: [] }),
+        callTool: async (name) => (name === 'get_config' ? configAnswer : { content: [] }),
       };
       // The host's side of the connection: the editor posts ui/initialize to its
       // parent, which is this window here, and waits for the host's answer
@@ -53,7 +64,8 @@ async function keysShownOn(entries) {
   });
   try {
     const switches = () => [...dom.window.document.querySelectorAll('input[data-action="toggle-boolean"]')];
-    await waitUntil(() => switches().length === entries.length, 10_000, 'the editor shows a switch for each setting');
+    const booleans = entries.filter((entry) => entry.valueType === 'boolean').length;
+    await waitUntil(() => switches().length === booleans, 10_000, 'the editor shows a switch for each on/off setting');
     return switches().filter((input) => input.checked).map((input) => entries[Number(input.dataset.keyIndex)].key);
   } finally {
     dom.window.close();
@@ -61,6 +73,10 @@ async function keysShownOn(entries) {
 }
 
 async function runTests() {
+  if (!isTestHome()) {
+    return skip('test-config-editor-missing-setting.js edits config.json in the home; run it through the runner: node test/run-all-tests.js test-config-editor-missing-setting.js');
+  }
+
   const failures = [];
   async function test(name, fn) {
     try {
@@ -72,22 +88,24 @@ async function runTests() {
     }
   }
 
-  await test('a boolean setting missing from config.json shows as on', async () => {
-    // get_config's answer drops a value config.json doesn't have
-    const missing = BOOLEAN_KEYS.map((key) => ({ key, valueType: 'boolean', editable: true }));
-    assert.deepStrictEqual(await keysShownOn(missing), BOOLEAN_KEYS);
-  });
+  // The runner's home is new, so the first start writes a fresh config.json
+  await getConfig();
+  // Edited by hand while no server runs
+  const config = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8'));
+  config.telemetryEnabled = ' FALSE ';
+  delete config.toolCallAuditLogEnabled;
+  fs.writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2));
+  const shownOn = await keysShownOn(await getConfig());
 
-  await test('a boolean setting set to false shows as off', async () => {
-    const off = BOOLEAN_KEYS.map((key) => ({ key, value: false, valueType: 'boolean', editable: true }));
-    assert.deepStrictEqual(await keysShownOn(off), []);
+  await test('" FALSE " written by hand in config.json shows as off, and a setting missing from it as on', () => {
+    assert.deepStrictEqual(shownOn, ['toolCallAuditLogEnabled']);
   });
 
   if (failures.length > 0) {
     console.error(`\n${failures.length} check(s) failed`);
     return false;
   }
-  console.log(`\nThe config editor shows ${BOOLEAN_KEYS.join(' and ')} as on when config.json has no value for them`);
+  console.log('\nThe config editor shows the on/off settings as the server reads them from config.json');
   return true;
 }
 
