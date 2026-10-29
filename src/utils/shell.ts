@@ -251,7 +251,7 @@ export function getShellType(shell: string): ShellType {
 }
 
 /** The POSIX shells (and fish) by programName(): each runs a script file it's given (bash deploy.sh) */
-export const POSIX_SHELLS = new Set(['bash', 'sh', 'dash', 'zsh', 'ksh', 'mksh', 'ash', 'fish']);
+export const POSIX_SHELLS = new Set(['bash', 'sh', 'dash', 'zsh', 'ksh', 'ksh93', 'mksh', 'ash', 'fish']);
 
 /**
  * The shell start_process runs a command in: the one asked for, else the
