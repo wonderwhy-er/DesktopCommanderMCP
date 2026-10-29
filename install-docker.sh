@@ -523,7 +523,8 @@ find_claude_desktop_pids() {
 # Stop the Claude Desktop app if it runs, and nothing else
 stop_claude_desktop() {
     local pids
-    pids=$(find_claude_desktop_pids)
+    # pgrep exits 1 when nothing runs, which with set -e would end the installer here
+    pids=$(find_claude_desktop_pids) || true
     if [ -n "$pids" ]; then
         kill $pids 2>/dev/null || true
         sleep 2
