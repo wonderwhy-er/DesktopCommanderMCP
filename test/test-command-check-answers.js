@@ -116,6 +116,7 @@ async function testUnseen(powershells) {
     ['powershell', '& $tool stop Spooler', runTime('$tool')],
     ['bash', 'bash deploy.sh', inFile('deploy.sh')],
     ['bash', 'bash -o pipefail -x deploy.sh', inFile('deploy.sh')],
+    ['bash', 'bash -euo pipefail deploy.sh', inFile('deploy.sh')],
     ['bash', 'source ./env.sh', inFile('./env.sh')],
     ['bash', 'bash "$SCRIPT"', runTime('bash')],
     ['bash', '/usr/bin/bash deploy.sh', inFile('deploy.sh')],
