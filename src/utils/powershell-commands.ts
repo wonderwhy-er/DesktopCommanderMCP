@@ -1,4 +1,5 @@
 import { spawn, type ChildProcess } from 'child_process';
+import { randomBytes } from 'crypto';
 import type { Socket } from 'net';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -13,6 +14,9 @@ import type { CommandReading } from './command-reading.js';
  * run PowerShell commands, and it is kept running: a check then takes a few
  * milliseconds instead of PowerShell's start (about a second for Windows
  * PowerShell). It is not a terminal session, so list_sessions never shows it.
+ * It loads the user's profile, as the PowerShell a command runs in does
+ * (start_process starts it without -NoProfile), so it knows the profile's
+ * aliases.
  */
 
 /** How long a check waits for a running helper's answer. A helper that doesn't answer is stopped, and the check fails. */
@@ -20,7 +24,8 @@ export const HELPER_TIMEOUT_MS = 5000;
 
 /**
  * How long the first check waits after a helper starts, PowerShell's start
- * included: about a second for Windows PowerShell, longer on a busy machine
+ * and the user's profile included: about a second for Windows PowerShell,
+ * longer on a busy machine or with a slow profile
  */
 export const HELPER_START_TIMEOUT_MS = 15000;
 
@@ -29,8 +34,9 @@ const mcpRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..',
 
 /**
  * The helper, run with -EncodedCommand. It reads one JSON request per line
- * ({ id, command }) and writes one JSON answer per line. It only parses the
- * command and looks names up with Get-Command; it never runs the command.
+ * ({ id, token, command }) and writes one JSON answer per line. It only
+ * parses the command and looks names up with Get-Command; it never runs the
+ * command.
  * Module autoloading is off so that looking up a name never imports a module.
  * Each CommandAst is a command, also inside script blocks and functions. Its
  * name is what it means in this PowerShell: an alias gives its target, a
@@ -50,20 +56,28 @@ const mcpRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..',
  * gives a function a new body). Nor when it runs code the helper doesn't
  * read: Invoke-Expression, Import-Module, Add-Type, a script file, a name
  * known only at run time, a method call ([scriptblock]::Create(...).Invoke())
- * or ForEach-Object calling one.
+ * or ForEach-Object calling one. Nor is a function the session has an alias
+ * of, such as one the user's profile sets.
  * Offsets are .NET string indexes, the same as JavaScript's.
+ * The profile runs first, and may print anything and define functions and
+ * aliases with any name. So the helper writes an empty line before its first
+ * answer (text the profile printed without a newline ends there), puts the
+ * request's token in each answer (the reader takes no other line for one),
+ * and calls each cmdlet by its module's name, which no function or alias
+ * replaces.
  */
 const HELPER_SCRIPT = `
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
-Import-Module Microsoft.PowerShell.Utility
+Microsoft.PowerShell.Core\\Import-Module Microsoft.PowerShell.Utility
 $PSModuleAutoLoadingPreference = 'None'
-$utf8 = New-Object System.Text.UTF8Encoding $false
-$reader = New-Object System.IO.StreamReader ([Console]::OpenStandardInput()), $utf8
-$writer = New-Object System.IO.StreamWriter ([Console]::OpenStandardOutput()), $utf8
+$utf8 = Microsoft.PowerShell.Utility\\New-Object System.Text.UTF8Encoding $false
+$reader = Microsoft.PowerShell.Utility\\New-Object System.IO.StreamReader ([Console]::OpenStandardInput()), $utf8
+$writer = Microsoft.PowerShell.Utility\\New-Object System.IO.StreamWriter ([Console]::OpenStandardOutput()), $utf8
 $writer.AutoFlush = $true
+$writer.WriteLine()
 function Get-Meaning([string]$name) {
-  $found = @(Get-Command -Name ([Management.Automation.WildcardPattern]::Escape($name)) -ErrorAction SilentlyContinue)
+  $found = @(Microsoft.PowerShell.Core\\Get-Command -Name ([Management.Automation.WildcardPattern]::Escape($name)) -ErrorAction SilentlyContinue)
   if ($found.Count -eq 0) { return $name }
   if ($found[0].CommandType -eq 'Alias') { return $found[0].Definition }
   return $found[0].Name
@@ -101,8 +115,8 @@ function Test-RunsUnreadCode($found) {
 while ($true) {
   $line = $reader.ReadLine()
   if ($null -eq $line) { break }
-  $request = ConvertFrom-Json $line
-  $answer = @{ id = $request.id }
+  $request = Microsoft.PowerShell.Utility\\ConvertFrom-Json $line
+  $answer = @{ id = $request.id; token = $request.token }
   try {
     $tokens = $null
     $errors = $null
@@ -125,21 +139,24 @@ while ($true) {
       $isBlockValue = { $args[0] -is [Management.Automation.Language.ScriptBlockExpressionAst] }
       $isFunctionOrAliasVariable = { $args[0] -is [Management.Automation.Language.VariableExpressionAst] -and $args[0].VariablePath.DriveName -in 'function', 'alias' }
       $isMethodCall = { $args[0] -is [Management.Automation.Language.InvokeMemberExpressionAst] }
-      $removers = @($answer.commands | Where-Object { (Test-RemovesFunction $_) -or (Test-RunsUnreadCode $_) })
+      $removers = @($answer.commands | Microsoft.PowerShell.Core\\Where-Object { (Test-RemovesFunction $_) -or (Test-RunsUnreadCode $_) })
       $functionsMayGo = $removers.Count -gt 0 -or $ast.Find($isBlockValue, $true) -or $ast.Find($isFunctionOrAliasVariable, $true) -or $ast.Find($isMethodCall, $true)
       $statements = if ($ast.EndBlock -and -not $functionsMayGo) { $ast.EndBlock.Statements } else { @() }
       $answer.functions = @(foreach ($statement in $statements) {
-        if ($statement -is [Management.Automation.Language.FunctionDefinitionAst]) { @{ name = $statement.Name; end = $statement.Extent.EndOffset } }
+        if ($statement -isnot [Management.Automation.Language.FunctionDefinitionAst]) { continue }
+        # An alias of its name, such as one the profile sets, comes before the function
+        $alias = Microsoft.PowerShell.Utility\\Get-Alias -Name ([Management.Automation.WildcardPattern]::Escape($statement.Name)) -ErrorAction SilentlyContinue
+        if (-not $alias) { @{ name = $statement.Name; end = $statement.Extent.EndOffset } }
       })
     }
   } catch {
     $answer.error = $_.Exception.Message
   }
-  $writer.WriteLine((ConvertTo-Json $answer -Compress -Depth 6))
+  $writer.WriteLine((Microsoft.PowerShell.Utility\\ConvertTo-Json $answer -Compress -Depth 6))
 }
 `;
 
-const HELPER_ARGS = ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(HELPER_SCRIPT, 'utf16le').toString('base64')];
+const HELPER_ARGS = ['-NonInteractive', '-EncodedCommand', Buffer.from(HELPER_SCRIPT, 'utf16le').toString('base64')];
 
 interface PendingRequest {
   resolve: (reading: CommandReading) => void;
@@ -155,6 +172,8 @@ export class PowerShellHelper {
   private timer: NodeJS.Timeout | undefined;
   /** Whether the running helper process has answered yet: until then its start counts in the time limit */
   private answered = false;
+  /** Made at each start and sent with every request; an answer has it, a line the profile printed doesn't */
+  private token = '';
 
   /** args replace the helper's arguments, for a stand-in in tests */
   constructor(private readonly program: string, private readonly args: string[] = HELPER_ARGS) {}
@@ -172,7 +191,7 @@ export class PowerShellHelper {
       this.pending.set(id, { resolve, reject });
       // One time limit for every request waiting: the helper answers in order, so the oldest is due first
       this.timer ??= this.startTimeLimit();
-      child.stdin?.write(JSON.stringify({ id, command }) + '\n');
+      child.stdin?.write(JSON.stringify({ id, token: this.token, command }) + '\n');
     });
   }
 
@@ -189,7 +208,7 @@ export class PowerShellHelper {
 
   private start(): ChildProcess {
     // The environment commands get, so names are looked up as the command will see them.
-    // PowerShell's module analysis cache is off: the helper writes no files (with a home
+    // PowerShell's module analysis cache is off, so the helper doesn't write it (with a home
     // that has no AppData folder, PowerShell would write it into the working folder).
     const env = { ...getCommandEnvironment(), PSModuleAnalysisCachePath: process.platform === 'win32' ? 'NUL' : '/dev/null' };
     // Not in the caller's working folder: the helper keeps running, and Windows can't delete a folder a process is in
@@ -197,6 +216,7 @@ export class PowerShellHelper {
     this.child = child;
     this.output = '';
     this.answered = false;
+    this.token = randomBytes(16).toString('hex');
     child.stdout?.setEncoding('utf8');
     child.stdout?.on('data', (chunk: string) => this.onOutput(child, chunk));
     // Its error text isn't needed: a failed read says what happened. Read so the pipe never fills.
@@ -233,7 +253,8 @@ export class PowerShellHelper {
       // Not an answer: PowerShell can print other lines; the read's time limit still applies
       return;
     }
-    const request = this.pending.get(answer?.id);
+    // Only the helper has this start's token: the profile ran before the helper read a request
+    const request = answer?.token === this.token ? this.pending.get(answer.id) : undefined;
     if (!request) return;
     this.pending.delete(answer.id);
     this.answered = true;
