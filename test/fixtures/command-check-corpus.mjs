@@ -28,9 +28,10 @@
  * (for … end, ( )), which the bash reader can't parse;
  * ownfunc = a script's own function named like a blocked program;
  * wrapper = a program a wrapper starts, past the wrapper's own options (env
- * sudo ls runs sudo) or in the text env -S splits (env -S 'sudo ls'), and
- * words of a wrapper that are no program (command -v sudo, Windows' timeout
- * /t 5);
+ * sudo ls runs sudo), also past one its rules don't list, which may take a
+ * value (nice -X 10 sudo ls), or in the text env -S splits (env -S 'sudo
+ * ls'), and words of a wrapper that are no program (command -v sudo,
+ * Windows' timeout /t 5);
  * runtime = a program chosen when the command runs; file = the commands in a
  * script file given to a shell; long = the 14k-char case; control = a plain
  * blocked program, to keep every approach honest.
@@ -300,6 +301,18 @@ export const CORPUS = [
   { id: 'wrap_exec', group: 'wrapper', shell: 'bash', expect: 'su', command: 'exec su -', note: 'exec runs su' },
   { id: 'wrap_exec_sudo', group: 'wrapper', shell: 'bash', expect: 'sudo', command: 'exec sudo ls', note: 'exec runs sudo' },
   { id: 'wrap_command', group: 'wrapper', shell: 'bash', expect: 'sudo', command: 'command sudo ls', note: 'command runs sudo' },
+  { id: 'wrap_doas', group: 'wrapper', shell: 'bash', expect: 'sudo', command: 'doas sudo ls', note: 'doas runs sudo' },
+  { id: 'wrap_doas_user', group: 'wrapper', shell: 'bash', expect: 'reboot', command: 'doas -n -u root reboot', note: "doas's -u takes a user, and -n takes no value" },
+  { id: 'wrap_setsid', group: 'wrapper', shell: 'bash', expect: 'sudo', command: 'setsid sudo ls', note: 'setsid runs sudo' },
+  { id: 'wrap_stdbuf', group: 'wrapper', shell: 'bash', expect: 'sudo', command: 'stdbuf -o0 sudo ls', note: 'stdbuf runs sudo after -o0' },
+  { id: 'wrap_stdbuf_long', group: 'wrapper', shell: 'bash', expect: 'reboot', command: 'stdbuf --output L -e0 reboot', note: "stdbuf's options, with the value in the next word and in the same one" },
+  { id: 'wrap_chroot', group: 'wrapper', shell: 'bash', expect: 'sudo', command: 'chroot / sudo ls', note: 'chroot runs sudo after its new root /' },
+  { id: 'wrap_chroot_options', group: 'wrapper', shell: 'bash', expect: 'reboot', command: 'chroot --userspec=nobody --skip-chdir /srv reboot', note: "chroot's options, then its new root" },
+  { id: 'wrap_pkexec', group: 'wrapper', shell: 'bash', expect: 'sudo', command: 'pkexec sudo ls', note: 'pkexec runs sudo' },
+  { id: 'wrap_pkexec_user', group: 'wrapper', shell: 'bash', expect: 'reboot', command: 'pkexec --keep-cwd --user root reboot', note: "pkexec's --user takes a user" },
+  { id: 'wrap_busybox', group: 'wrapper', shell: 'sh', expect: 'sudo', command: 'busybox sudo ls', note: 'busybox runs its own program that its first word names, such as its su or sh' },
+  { id: 'wrap_wsl', group: 'wrapper', shell: 'powershell', expect: 'sudo', command: 'wsl sudo ls', note: 'wsl runs sudo in Linux' },
+  { id: 'wrap_wsl_options', group: 'wrapper', shell: 'cmd', expect: 'reboot', command: 'wsl -d Ubuntu --user root --exec reboot', note: "wsl's -d and --user take a value, and --exec runs the program after it" },
   { id: 'wrap_chain', group: 'wrapper', shell: 'bash', expect: 'reboot', command: 'env -i FOO=1 nohup nice -n 5 reboot', note: 'env runs nohup, which runs nice, which runs reboot' },
   { id: 'wrap_env_options', group: 'wrapper', shell: 'zsh', expect: 'reboot', command: 'env -u HOME --chdir=/tmp reboot', note: "env's options and their values" },
   { id: 'wrap_timeout_options', group: 'wrapper', shell: 'sh', expect: 'reboot', command: 'timeout -s KILL --kill-after=2 5 reboot', note: "timeout's options, then its duration" },
@@ -308,9 +321,18 @@ export const CORPUS = [
   { id: 'wrap_exec_name', group: 'wrapper', shell: 'bash', expect: 'reboot', command: 'exec -a name reboot', note: "exec's -a takes a name" },
   { id: 'wrap_dashdash', group: 'wrapper', shell: 'bash', expect: 'reboot', command: 'nohup -- reboot', note: '-- ends the options' },
   { id: 'wrap_runtime_option', group: 'wrapper', shell: 'bash', expect: 'reboot', command: 'nice $NICE_OPTS reboot', note: '$NICE_OPTS may be options, so reboot may be the program' },
+  { id: 'wrap_runtime_option_value', group: 'wrapper', shell: 'bash', expect: 'sudo', command: 'nice $NICE_OPTS 10 sudo ls', note: '$NICE_OPTS may be -n, which takes 10, so sudo may be the program' },
+  { id: 'wrap_unknown_option', group: 'wrapper', shell: 'bash', expect: 'sudo', command: 'timeout --some-new-option 1 5 sudo ls', note: "an option timeout's rules don't list may take a value: then 1 is its value, 5 the duration, and timeout runs sudo" },
+  { id: 'wrap_unknown_letter', group: 'wrapper', shell: 'bash', expect: 'sudo', command: 'nice -X 10 sudo ls', note: "-X, which nice's rules don't list, may take 10 as its value, so sudo may be the program" },
+  { id: 'wrap_unknown_duration', group: 'wrapper', shell: 'bash', expect: null, command: 'timeout --some-new-option sudo ls', note: "sudo is timeout's duration, or the option's value and ls the duration: timeout runs ls or nothing" },
   { id: 'wrap_option_value', group: 'wrapper', shell: 'bash', expect: null, command: 'env -u sudo ls', note: 'sudo is the variable env unsets; env runs ls' },
   { id: 'wrap_argument', group: 'wrapper', shell: 'bash', expect: null, command: 'timeout 5 echo reboot', note: 'reboot is what echo prints' },
   { id: 'wrap_command_v', group: 'wrapper', shell: 'bash', expect: null, command: 'command -v sudo', note: 'command -v only says where sudo is' },
+  { id: 'wrap_flag', group: 'wrapper', shell: 'bash', expect: null, command: 'env -i echo sudo', note: "env's -i takes no value, so echo is the program and sudo what it prints" },
+  { id: 'wrap_flag_long', group: 'wrapper', shell: 'bash', expect: null, command: 'timeout --foreground 5 echo reboot', note: '--foreground takes no value: 5 is the duration' },
+  { id: 'wrap_flag_setsid', group: 'wrapper', shell: 'bash', expect: null, command: 'setsid -w echo reboot', note: "setsid's -w takes no value" },
+  { id: 'wrap_flag_wsl', group: 'wrapper', shell: 'cmd', expect: null, command: 'wsl -e echo sudo', note: "wsl's -e takes no value: it runs echo without a Linux shell" },
+  { id: 'wrap_nice_old_echo', group: 'wrapper', shell: 'bash', expect: null, command: 'nice -10 echo reboot', note: 'in the old way to write nice -n 10, 10 is in the same word' },
   { id: 'wrap_timeout_wait', group: 'wrapper', shell: 'cmd', expect: null, command: 'timeout /t 5', note: "Windows' timeout only waits, here for 5 seconds" },
   { id: 'wrap_timeout_wait_runtime', group: 'wrapper', shell: 'powershell', expect: null, command: 'timeout /t $n', note: "Windows' timeout only waits, for $n seconds, and GNU's stops at /t, which is no duration: no program runs" },
   { id: 'wrap_timeout_wait_case', group: 'wrapper', shell: 'cmd', expect: null, command: 'timeout /T %n% /NOBREAK', note: "Windows' timeout takes its switches in any case" },
