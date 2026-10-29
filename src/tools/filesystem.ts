@@ -342,17 +342,17 @@ const folderLookups = new Map<string, LookupLine>();
 
 /**
  * Stalled folders: folders with a lookup that passed its time limit and hasn't
- * returned yet, with how many such lookups each has. A path in one of these
- * folders, or below it, fails at once instead of waiting for a lookup that
+ * returned yet, with how many such lookups each has. The folder itself, or a
+ * path in or below it, fails at once instead of waiting for a lookup that
  * won't answer.
  */
 const stalledFolders = new Map<string, { folder: string; stalled: number }>();
 
-/** The stalled folder that `absolutePath` is in, at any depth, if there is one */
+/** The stalled folder, if there is one, for which `absolutePath` is the folder itself, or a path in or below it */
 function findStalledFolder(absolutePath: string): string | undefined {
     const comparable = comparablePath(absolutePath);
     for (const [key, { folder }] of stalledFolders) {
-        if (isInside(comparable, key)) {
+        if (comparable === key || isInside(comparable, key)) {
             // The error names it, and it can be a folder above this path's own,
             // so telemetry replaces it whole
             addToolCallPaths(folder);
@@ -544,7 +544,7 @@ export async function validatePath(requestedPath: string, { entry = false }: { e
         }
     };
 
-    // A path in a stalled folder, or below it, fails at once, without a lookup on the disk
+    // A stalled folder itself, or a path in or below it, fails at once, without a lookup on the disk
     const stalledFolder = findStalledFolder(absoluteOriginal);
     if (stalledFolder !== undefined) {
         throw stalledFolderError(stalledFolder, absoluteOriginal);
