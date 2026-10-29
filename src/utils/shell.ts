@@ -200,19 +200,35 @@ export function detectAvailableShells(): string[] {
   return [...shells];
 }
 
+// WSL's entry in binfmt_misc that lets Linux run Windows programs. Distros that run systemd get it late, under the second name
+const WSL_INTEROP_ENTRIES = ['/proc/sys/fs/binfmt_misc/WSLInterop', '/proc/sys/fs/binfmt_misc/WSLInterop-late'];
+let wslInterop: boolean | undefined; // undefined = not read yet
+
+/**
+ * Whether this is WSL, which runs Windows programs from Linux. WSL sets
+ * WSL_DISTRO_NAME for what it starts. What runs without it, through sudo
+ * (which clears the environment) or as a service, is known by WSL's interop
+ * entry, read once. A Docker container on WSL's kernel has no such entry and
+ * can't run Windows programs.
+ */
+function isWsl(): boolean {
+  if (process.env.WSL_DISTRO_NAME) return true;
+  wslInterop ??= WSL_INTEROP_ENTRIES.some((entry) => fs.existsSync(entry));
+  return wslInterop;
+}
+
 /**
  * A program's name without its folder or extension, lowercased:
  * C:\Windows\System32\NET.EXE is "net". The folder goes as Windows writes it
  * (\ or /, or a drive, as in C:sc.exe) on every system. The extension is .ps1
  * (PowerShell runs deploy.ps1 for deploy), or on Windows one of PATHEXT's as
- * commands run with it (repaired, #481). WSL, which sets WSL_DISTRO_NAME for
- * what it starts, runs Windows programs from Linux (sc.exe stop Spooler), so
- * there too. The command check compares the names it finds and the
- * blockedCommands entries in this form.
+ * commands run with it (repaired, #481). WSL runs Windows programs from Linux
+ * (sc.exe stop Spooler), so there too. The command check compares the names it
+ * finds and the blockedCommands entries in this form.
  */
 export function programName(name: string): string {
   const program = path.win32.basename(name).toLowerCase();
-  const extensions = ['.ps1', ...(isWindows() || process.env.WSL_DISTRO_NAME ? getRepairedPathExt().split(';') : [])].map((ext) => ext.trim().toLowerCase());
+  const extensions = ['.ps1', ...(isWindows() || isWsl() ? getRepairedPathExt().split(';') : [])].map((ext) => ext.trim().toLowerCase());
   const extension = path.extname(program);
   return extension && extensions.includes(extension) ? program.slice(0, -extension.length) : program;
 }

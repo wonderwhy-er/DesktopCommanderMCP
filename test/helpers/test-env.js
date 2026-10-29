@@ -14,8 +14,9 @@ const TEST_HOME_PREFIX = 'dc-test-home-';
  *   production server
  * - no FORCE_COLOR, so processes the tests start print the same plain text
  *   whichever terminal launched the run
- * - no WSL_DISTRO_NAME, so a run in WSL reads command names as on Linux; a
- *   test of WSL's reading sets it itself
+ * - no WSL_DISTRO_NAME, so a test that reads command names as on Linux needs
+ *   only to stand in for WSL's interop entry; a test of WSL's reading sets it
+ *   itself
  * Values already set by the caller win; tests that need others set them themselves.
  */
 export function createTestEnv() {
