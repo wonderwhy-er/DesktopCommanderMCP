@@ -233,6 +233,13 @@ setup_persistent_volumes() {
     print_verbose "Persistent environment ready - your tools will survive restarts"
 }
 
+# Ends the installer before anything in the dc-system volume has changed
+stop_before_volume_update() {
+    print_error "$1"
+    print_info "Nothing was changed. Run the installer again."
+    exit 1
+}
+
 # Bring the pulled image into the dc-system volume. The volume keeps /usr, so
 # without this a new image's Desktop Commander and its Chromium stay hidden
 # behind the ones from the image the volume was first made with.
@@ -240,8 +247,18 @@ update_system_volume() {
     print_info "Updating Desktop Commander in your persistent volume dc-system..."
 
     # Nothing may use the volume while it is copied: stop the containers that have it (found by
-    # the volume, not ancestor=, which after the pull no longer matches the older image's containers)
-    docker ps -q --filter "volume=dc-system" | xargs -r docker stop >/dev/null 2>&1 || true
+    # the volume, not ancestor=, which after the pull no longer matches the older image's containers),
+    # then ask again. If Docker doesn't answer, or one still runs, stop before anything changes.
+    local containers
+    containers=$(docker ps -q --filter "volume=dc-system") ||
+        stop_before_volume_update "Docker didn't answer which containers use the volume dc-system"
+    if [ -n "$containers" ]; then
+        docker stop $containers >/dev/null 2>&1 || true
+        containers=$(docker ps -q --filter "volume=dc-system") ||
+            stop_before_volume_update "Docker didn't answer which containers use the volume dc-system"
+        [ -z "$containers" ] ||
+            stop_before_volume_update "Desktop Commander's container is still running and uses the volume dc-system"
+    fi
 
     # Copies the new image's /usr into the volume, mounted at /target, so an update reaches users
     # whose /usr is kept in that volume. Desktop Commander's own folder is replaced; the rest is
