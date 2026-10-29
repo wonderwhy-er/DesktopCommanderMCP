@@ -11,16 +11,18 @@
 // (~/.local/bin/claude). It asks this system's installer which processes are
 // the desktop app: on Windows install-docker.ps1's Find-ClaudeProcess, with the
 // folders it looks in moved into a temporary folder; on macOS and Linux
-// install-docker.sh's find_claude_desktop_pids. Only when the answer is the
-// desktop stand-in alone does it run the stop step for real (Stop-ClaudeProcess,
-// stop_claude_desktop), so nothing else on the machine is ever stopped. Then
-// the desktop stand-in must have stopped, and the Claude Code stand-in must
-// still run.
+// install-docker.sh's find_claude_desktop_pids. Only the test's own stand-ins
+// count in the answer, so a Claude Desktop open on the machine changes nothing.
+// Then it runs the stop step (Stop-ClaudeProcess, stop_claude_desktop) with the
+// installer's find step limited to the stand-ins, so nothing else on the
+// machine is ever stopped. The desktop stand-in must have stopped, and the
+// Claude Code stand-in must still run.
 //
 // Before the stand-ins start, the stop step runs with no desktop app running,
 // and the installer must go on after it. install-docker.sh runs with set -e,
-// and pgrep exits 1 when it finds nothing; there a stand-in pgrep finds
-// nothing, so nothing on the machine is looked at or stopped.
+// and its find step can exit 1 when it finds nothing, as pgrep does on macOS;
+// there a stand-in find step finds nothing and exits 1, so nothing on the
+// machine is looked at or stopped.
 //
 // Run, on Windows, macOS or Linux: node test/docker-installer-restart.test.js
 // Exit code: 1 if a check fails.
@@ -83,12 +85,14 @@ const movedEnv = {
 
 const nothingRuns = windows
   ? runInstallerPs1('Write-Output ("STOPPED " + (Stop-ClaudeProcess))', { env: movedEnv })
-  : runInstallerSh(`OS=${platform}; pgrep() { return 1; }; stop_claude_desktop; echo "AFTER THE STOP STEP"`);
+  : runInstallerSh(`OS=${platform}; find_claude_desktop_pids() { return 1; }; stop_claude_desktop; echo "AFTER THE STOP STEP"`);
 check('with no desktop app running, the installer goes on after the stop step',
   (windows ? /^STOPPED True$/m : /^AFTER THE STOP STEP$/m).test(nothingRuns.stdout), `exit code ${nothingRuns.status}`);
 
 const desktop = await startStandIn(desktopFile);
 const code = await startStandIn(codeFile);
+const standIns = [desktop, code];
+const standInPids = standIns.map((child) => child.pid);
 try {
   check('the two stand-ins run', isRunning(desktop.pid) && isRunning(code.pid), `desktop ${desktop.pid}, Claude Code ${code.pid}`);
 
@@ -101,24 +105,24 @@ try {
     const pids = windows
       ? JSON.parse(/^PIDS (.*)$/m.exec(found.stdout)?.[1] ?? 'null') ?? []
       : found.stdout.split('\n').filter(Boolean).map(Number);
-    const others = pids.filter((pid) => pid !== desktop.pid);
     const installer = windows ? "install-docker.ps1's Find-ClaudeProcess" : "install-docker.sh's find_claude_desktop_pids";
-    check(`${installer} finds the desktop stand-in`, pids.includes(desktop.pid), `found ${JSON.stringify(pids)}`);
-    check(`${installer} finds nothing else`, others.length === 0,
-      others.length ? `${others.includes(code.pid) ? 'the Claude Code stand-in and ' : ''}${others.filter((pid) => pid !== code.pid).length} other process(es)` : '');
+    check(`${installer} finds the desktop stand-in`, pids.includes(desktop.pid), `found the stand-ins ${JSON.stringify(pids.filter((pid) => standInPids.includes(pid)))}`);
+    check(`${installer} doesn't find the Claude Code stand-in`, !pids.includes(code.pid));
 
-    // The stop step runs for real only when it can stop nothing but the desktop stand-in
-    if (pids.length === 1 && pids[0] === desktop.pid) {
-      const stopped = windows
-        ? runInstallerPs1('$null = Stop-ClaudeProcess', { env: movedEnv })
-        : runInstallerSh(`OS=${platform} && stop_claude_desktop`);
-      check('the stop step stops the desktop stand-in', (await waitForExit([desktop.pid])).length === 0, stopped.status === 0 ? '' : stopped.stderr.trim());
-      check('the Claude Code stand-in still runs', isRunning(code.pid));
-    }
+    // The stop step, with the installer's find step limited to the stand-ins: it can stop nothing
+    // else on the machine, not even a Claude Desktop that is open there
+    const limitFind = windows
+      ? `$installerFind = \${function:Find-ClaudeProcess}\nfunction Find-ClaudeProcess { & $installerFind | Where-Object { $_.Id -in @(${standInPids.join(', ')}) } }`
+      : `eval "installer_$(declare -f find_claude_desktop_pids)"; find_claude_desktop_pids() { installer_find_claude_desktop_pids | grep -x -e ${standInPids.join(' -e ')}; }`;
+    const stopped = windows
+      ? runInstallerPs1(`${limitFind}\n$null = Stop-ClaudeProcess`, { env: movedEnv })
+      : runInstallerSh(`OS=${platform}; ${limitFind}; stop_claude_desktop`);
+    check('the stop step stops the desktop stand-in', (await waitForExit([desktop.pid])).length === 0, stopped.status === 0 ? '' : stopped.stderr.trim());
+    check('the Claude Code stand-in still runs', isRunning(code.pid));
   }
 } finally {
-  for (const child of [desktop, code]) if (isRunning(child.pid)) child.kill();
-  await waitForExit([desktop.pid, code.pid]);
+  for (const child of standIns) if (isRunning(child.pid)) child.kill();
+  await waitForExit(standInPids);
   rmSync(temp, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
 }
 process.exitCode = failed ? 1 : 0;
