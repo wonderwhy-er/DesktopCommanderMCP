@@ -210,6 +210,7 @@ export class RemoteChannel {
     private channel: RealtimeChannel | null = null;
     private heartbeatInterval: NodeJS.Timeout | null = null;
     private connectionCheckInterval: NodeJS.Timeout | null = null;
+    private heartbeatDeviceId: string | null = null;
     // Single-slot queue keeping concurrent `status` PATCHes in order.
     private statusWriteChain: Promise<void> = Promise.resolve();
     /**
@@ -1402,6 +1403,12 @@ export class RemoteChannel {
     }
 
     startHeartbeat(deviceId: string) {
+        if (this.heartbeatDeviceId === deviceId && this.connectionCheckInterval && this.heartbeatInterval) {
+            console.debug('[DEBUG] Heartbeat already active for device:', deviceId);
+            return;
+        }
+        this.stopHeartbeat();
+        this.heartbeatDeviceId = deviceId;
         console.debug('[DEBUG] Starting heartbeat for device:', deviceId);
         this.realtimeHealth.setDevice(deviceId);
         this.realtimeHealth.start();
@@ -1449,6 +1456,7 @@ export class RemoteChannel {
     }
 
     stopHeartbeat() {
+        this.heartbeatDeviceId = null;
         if (this.heartbeatInterval) {
             clearInterval(this.heartbeatInterval);
             this.heartbeatInterval = null;
