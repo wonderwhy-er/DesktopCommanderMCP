@@ -64,7 +64,9 @@ async function teardown(client, originalConfig) {
 
 async function main() {
   console.log('===== read_file Unknown-Parameter Behavior Integration Test =====');
-  const client = await connectToServer('desktop-commander-unknown-params-test');
+  // Telemetry off also when this file runs directly, without the runner's environment
+  const client = await connectToServer('desktop-commander-unknown-params-test',
+    { ...process.env, DESKTOP_COMMANDER_DISABLE_TELEMETRY: 'true' });
   const originalConfig = await setup(client);
 
   try {

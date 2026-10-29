@@ -759,7 +759,8 @@ async function runResponsivenessProbe(client, stopProbe) {
 }
 
 async function createMcpClient() {
-  const transport = serverTransport();
+  // Telemetry off also when this file runs directly, without the runner's environment
+  const transport = serverTransport({ env: { ...process.env, DESKTOP_COMMANDER_DISABLE_TELEMETRY: 'true' } });
 
   const stderrChunks = [];
   transport.stderr?.on('data', (chunk) => {
