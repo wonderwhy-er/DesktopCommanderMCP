@@ -8,9 +8,11 @@ import type { FoundCommand } from './command-reading.js';
  * options (timeout 5 reboot, nice -n 10 dd, sudo -u root id), and checks that
  * program like any other command. A wrapper can start another wrapper: env
  * nohup sudo ls runs sudo.
- * - env, nohup, xargs, timeout, nice and sudo are programs, so they start the
- *   program after them from every shell. env -S 'sudo ls' runs sudo too: env
- *   splits -S's text into more of its own words. Windows' timeout /t 5 starts
+ * - env, nohup, xargs, timeout, nice, stdbuf, setsid, chroot, sudo, doas,
+ *   pkexec, busybox and wsl are programs, so they start the program after
+ *   them from every shell: chroot after its new root, busybox its own program
+ *   of that name, wsl in Linux. env -S 'sudo ls' runs sudo too: env splits
+ *   -S's text into more of its own words. Windows' timeout /t 5 starts
  *   nothing: it only waits;
  * - exec and command are commands of the POSIX shells;
  * - Start-Process (also written start or saps) is PowerShell's: the PowerShell
@@ -18,9 +20,13 @@ import type { FoundCommand } from './command-reading.js';
  *   FilePath (FoundCommand's filePaths);
  * - start is cmd's (cmd's call is the cmd reader's, as if and else are).
  *
- * A word known only at run time where an option could be ($OPTS in nice
- * $OPTS make) may be the program or an option, so both readings count: it is
- * a program known only at run time, and the next word may be the program too.
+ * Where the check can't tell which word is the program, every reading counts,
+ * and the check refuses the command when any of them runs a blocked program.
+ * An option the rules don't list may take the next word as its value or not
+ * (nice -X 10 sudo ls runs 10 or sudo). A word known only at run time where an
+ * option could be ($OPTS in nice $OPTS make) may be the program, or an option
+ * with or without a value: it is a program known only at run time, and either
+ * of the next two words may be the program too.
  */
 
 /**
@@ -33,10 +39,14 @@ import type { FoundCommand } from './command-reading.js';
 interface PosixWrapper {
   /** The one-letter options that take a value */
   letters?: string;
-  /** The one-letter options whose value can only be in the same word (xargs -i{}) */
+  /** The one-letter options whose value can only be in the same word (xargs -i{}, and nice -10, the old nice -n 10) */
   attachedLetters?: string;
+  /** The one-letter options that take no value */
+  flags?: string;
   /** The long options that take a value */
   long?: string[];
+  /** The long options that take no value, or one only after = (env --block-signal=PIPE) */
+  longFlags?: string[];
   /** The options with which no program runs: command -v sudo only says what sudo is */
   noProgram?: string;
   /** The first words, in any case, after which no program runs: Windows' timeout /t 5 only waits */
@@ -45,24 +55,57 @@ interface PosixWrapper {
   before?: number;
   /** Whether NAME=VALUE words before the program set its environment (env, sudo) */
   assignments?: boolean;
-  /** The option whose value is a text of more of the wrapper's words (env -S 'sudo ls', --split-string='sudo ls') */
-  split?: { letter: string; long: string };
+  /**
+   * The options whose value is a command text: env -S 'sudo ls' and --split-string='sudo ls' run sudo, as env
+   * splits the text into more of its own words
+   */
+  texts?: { letters: string; long: string[] };
 }
 
-/** The wrappers that are programs, with their options in GNU, BSD and macOS (and Windows' sudo) */
+/**
+ * The wrappers that are programs, with their options in GNU, BSD and macOS
+ * (and Windows' sudo); doas's in OpenBSD, pkexec's in polkit, setsid's in
+ * util-linux, and busybox's and wsl's in their own usage text
+ */
 const PROGRAMS = new Map<string, PosixWrapper>([
-  ['env', { letters: 'uCSPLUa', long: ['unset', 'chdir', 'split-string', 'argv0'], assignments: true, split: { letter: 'S', long: 'split-string' } }],
-  ['nohup', {}],
-  ['xargs', { letters: 'adEIJLnPRSs', attachedLetters: 'eil', long: ['arg-file', 'delimiter', 'max-args', 'max-chars', 'max-procs', 'process-slot-var'] }],
-  ['timeout', { letters: 'ks', long: ['kill-after', 'signal'], before: 1, noProgramWords: ['/t', '/nobreak'] }],
-  ['nice', { letters: 'n', long: ['adjustment'] }],
-  ['sudo', { letters: 'aCcDghpRrTtUu', long: ['auth-type', 'chdir', 'chroot', 'close-from', 'command-timeout', 'group', 'host', 'login-class', 'other-user', 'prompt', 'role', 'type', 'user'], assignments: true }],
+  ['env', {
+    letters: 'uCPLUa', flags: 'i0v', long: ['unset', 'chdir', 'argv0'],
+    longFlags: ['ignore-environment', 'null', 'debug', 'block-signal', 'default-signal', 'ignore-signal', 'list-signal-handling', 'help', 'version'],
+    assignments: true, texts: { letters: 'S', long: ['split-string'] },
+  }],
+  ['nohup', { longFlags: ['help', 'version'] }],
+  ['xargs', {
+    letters: 'adEIJLnPRSs', attachedLetters: 'eil', flags: '0oprtx',
+    long: ['arg-file', 'delimiter', 'max-args', 'max-chars', 'max-lines', 'max-procs', 'process-slot-var'],
+    longFlags: ['null', 'eof', 'replace', 'open-tty', 'interactive', 'no-run-if-empty', 'show-limits', 'verbose', 'exit', 'help', 'version'],
+  }],
+  ['timeout', {
+    letters: 'ks', flags: 'fpv', long: ['kill-after', 'signal'], longFlags: ['foreground', 'preserve-status', 'verbose', 'help', 'version'],
+    before: 1, noProgramWords: ['/t', '/nobreak'],
+  }],
+  ['nice', { letters: 'n', attachedLetters: '0123456789', long: ['adjustment'], longFlags: ['help', 'version'] }],
+  ['stdbuf', { letters: 'ioe', long: ['input', 'output', 'error'], longFlags: ['help', 'version'] }],
+  ['setsid', { flags: 'cfwhV', longFlags: ['ctty', 'fork', 'wait', 'help', 'version'] }],
+  ['chroot', { letters: 'Ggu', flags: 'n', long: ['groups', 'userspec'], longFlags: ['skip-chdir', 'help', 'version'], before: 1 }],
+  ['sudo', {
+    letters: 'aCcDghpRrTtUu', flags: 'ABbEeHiKklNnPSsVv',
+    long: ['auth-type', 'chdir', 'chroot', 'close-from', 'command-timeout', 'group', 'host', 'login-class', 'other-user', 'prompt', 'role', 'type', 'user'],
+    longFlags: [
+      'askpass', 'bell', 'background', 'preserve-env', 'edit', 'set-home', 'help', 'login', 'remove-timestamp', 'reset-timestamp', 'list',
+      'no-update', 'non-interactive', 'preserve-groups', 'stdin', 'shell', 'version', 'validate', 'new-window', 'disable-input', 'inline',
+    ],
+    assignments: true,
+  }],
+  ['doas', { letters: 'au', flags: 'ns', noProgram: 'CL' }],
+  ['pkexec', { long: ['user'], longFlags: ['keep-cwd', 'disable-internal-agent', 'help', 'version'] }],
+  ['busybox', { noProgramWords: ['--list', '--list-full', '--install', '--show', '--help'] }],
+  ['wsl', { letters: 'du', flags: 'e', long: ['cd', 'distribution', 'distribution-id', 'user', 'shell-type'], longFlags: ['exec', 'system'] }],
 ]);
 
 /** The POSIX shells' own commands that start a program */
 const POSIX_SHELL_COMMANDS = new Map<string, PosixWrapper>([
-  ['exec', { letters: 'a' }],
-  ['command', { noProgram: 'vV' }],
+  ['exec', { letters: 'a', flags: 'cl' }],
+  ['command', { flags: 'p', noProgram: 'vV' }],
 ]);
 
 /** cmd's start switches that take the next word as their value (/D also takes it in the same word: /Dpath) */
@@ -111,91 +154,121 @@ function posixPrograms({ words, written }: Started, rules: PosixWrapper): Starte
   // Windows' timeout /t 5 only waits, and GNU's timeout stops with an error at /t, which is no duration
   const first = words[1];
   if (first && rules.noProgramWords?.includes(first.toLowerCase())) return [];
-  const at: number[] = [];
-  const programs = (): Started[] => [...new Set(at)].map((i) => ({ words: words.slice(i), written: written.slice(i) }));
-  // After the options: the NAME=VALUE settings, then the words before the program
-  const afterOptions = (i: number): void => {
+  const { operands, texts } = readOptions(words, rules);
+  const at = new Set<number>();
+  for (let i of operands) {
+    // After the options: the NAME=VALUE settings, then the words before the program
     while (rules.assignments && i < words.length && (words[i] ?? written[i]).includes('=')) i++;
     i += rules.before ?? 0;
-    if (i < words.length) at.push(i);
-  };
-  let i = 1;
-  for (; i < words.length; i++) {
-    const word = words[i];
-    if (word === null) {
-      // An option, or the first word after them: both readings count
-      afterOptions(i);
-      continue;
-    }
-    if (word === '--') {
-      i++;
-      break;
-    }
-    if (!word.startsWith('-')) break;
-    const valueWords = optionValueWords(word, rules);
-    if (valueWords === undefined) return programs();
-    const inWord = splitTextInWord(word, rules);
-    if (inWord !== undefined) {
-      const text = valueWords === 1 ? words[i + 1] : inWord;
-      // A text known only at run time (env -S "$CMD"): the next round reads it as a word known only at run time
-      if (text === null) continue;
-      if (text === undefined) return programs();
-      const after = i + 1 + valueWords;
-      const split = envSplitWords(text);
-      return [...programs(), ...posixPrograms({
-        words: [words[0], ...split.words, ...words.slice(after)],
-        written: [written[0], ...split.written, ...written.slice(after)],
-      }, rules)];
-    }
-    i += valueWords;
+    if (i < words.length) at.add(i);
   }
-  afterOptions(i);
-  return programs();
+  const programs = [...at].map((i) => ({ words: words.slice(i), written: written.slice(i) }));
+  // A wrapper's command text is more of its own words, split as env splits -S's: env is the one wrapper with one
+  return [...programs, ...texts.flatMap(({ text, after }) => {
+    const split = envSplitWords(text);
+    return posixPrograms({
+      words: [words[0], ...split.words, ...words.slice(after)],
+      written: [written[0], ...split.written, ...written.slice(after)],
+    }, rules);
+  })];
+}
+
+/** Where a program's options end, in each way they can be read, and the command texts they give */
+interface OptionReadings {
+  /** The first word after the options, in each reading */
+  operands: number[];
+  /** Each command text an option gives, and the first word after it */
+  texts: { text: string; after: number }[];
 }
 
 /**
- * How many of the next words an option takes as its value: 0 or 1, or
- * undefined when with it no program runs. A lone - is an option too: env's
- * -i. An option the rules don't list takes no value.
+ * Reads a program's options by its rules, in every way they can be read: an
+ * option the rules don't list, and a word known only at run time, may take the
+ * next word as its value or not. A command text known only at run time (env
+ * -S "$CMD") is read on as a word known only at run time.
  */
-function optionValueWords(option: string, rules: PosixWrapper): 0 | 1 | undefined {
-  if (option.startsWith('--')) return !option.includes('=') && longOption(option.slice(2), rules) ? 1 : 0;
-  for (let i = 1; i < option.length; i++) {
-    const letter = option[i];
-    if (rules.noProgram?.includes(letter)) return undefined;
-    // The rest of the word is the value of an option that takes one
-    if (rules.attachedLetters?.includes(letter)) return 0;
-    if (rules.letters?.includes(letter)) return i === option.length - 1 ? 1 : 0;
-  }
-  return 0;
+function readOptions(words: (string | null)[], rules: PosixWrapper): OptionReadings {
+  const readings: OptionReadings = { operands: [], texts: [] };
+  const read = new Set<number>();
+  const readFrom = (i: number): void => {
+    if (read.has(i)) return;
+    read.add(i);
+    const word = words[i];
+    if (word === null) {
+      // An option with or without a value, or the first word after them
+      readings.operands.push(i);
+      readFrom(i + 1);
+      readFrom(i + 2);
+      return;
+    }
+    if (word === undefined || !word.startsWith('-')) {
+      readings.operands.push(i);
+      return;
+    }
+    if (word === '--') {
+      readings.operands.push(i + 1);
+      return;
+    }
+    for (const reading of optionReadings(word, rules)) {
+      if (reading === null) continue;
+      if (reading.text === undefined) {
+        readFrom(i + 1 + reading.next);
+        continue;
+      }
+      const text = reading.next === 1 ? words[i + 1] : reading.text;
+      if (text === null) readFrom(i + 1);
+      else if (text !== undefined) readings.texts.push({ text, after: i + 1 + reading.next });
+    }
+  };
+  readFrom(1);
+  return readings;
 }
 
-/** The long option that takes a value a name means: the one it names, or the only one it shortens */
+/** One way to read an option word */
+interface OptionReading {
+  /** How many of the next words are its value: 0 or 1 */
+  next: 0 | 1;
+  /** For an option whose value is a command text: the text in the same word, or '' when it is the next word */
+  text?: string;
+}
+
+/**
+ * The ways to read an option word, null for one with which no program runs.
+ * An option that takes a value takes the rest of the word (-uroot,
+ * --user=root), or the next word when the rest is empty. One the rules don't
+ * list may take a value or not, so it has both readings. A lone - is an
+ * option too: env's -i.
+ */
+function optionReadings(option: string, rules: PosixWrapper): (OptionReading | null)[] {
+  if (option.startsWith('--')) {
+    const equals = option.indexOf('=');
+    const name = longOption(option.slice(2, equals === -1 ? undefined : equals), rules);
+    const isText = name !== undefined && rules.texts?.long.includes(name);
+    if (equals !== -1) return [isText ? { next: 0, text: option.slice(equals + 1) } : { next: 0 }];
+    if (name === undefined) return [{ next: 0 }, { next: 1 }];
+    if (isText) return [{ next: 1, text: '' }];
+    return [{ next: rules.long?.includes(name) ? 1 : 0 }];
+  }
+  const readings: (OptionReading | null)[] = [];
+  for (let i = 1; i < option.length; i++) {
+    const letter = option[i];
+    const value: OptionReading = i === option.length - 1 ? { next: 1 } : { next: 0 };
+    if (rules.noProgram?.includes(letter)) return [...readings, null];
+    if (rules.texts?.letters.includes(letter)) return [...readings, { ...value, text: option.slice(i + 1) }];
+    if (rules.attachedLetters?.includes(letter)) return [...readings, { next: 0 }];
+    if (rules.letters?.includes(letter)) return [...readings, value];
+    // An option the rules don't list may take a value, and the next letters read on as if it takes none
+    if (!rules.flags?.includes(letter)) readings.push(value);
+  }
+  return [...readings, { next: 0 }];
+}
+
+/** The long option a name means: the one it names, or the only one it shortens */
 function longOption(name: string, rules: PosixWrapper): string | undefined {
-  const long = rules.long ?? [];
+  const long = [...rules.long ?? [], ...rules.longFlags ?? [], ...rules.texts?.long ?? []];
   if (long.includes(name)) return name;
   const shortened = long.filter((known) => known.startsWith(name));
   return shortened.length === 1 ? shortened[0] : undefined;
-}
-
-/**
- * When an option word is the rules' split option: the text in the same word
- * (-S'sudo ls', -iS'sudo ls', --split-string='sudo ls'), or '' when the text
- * is the next word. Undefined for any other option.
- */
-function splitTextInWord(option: string, rules: PosixWrapper): string | undefined {
-  if (!rules.split) return undefined;
-  if (option.startsWith('--')) {
-    const equals = option.indexOf('=');
-    if (longOption(option.slice(2, equals === -1 ? undefined : equals), rules) !== rules.split.long) return undefined;
-    return equals === -1 ? '' : option.slice(equals + 1);
-  }
-  // The first letter that takes a value takes the rest of the word
-  for (let i = 1; i < option.length; i++) {
-    if (option[i] === rules.split.letter) return option.slice(i + 1);
-    if (rules.letters?.includes(option[i]) || rules.attachedLetters?.includes(option[i])) return undefined;
-  }
-  return undefined;
 }
 
 /** What a backslash escape in env -S's text gives, besides the character after the backslash */
