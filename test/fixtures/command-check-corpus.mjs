@@ -330,6 +330,8 @@ export const CORPUS = [
   { id: 'wrap_strace', group: 'wrapper', shell: 'bash', expect: 'sudo', command: 'strace -f -e trace=open -o trace.log sudo ls', note: 'strace runs sudo' },
   { id: 'wrap_ltrace', group: 'wrapper', shell: 'bash', expect: 'sudo', command: 'ltrace -S -o trace.log sudo ls', note: 'ltrace runs sudo' },
   { id: 'wrap_time', group: 'wrapper', shell: 'sh', expect: 'sudo', command: '/usr/bin/time -f %e sudo ls', note: 'the time program runs sudo' },
+  { id: 'wrap_time_keyword', group: 'wrapper', shell: 'bash', expect: 'sudo', command: 'time sudo ls', note: "bash's own time runs sudo" },
+  { id: 'wrap_time_keyword_p', group: 'wrapper', shell: 'bash', expect: 'sudo', command: 'time -p sudo ls', note: "bash's own time takes -p, then runs sudo" },
   { id: 'wrap_firejail', group: 'wrapper', shell: 'bash', expect: 'sudo', command: 'firejail --private --net=none sudo ls', note: 'firejail runs sudo' },
   { id: 'wrap_firejail_flag', group: 'wrapper', shell: 'bash', expect: null, command: 'firejail --private echo sudo', note: "firejail's options take a value only after =, so echo is the program" },
   { id: 'wrap_bwrap', group: 'wrapper', shell: 'bash', expect: 'sudo', command: 'bwrap --ro-bind / / --dev /dev sudo ls', note: 'bwrap runs sudo: --ro-bind takes two words' },
