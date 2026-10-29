@@ -42,7 +42,7 @@ import type { FoundCommand } from './command-reading.js';
  * in the next one (-u root, --user root), a long option may be shortened while
  * it stays unambiguous (--us), and -- ends the options.
  */
-export interface PosixWrapper {
+interface PosixWrapper {
   /** The one-letter options that take a value */
   letters?: string;
   /** The one-letter options whose value can only be in the same word (xargs -i{}, and nice -10, the old nice -n 10) */
