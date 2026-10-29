@@ -135,7 +135,8 @@ async function testUnseen(powershells) {
     // A command text with a part known only at run time notes the shell given it, and the programs it hides are noted too
     ['bash', 'bash -c "$CMD"', [...runTime('bash'), ...runTime('$CMD')]],
     ['bash', 'bash -c "ls $X"', runTime('bash')],
-    ['powershell', 'pwsh -Command "$cmd"', runTime('pwsh')],
+    // PowerShell names a program by its file name, with .exe on Windows
+    ...powershells.map((shell) => ['powershell', `${shell} -Command "$cmd"`, runTime(isWindows ? `${shell}.exe` : shell)]),
     ['cmd', 'bash -c %CMD%', runTime('bash')],
     ...powershells.map((shell) => ['bash', `${shell} -c "$CMD"`, runTime(shell)]),
     ['bash', "bash -c 'sudo ls'", []],
