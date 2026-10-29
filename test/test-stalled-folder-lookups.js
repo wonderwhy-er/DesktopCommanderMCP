@@ -4,7 +4,7 @@
  *
  * validatePath() (src/tools/filesystem.ts) looks every path up on the disk
  * with fs.promises.realpath before a file operation. Here that lookup waits,
- * for every path in one folder, until the test lets it answer. Expected:
+ * for a folder and every path in it, until the test lets it answer. Expected:
  *   - at most LOOKUPS_PER_FOLDER lookups in that folder run at a time; the
  *     others wait in line
  *   - a lookup that waited in line still runs in its own tool call: what that
@@ -14,14 +14,17 @@
  *     the folder and the path, instead of "__ERROR__: Path validation
  *     operation timed out after 10 seconds", and is sent to telemetry once,
  *     as server_path_validation_timeout
- *   - while that lookup still waits, a path in the folder or below it fails at
- *     once with the same error, without a lookup on the disk
+ *   - while that lookup still waits, the folder itself, or a path in or below
+ *     it, fails at once with the same error, without a lookup on the disk
  *   - a path in another folder still works
  *   - once the waiting lookups answer, the folder works again
+ *   - a root is its own folder: when its lookups stop answering, the lookups
+ *     of the root itself that wait in line fail at once with the others, so
+ *     no more than LOOKUPS_PER_FOLDER lookups there reach the disk
  *
  * Telemetry is caught the way test-telemetry-paths.js catches it. Takes about
- * 10 seconds: a lookup's own time limit. Runs as part of `npm test`, or alone:
- * node test/run-all-tests.js test-stalled-folder-lookups.js
+ * 20 seconds: a lookup's own time limit, twice. Runs as part of `npm test`, or
+ * alone: node test/run-all-tests.js test-stalled-folder-lookups.js
  */
 import { EventEmitter } from 'events';
 import fs from 'fs';
@@ -68,18 +71,21 @@ function isInside(p, folder) {
   return a.startsWith(b + path.sep);
 }
 
+/** Whether `a` and `b` are the same path, compared as the platform compares paths */
+const samePath = (a, b) => (process.platform === 'win32' ? a.toLowerCase() === b.toLowerCase() : a === b);
+
 /**
- * Makes fs.promises.realpath wait, for every path inside `folder`, until
- * answer() is called; after that it answers as usual. `calls` lists the paths
- * it was asked for while it waited. restore() puts fs.promises.realpath back.
+ * Makes fs.promises.realpath wait, for every path `stalls(path)` is true for,
+ * until answer() is called; after that it answers as usual. `calls` lists the
+ * paths it was asked for while it waited. restore() puts fs.promises.realpath back.
  */
-function stallLookups(folder) {
+function stallLookups(stalls) {
   const realpath = fsPromises.realpath;
   const waiting = [];
   const calls = [];
   let answered = false;
   fsPromises.realpath = function (p, ...rest) {
-    if (answered || !isInside(path.resolve(String(p)), folder)) {
+    if (answered || !stalls(path.resolve(String(p)))) {
       return realpath.call(this, p, ...rest);
     }
     calls.push(String(p));
@@ -139,6 +145,13 @@ async function runTests() {
   fs.symlinkSync(real, linked, 'junction');
   const queuedFiles = Array.from({ length: LOOKUPS_STARTED }, (_, i) => path.join(linked, `file ${i}.md`));
   for (const file of queuedFiles) fs.writeFileSync(file, 'queued');
+  // A root, which is its own folder: / on macOS and Linux, and on Windows a
+  // drive letter not in use, so the lookups the test lets answer find nothing
+  const stalledRoot = process.platform !== 'win32'
+    ? path.sep
+    : [...'ZYXWVUTSRQPONMLKJIHGFED'].map((letter) => `${letter}:\\`).find((drive) => !fs.existsSync(drive));
+  if (!stalledRoot) throw new Error('every drive letter from D: to Z: is in use; the root check needs a free one');
+  const inRoot = Array.from({ length: LOOKUPS_PER_FOLDER }, (_, i) => path.join(stalledRoot, `dc-stalled-root-${i}.md`));
 
   let failures = 0;
   function check(name, ok, detail) {
@@ -150,7 +163,8 @@ async function runTests() {
     }
   }
 
-  const lookups = stallLookups(stalled);
+  const lookups = stallLookups((p) => samePath(p, stalled) || isInside(p, stalled));
+  let rootLookups;
   try {
     console.log(`\n--- ${LOOKUPS_STARTED} lookups at once in ${linked}, each in its own tool call ---`);
     // Each call then sends what a later error of its own would: text naming the path its lookup resolved to
@@ -189,13 +203,31 @@ async function runTests() {
       noLookup && failsFor(belowFolder, stalled, below),
       `${errorText(belowFolder)} (${lookups.calls.length - lookupsSoFar} new lookups)`);
     check('a path in another folder still works', elsewhere.value === otherFile, errorText(elsewhere));
+    // After the others, so a lookup it makes counts against it alone
+    const lookupsBefore = lookups.calls.length;
+    const itself = await settle(stalled);
+    check('the folder itself fails at once, without a lookup on the disk',
+      lookups.calls.length === lookupsBefore && failsFor(itself, stalled, stalled),
+      `${errorText(itself)} (${lookups.calls.length - lookupsBefore} new lookups)`);
 
     console.log('\n--- once the lookups answer ---');
     lookups.answer();
     let again;
     await waitUntil(async () => (again = await settle(stalledFiles[0])).value !== undefined, DEADLINE_MS, 'the folder works again').catch(() => {});
     check('the folder works again', again.value === stalledFiles[0], errorText(again));
+
+    console.log(`\n--- ${inRoot.length} lookups in ${stalledRoot}, whose lookups don't answer, then ${LOOKUPS_STARTED} of the root itself ---`);
+    // Only the root and what's directly in it: on macOS and Linux every other path is below it
+    rootLookups = stallLookups((p) => samePath(p, stalledRoot) || samePath(path.dirname(p), stalledRoot));
+    // The root is in its own line too, so the lookups of it wait behind the others
+    const rootPaths = [...inRoot, ...Array(LOOKUPS_STARTED).fill(stalledRoot)];
+    const rootAnswers = await Promise.all(rootPaths.map(settle));
+    check(`the lookups of the root itself fail with the others, and only ${LOOKUPS_PER_FOLDER} lookups there reach the disk`,
+      rootLookups.calls.length === LOOKUPS_PER_FOLDER && rootAnswers.every((answer, i) => failsFor(answer, stalledRoot, rootPaths[i])),
+      `${rootLookups.calls.length} reached fs.promises.realpath; the root itself: ${errorText(rootAnswers.at(-1))}`);
   } finally {
+    rootLookups?.answer();
+    rootLookups?.restore();
     lookups.answer();
     lookups.restore();
     fs.rmSync(root, { recursive: true, force: true });
