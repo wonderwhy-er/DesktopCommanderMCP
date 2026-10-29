@@ -63,8 +63,9 @@ const mcpRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..',
  * aliases with any name. So the helper writes an empty line before its first
  * answer (text the profile printed without a newline ends there), puts the
  * request's token in each answer (the reader takes no other line for one),
- * and calls each cmdlet by its module's name, which no function or alias
- * replaces.
+ * calls each cmdlet by its module's name, which no function or alias
+ * replaces, and keeps its own functions in variables ($getMeaning), which no
+ * alias replaces either.
  */
 const HELPER_SCRIPT = `
 $ErrorActionPreference = 'Stop'
@@ -76,19 +77,23 @@ $reader = Microsoft.PowerShell.Utility\\New-Object System.IO.StreamReader ([Cons
 $writer = Microsoft.PowerShell.Utility\\New-Object System.IO.StreamWriter ([Console]::OpenStandardOutput()), $utf8
 $writer.AutoFlush = $true
 $writer.WriteLine()
-function Get-Meaning([string]$name) {
+# The helper's own functions are script blocks in variables: an alias with a function's name, such as one the profile sets, comes before the function
+$getMeaning = {
+  param([string]$name)
   $found = @(Microsoft.PowerShell.Core\\Get-Command -Name ([Management.Automation.WildcardPattern]::Escape($name)) -ErrorAction SilentlyContinue)
   if ($found.Count -eq 0) { return $name }
   if ($found[0].CommandType -eq 'Alias') { return $found[0].Definition }
   return $found[0].Name
 }
-function Get-WordValue($element) {
+$getWordValue = {
+  param($element)
   if ($element -is [Management.Automation.Language.StringConstantExpressionAst]) { return $element.Value }
   if ($element -is [Management.Automation.Language.CommandParameterAst]) { return $element.Extent.Text }
   if ($element -is [Management.Automation.Language.ConstantExpressionAst]) { return $element.Extent.Text }
   return $null
 }
-function Test-RemovesFunction($found) {
+$testRemovesFunction = {
+  param($found)
   if ($found.name -in 'Set-Alias', 'New-Alias', 'Import-Alias') { return $true }
   $pathAtRunTime = $false
   $knownPaths = 0
@@ -100,7 +105,8 @@ function Test-RemovesFunction($found) {
   }
   return ($found.name -like '*-Item' -or $found.name -like '*-Content') -and ($pathAtRunTime -or $knownPaths -eq 0)
 }
-function Test-RunsUnreadCode($found) {
+$testRunsUnreadCode = {
+  param($found)
   if ($found.nameAtRunTime -or $found.name -in 'Invoke-Expression', 'Import-Module', 'Add-Type') { return $true }
   # ForEach-Object InvokeScript 'text' calls each object's method
   if ($found.name -eq 'ForEach-Object') {
@@ -128,18 +134,18 @@ while ($true) {
         $first = $command.CommandElements[0]
         # & { ... } runs a script block, not a program: the commands inside it are found on their own
         if ($first -is [Management.Automation.Language.ScriptBlockExpressionAst]) { continue }
-        $words = @(foreach ($element in $command.CommandElements) { ,(Get-WordValue $element) })
+        $words = @(foreach ($element in $command.CommandElements) { ,(& $getWordValue $element) })
         $name = $command.GetCommandName()
         if ($null -eq $name) {
           @{ name = $first.Extent.Text; words = $words; start = $command.Extent.StartOffset; nameAtRunTime = $true }
         } else {
-          @{ name = (Get-Meaning $name); words = $words; start = $command.Extent.StartOffset; nameAtRunTime = $false }
+          @{ name = (& $getMeaning $name); words = $words; start = $command.Extent.StartOffset; nameAtRunTime = $false }
         }
       })
       $isBlockValue = { $args[0] -is [Management.Automation.Language.ScriptBlockExpressionAst] }
       $isFunctionOrAliasVariable = { $args[0] -is [Management.Automation.Language.VariableExpressionAst] -and $args[0].VariablePath.DriveName -in 'function', 'alias' }
       $isMethodCall = { $args[0] -is [Management.Automation.Language.InvokeMemberExpressionAst] }
-      $removers = @($answer.commands | Microsoft.PowerShell.Core\\Where-Object { (Test-RemovesFunction $_) -or (Test-RunsUnreadCode $_) })
+      $removers = @($answer.commands | Microsoft.PowerShell.Core\\Where-Object { (& $testRemovesFunction $_) -or (& $testRunsUnreadCode $_) })
       $functionsMayGo = $removers.Count -gt 0 -or $ast.Find($isBlockValue, $true) -or $ast.Find($isFunctionOrAliasVariable, $true) -or $ast.Find($isMethodCall, $true)
       $statements = if ($ast.EndBlock -and -not $functionsMayGo) { $ast.EndBlock.Statements } else { @() }
       $answer.functions = @(foreach ($statement in $statements) {
