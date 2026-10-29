@@ -29,12 +29,12 @@
  * wrapper = a program a wrapper starts, past the wrapper's own options (env
  * sudo ls runs sudo), also past one its rules don't list, which may take a
  * value (nice -X 10 sudo ls), or in the text env -S splits (env -S 'sudo
- * ls'), and words of a wrapper that are no program (command -v sudo,
- * Windows' timeout /t 5); inline = a blocked program in the command a shell
- * is started with (bash -c, pwsh -Command or -EncodedCommand, cmd /c or /k),
- * or in the text eval or Invoke-Expression runs in the same shell, and a
- * command a shell is started with that is known only at run time, in whole
- * or in part;
+ * ls'), the command after fish's and, or and not (false; or sudo ls), and
+ * words of a wrapper that are no program (command -v sudo, Windows' timeout
+ * /t 5); inline = a blocked program in the command a shell is started with
+ * (bash -c, pwsh -Command or -EncodedCommand, cmd /c or /k), or in the text
+ * eval or Invoke-Expression runs in the same shell, and a command a shell is
+ * started with that is known only at run time, in whole or in part;
  * runtime = a program chosen when the command runs; file = the commands in a
  * script file given to a shell; long = the 14k-char case; control = a plain
  * blocked program, to keep every approach honest.
@@ -347,6 +347,12 @@ export const CORPUS = [
   { id: 'wrap_gsudo', group: 'wrapper', shell: 'powershell', expect: 'sudo', command: 'gsudo -n sudo ls', note: 'gsudo runs sudo' },
   { id: 'wrap_psexec', group: 'wrapper', shell: 'cmd', expect: 'sudo', command: 'psexec -s -i sudo ls', note: 'psexec runs sudo on this computer; -i may take a session number' },
   { id: 'wrap_psexec_remote', group: 'wrapper', shell: 'cmd', expect: null, command: 'psexec \\\\server -s sudo ls', note: 'psexec runs sudo on the computer \\\\server; as for ssh, the blocklist protects this one' },
+  { id: 'wrap_fish_and', group: 'wrapper', shell: 'fish', expect: 'sudo', command: 'string match -q x x; and sudo ls', note: "fish's and runs the command after it when the one before succeeds" },
+  { id: 'wrap_fish_or', group: 'wrapper', shell: 'fish', expect: 'sudo', command: 'false; or sudo ls', note: "fish's or runs the command after it when the one before fails" },
+  { id: 'wrap_fish_not', group: 'wrapper', shell: 'fish', expect: 'sudo', command: 'not sudo ls', note: "fish's not runs the command after it" },
+  { id: 'wrap_fish_and_not', group: 'wrapper', shell: 'fish', expect: 'sudo', command: 'true; and not sudo ls', note: 'and runs not, which runs sudo' },
+  { id: 'wrap_fish_path', group: 'wrapper', shell: '/usr/bin/fish', expect: 'sudo', command: 'false; or sudo ls', note: 'fish named by its path' },
+  { id: 'wrap_and_bash', group: 'wrapper', shell: 'bash', expect: null, command: 'and sudo ls', note: 'outside fish, and is a program like any other, and sudo is its argument' },
   { id: 'wrap_chain', group: 'wrapper', shell: 'bash', expect: 'reboot', command: 'env -i FOO=1 nohup nice -n 5 reboot', note: 'env runs nohup, which runs nice, which runs reboot' },
   { id: 'wrap_env_options', group: 'wrapper', shell: 'zsh', expect: 'reboot', command: 'env -u HOME --chdir=/tmp reboot', note: "env's options and their values" },
   { id: 'wrap_timeout_options', group: 'wrapper', shell: 'sh', expect: 'reboot', command: 'timeout -s KILL --kill-after=2 5 reboot', note: "timeout's options, then its duration" },
@@ -430,6 +436,8 @@ export const CORPUS = [
   { id: 'inline_nested', group: 'inline', shell: 'bash', expect: 'sudo', command: "bash -c \"sh -c 'sudo ls'\"", note: 'a shell started by a shell started with a command' },
   { id: 'inline_fishc', group: 'inline', shell: 'bash', expect: 'sudo', command: "fish -c 'sudo ls'", note: 'fish -c runs sudo' },
   { id: 'inline_fish_command', group: 'inline', shell: 'bash', expect: 'sudo', command: "fish --command 'sudo ls'", note: "fish's long form of -c" },
+  { id: 'inline_fish_and', group: 'inline', shell: 'bash', expect: 'sudo', command: "fish -c 'string match -q x x; and sudo ls'", note: "the text is fish's, where and runs sudo" },
+  { id: 'inline_fish_not', group: 'inline', shell: 'bash', expect: 'sudo', command: "fish -c 'not sudo ls'", note: "the text is fish's, where not runs sudo" },
   { id: 'inline_env', group: 'inline', shell: 'bash', expect: 'sudo', command: "env bash -c 'sudo ls'", note: 'env starts bash, and bash runs sudo' },
   { id: 'inline_nohup_var', group: 'inline', shell: 'bash', expect: 'reboot', command: 'nohup sh -c "sleep $T; reboot"', note: 'nohup starts sh with a text that has $T in it' },
   { id: 'inline_bash_from_ps', group: 'inline', shell: 'powershell', expect: 'sudo', command: "bash -c 'sudo ls'", note: 'bash (Git Bash or WSL) started from PowerShell' },
