@@ -485,7 +485,11 @@ export const CORPUS = [
   { id: 'inline_iex_command', group: 'inline', shell: 'powershell', expect: 'net', command: "Invoke-Expression -Command 'net user'", note: 'the text given by its parameter name' },
   { id: 'inline_eval_ok', group: 'inline', shell: 'bash', expect: null, command: "eval 'echo sudo'", note: 'sudo is text that echo prints, and the text is all there to check' },
   { id: 'inline_iex_ok', group: 'inline', shell: 'powershell', expect: null, command: "iex 'Get-Date'", note: 'an allowed command, all there to check' },
-  { id: 'inline_eval_runtime_part', group: 'inline', shell: 'bash', expect: 'unknowable', command: 'eval "sudo $X"', note: 'part of the text is known only at run time, so eval stays unseen' },
+  { id: 'inline_eval_runtime_part', group: 'inline', shell: 'bash', expect: 'sudo', command: 'eval "sudo $X"', note: 'the text is read as written, so sudo is seen, though part of it is known only at run time' },
+  { id: 'inline_eval_runtime_cd', group: 'inline', shell: 'bash', expect: 'sudo', command: 'eval "cd $HOME && sudo ls"', note: 'the outer shell fills in $HOME, and sudo runs whatever it is, as in bash -c' },
+  { id: 'inline_iex_runtime_part', group: 'inline', shell: 'powershell', expect: 'net', command: 'iex "net user $name"', note: 'PowerShell fills in $name, and net runs whatever it is' },
+  { id: 'inline_eval_runtime_ok', group: 'inline', shell: 'bash', expect: 'unknowable', command: 'eval "ls $X"', note: 'ls is allowed, but $X may hold another command, so eval is noted' },
+  { id: 'inline_iex_runtime_ok', group: 'inline', shell: 'powershell', expect: 'unknowable', command: 'iex "Get-Date $x"', note: 'Get-Date is allowed, but $x may hold another command, so Invoke-Expression is noted' },
   { id: 'inline_iex_pipe', group: 'inline', shell: 'powershell', expect: 'unknowable', command: "'net user' | iex", note: 'the text comes from the pipeline' },
 
   // ---- Run time: the program is chosen when the command runs, so the check can't see it ----
