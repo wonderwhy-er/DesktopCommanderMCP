@@ -213,11 +213,26 @@ function Update-SystemVolume {
     Write-Info "Updating Desktop Commander in your persistent volume dc-system..."
 
     # Nothing may use the volume while it is copied: stop the containers that have it (found by
-    # the volume, not ancestor=, which after the pull no longer matches the older image's containers)
+    # the volume, not ancestor=, which after the pull no longer matches the older image's containers),
+    # then ask again. If Docker doesn't answer, or one still runs, stop before anything changes.
+    $problem = $null
     $containers = docker ps -q --filter "volume=dc-system" 2>$null
-    if ($containers) {
+    if ($LASTEXITCODE -ne 0) {
+        $problem = "Docker didn't answer which containers use the volume dc-system"
+    } elseif ($containers) {
         if ($VerboseOutput) { Write-Info "Stopping running Desktop Commander containers..." }
         docker stop $containers 2>$null | Out-Null
+        $containers = docker ps -q --filter "volume=dc-system" 2>$null
+        if ($LASTEXITCODE -ne 0) {
+            $problem = "Docker didn't answer which containers use the volume dc-system"
+        } elseif ($containers) {
+            $problem = "Desktop Commander's container is still running and uses the volume dc-system"
+        }
+    }
+    if ($problem) {
+        Write-Error $problem
+        Write-Info "Nothing was changed. Run the installer again."
+        exit 1
     }
 
     # Copies the new image's /usr into the volume, mounted at /target, so an update reaches users
