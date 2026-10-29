@@ -45,6 +45,16 @@ const KEPT_IF_EMPTY = '\0"';
 const MAY_VANISH = /^(?:\0\$\w*)+$/;
 
 /**
+ * The commands that run, in this shell, code the reader doesn't read: eval and
+ * zsh's emulate -c (their words), trap and mapfile or readarray -C (later), .
+ * and source (a file)
+ */
+const CODE_RUNNERS = new Set(['eval', 'emulate', 'trap', 'mapfile', 'readarray', '.', 'source']);
+
+/** The words that run the next word as a command in this shell: builtin, command, and zsh's noglob and nocorrect */
+const COMMAND_PREFIXES = new Set(['builtin', 'command', 'noglob', 'nocorrect']);
+
+/**
  * A word's value as bash reads it (quotes and escapes removed, $'…' decoded),
  * or null when part of it is known only at run time: an expansion, a command's
  * output, or a {a,b} brace expansion, which makes several words (the reader
@@ -124,6 +134,22 @@ function mayRemoveFunction(command: FoundCommand, name: string): boolean {
   return at >= 0 && command.words.slice(at + 1).some((word) => word === null || word === name);
 }
 
+/**
+ * Whether a command may run code the reader doesn't read, which may remove any
+ * function: one of CODE_RUNNERS, also after COMMAND_PREFIXES (command -p eval),
+ * or a name known only at run time ($cmd may be unset or eval)
+ */
+function mayRunUnreadCode(command: FoundCommand): boolean {
+  const { words } = command;
+  let at = 0;
+  while (COMMAND_PREFIXES.has(words[at] ?? '')) {
+    at++;
+    while (words[at]?.startsWith('-')) at++;
+  }
+  const name = words[at];
+  return name === null || (name !== undefined && CODE_RUNNERS.has(name));
+}
+
 /** Reads a command for a POSIX shell */
 export async function readPosixCommands(command: string): Promise<CommandReading> {
   const script = parse(command);
@@ -170,9 +196,10 @@ export async function readPosixCommands(command: string): Promise<CommandReading
 
   // Only the script's own statements (see CommandReading.functions), and none the
   // text may remove: wherever the removal is written, it may run before a call,
-  // from a function's body
+  // from a function's body. Code the reader doesn't read may remove any of them.
   const functions: DefinedFunction[] = [];
-  for (const statement of script.commands) {
+  const statements = commands.some(mayRunUnreadCode) ? [] : script.commands;
+  for (const statement of statements) {
     if (statement.command.type !== 'Function' || statement.background) continue;
     const name = statement.command.name.value;
     if (!commands.some((command) => mayRemoveFunction(command, name))) {
