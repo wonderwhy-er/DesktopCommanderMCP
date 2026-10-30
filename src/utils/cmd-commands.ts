@@ -8,7 +8,8 @@ import type { CommandReading, FoundCommand } from './command-reading.js';
  * - ^ makes the next character ordinary text;
  * - ( … ) at the start of a command is a group of commands;
  * - > and < with their target (2>&1, >>log.txt) are redirections, not words;
- * - a leading @ is dropped (@echo off runs echo);
+ * - ; , = and @ before a command are skipped, as spaces are (@echo off runs
+ *   echo, ;sc and @ sc run sc);
  * - a word with %VAR% in it is known only at run time;
  * - if and for run the command after their condition or after "do".
  */
@@ -21,6 +22,8 @@ interface Token {
   start: number;
   /** True when the word has %VAR% in it, so its value is known only at run time */
   atRunTime: boolean;
+  /** How many of a word's first characters are ; , = or @ as written: cmd skips them where a command starts */
+  lead?: number;
 }
 
 function tokenize(text: string): Token[] {
@@ -71,7 +74,8 @@ function tokenize(text: string): Token[] {
           i++;
         }
       }
-      tokens.push({ kind: 'word', value, start, atRunTime: /%[^%\s]+%/.test(text.slice(start, i)) });
+      const written = text.slice(start, i);
+      tokens.push({ kind: 'word', value, start, atRunTime: /%[^%\s]+%/.test(written), lead: /^[;,=@]*/.exec(written)![0].length });
     }
   }
   return tokens;
@@ -98,6 +102,12 @@ function ifConditionLength(words: Token[], i: number): number | undefined {
   return undefined;
 }
 
+/** Whether a word is only ; , = and @, which cmd skips where a command starts */
+const isLead = (word: Token): boolean => word.lead !== undefined && word.lead > 0 && word.lead === word.value.length;
+
+/** The name a command's first word gives, without the ; , = and @ that cmd skips before it (;sc runs sc) */
+const commandName = (word: Token): string => word.value.slice(word.lead ?? 0);
+
 class CmdReader {
   private position = 0;
   readonly commands: FoundCommand[] = [];
@@ -121,7 +131,11 @@ class CmdReader {
 
   /** Reads one command: a group, or words up to the next operator */
   private readCommand(inGroup: boolean): void {
-    if (this.tokens[this.position].kind === 'open') {
+    // Words of only ; , = and @ before the command are skipped, as spaces are (@ sc runs sc)
+    while (this.tokens[this.position]?.kind === 'word' && isLead(this.tokens[this.position])) this.position++;
+    const first = this.tokens[this.position];
+    if (first === undefined || first.kind === 'op' || (first.kind === 'close' && inGroup)) return;
+    if (first.kind === 'open') {
       this.position++;
       this.readList(true);
       this.position++; // the closing )
@@ -157,7 +171,7 @@ class CmdReader {
    * parens: how many of the words' ( are not closed yet.
    */
   private startsCommandAfter(words: Token[], parens: number): boolean {
-    const first = words[0].value.replace(/^@+/, '').toLowerCase();
+    const first = commandName(words[0]).toLowerCase();
     if (first === 'else') return words.length === 1;
     if (first === 'for') {
       return words.length > 1 && parens === 0 && words[words.length - 1].value.toLowerCase() === 'do';
@@ -178,8 +192,8 @@ class CmdReader {
 
   private addCommand(words: Token[]): void {
     const first = words[0];
-    const name = first.value.replace(/^@+/, '');
-    if (!name && words.length === 1) return; // a lone @
+    const name = commandName(first);
+    if (!name && words.length === 1) return; // "" alone runs nothing
     this.commands.push({
       name,
       words: words.map((word, index) => (word.atRunTime ? null : index === 0 ? name : word.value)),

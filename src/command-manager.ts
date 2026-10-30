@@ -250,17 +250,27 @@ class CommandManager {
 
     /**
      * Reads a command with the grammar of the shell that will run it: POSIX
-     * shells (bash, zsh, sh, …), PowerShell, or cmd.
+     * shells (bash, zsh, sh, …), PowerShell, or cmd. fish is read with the
+     * bash reader, and where that can't parse fish's own syntax (for … end,
+     * echo (date)), as main reads it: by the names extractCommands() finds.
      */
-    readCommands(command: string, shell: string): Promise<CommandReading> {
+    async readCommands(command: string, shell: string): Promise<CommandReading> {
         switch (getShellType(shell)) {
             case 'powershell':
                 return readPowerShellCommands(command, shell);
             case 'cmd':
                 return readCmdCommands(command);
-            default:
-                return readPosixCommands(command);
         }
+        const reading = await readPosixCommands(command);
+        // fish's name, as getShellSpawnArgs() finds it
+        if (reading.parseError === undefined || !path.basename(shell).toLowerCase().includes('fish')) return reading;
+        const { parseError, ...read } = reading;
+        const names = this.extractCommands(command);
+        return {
+            ...read,
+            commands: (names.length > 0 ? names : [this.getBaseCommand(command)])
+                .map((name, start) => ({ name, words: [name], start, nameAtRunTime: false })),
+        };
     }
 
     /**
