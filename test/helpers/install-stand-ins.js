@@ -90,14 +90,42 @@ export function exec(command, options, callback) {
 export default { exec, execSync };
 `;
 
+// Only when a run asks (DC_STAND_INS' fs), and only for the scripts themselves: the real fs, but /.dockerenv
+// exists or not as told (fs.dockerenv), and one write to a file ending as told fails once, as a briefly locked
+// file does (fs.failWriteOnce)
+const FS = `
+import * as real from 'node:fs';
+export * from 'node:fs';
+const { fs: plan } = JSON.parse(process.env.DC_STAND_INS);
+let failed = false;
+export function existsSync(file) {
+  if (plan.dockerenv !== undefined && String(file) === '/.dockerenv') return plan.dockerenv;
+  return real.existsSync(file);
+}
+export function writeFileSync(file, ...rest) {
+  if (plan.failWriteOnce && !failed && String(file).endsWith(plan.failWriteOnce)) {
+    failed = true;
+    throw Object.assign(new Error('EBUSY: resource busy or locked (stand-in)'), { code: 'EBUSY' });
+  }
+  return real.writeFileSync(file, ...rest);
+}
+export default { ...real, existsSync, writeFileSync };
+`;
+const SCRIPT_FILE = /(setup-claude-server|uninstall-claude-server|track-installation)\.js$/;
+const wantsFs = () => Boolean(JSON.parse(process.env.DC_STAND_INS ?? '{}').fs);
+
 export async function resolve(specifier, context, next) {
   const name = STAND_INS[specifier];
   if (name) return { url: `dc-stand-in:${name}`, shortCircuit: true };
+  if ((specifier === 'fs' || specifier === 'node:fs') && SCRIPT_FILE.test(context.parentURL ?? '') && wantsFs()) {
+    return { url: 'dc-stand-in:fs', shortCircuit: true };
+  }
   return next(specifier, context);
 }
 
 export async function load(url, context, next) {
   if (url === 'dc-stand-in:https') return { format: 'module', source: HTTPS, shortCircuit: true };
   if (url === 'dc-stand-in:child_process') return { format: 'module', source: CHILD_PROCESS, shortCircuit: true };
+  if (url === 'dc-stand-in:fs') return { format: 'module', source: FS, shortCircuit: true };
   return next(url, context);
 }

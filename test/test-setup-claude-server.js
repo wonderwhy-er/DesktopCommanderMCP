@@ -145,7 +145,18 @@ async function configErrors() {
     put(home, CLAUDE_CONFIG.linux, '{}');
     fs.chmodSync(path.join(home, CLAUDE_CONFIG.linux), 0o444);
   };
-  await failed(readOnly, 'npx_setup_update_config_error');
+  const updated = await failed(readOnly, 'npx_setup_update_config_error');
+  const finalError = (run) => JSON.parse(run.posts.find((post) => post.event === 'npx_setup_final_error').body);
+  assert.notStrictEqual(finalError(updated).events[0].params.last_successful_step, 'none', 'its last step done, named');
+  // Nothing done yet when it fails (no npm, no telemetry, no config folder): the report says none
+  const nothing = await setup({
+    platform: 'linux',
+    commands: { ...ANSWERED, 'npm --version': { throw: 'spawn failed' } },
+    telemetry: { default: 'error' },
+    prepare: (home) => put(home, '.config', 'a file, not a folder'),
+  });
+  assert.strictEqual(nothing.code, 1, nothing.stderr);
+  assert.strictEqual(finalError(nothing).events[0].params.last_successful_step, 'none', 'no step done: none');
   // Its own config can't be written: setup says so and goes on
   const noOwn = await setup({ platform: 'linux', prepare: (home) => put(home, '.claude-server-commander', 'a file') });
   assert.strictEqual(noOwn.code, 0, noOwn.stderr);
