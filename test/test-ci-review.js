@@ -296,6 +296,21 @@ export default async function run() {
   assert.deepStrictEqual(clean.body.split('\n'), [REVIEW_MARKER, '**AI review of `0123456` against `fedcba9`:** clean. Clean.'], 'clean: the one line, no table');
   const untested = reviewOf({ answer: { summary: 'Clean.', findings: [] }, diff: DIFF, headSha: HEAD, baseSha: BASE, tests: null });
   assert.strictEqual(untested.body.split('\n')[1], '**AI review of `0123456` against `fedcba9`:** clean, with no test results. Clean.', 'no test results, said plainly');
+  // The first line's one format, agreed with the tool that reads these reviews: it reads
+  // "clean" or the counts, in KINDS' words, then only the note ", with no test results", then the summary.
+  // Anything else there reads as "not done": a change here goes to that tool's parser first, with an example line
+  const count = '\\d+ (real bugs?|not covered|nitpicks?|handled elsewhere|not checked|unsorted)';
+  const firstLine = new RegExp(`^\\*\\*AI review of \`[0-9a-f]{7}\` against \`[0-9a-f]{7}\`:\\*\\* (clean|${count}(, ${count})*)(, with no test results)?\\. \\S`);
+  const notChecked = reviewOf({ answer: { summary: 'Read part of it.', findings: [{ kind: 'not checked', file: 'src/a.ts', line: 2, text: 'too long to read' }] },
+    diff: DIFF, headSha: HEAD, baseSha: BASE, tests: null });
+  assert.strictEqual(notChecked.body.split('\n')[1], '**AI review of `0123456` against `fedcba9`:** 1 not checked, with no test results. Read part of it.',
+    'a count, then the note');
+  const every = reviewOf({ answer: { summary: 'All kinds.', findings: ['real bug', 'real bug', 'not covered', 'nitpick', 'handled elsewhere', 'not checked', 'style']
+    .map((kind) => ({ kind, file: 'src/a.ts', line: 2, text: 'x' })) }, diff: DIFF, headSha: HEAD, baseSha: BASE, usage: null });
+  assert.ok(every.body.split('\n')[1].startsWith('**AI review of `0123456` against `fedcba9`:** 2 real bugs, 1 not covered, 1 nitpick, 1 handled elsewhere, 1 not checked, 1 unsorted. All kinds.'),
+    every.body.split('\n')[1]);
+  assert.deepStrictEqual(every.body.split('\n').slice(2, 4), ['', '| Kind | Where | What |'], 'then the table review reads');
+  for (const review of [clean, untested, notChecked, every]) assert.match(review.body.split('\n')[1], firstLine, 'the one format review reads');
   const odd = reviewOf({ answer: { summary: 'Two\nlines.', findings: [
     { kind: 'style', file: 'src/a.ts', line: 2, text: 'x' },
     { kind: 'nitpick', file: 'pr/src/a.ts', line: '2', text: 'a | b\n  c' },
