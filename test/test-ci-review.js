@@ -76,7 +76,7 @@ const FINDINGS = {
 };
 
 /** A stand-in for GitHub's API: the PR, commits and their PRs, and the reviews it's given */
-function fakeGitHub({ refuseComments = false } = {}) {
+function fakeGitHub({ refuseComments = false, commentsStatus = 422, failReviews = false } = {}) {
   const requests = [];
   const reviews = [];
   const server = http.createServer((req, res) => {
@@ -90,7 +90,8 @@ function fakeGitHub({ refuseComments = false } = {}) {
       req.on('data', (chunk) => { body += chunk; });
       req.on('end', () => {
         const review = JSON.parse(body);
-        if (refuseComments && review.comments?.length) return send(422, { message: 'Unprocessable Entity', errors: ['Line could not be resolved'] });
+        if (failReviews) return send(500, { message: 'Server Error' });
+        if (refuseComments && review.comments?.length) return send(commentsStatus, { message: commentsStatus === 422 ? 'Unprocessable Entity' : 'Server Error', errors: ['Line could not be resolved'] });
         reviews.push(review);
         send(200, { id: 1 });
       });
@@ -730,6 +731,26 @@ export default async function run() {
     } finally {
       refusing.server.close();
     }
+    // #970: GitHub answered 500 to a review with eleven line comments. The summary takes them all, as for a 422
+    const failing = await fakeGitHub({ refuseComments: true, commentsStatus: 500 });
+    try {
+      result = await ciReview(['post', out], { ...env, GITHUB_API_URL: failing.url }, dir);
+      assert.strictEqual(result.code, 0, result.stderr);
+      assert.ok(failing.reviews.length === 1 && failing.reviews[0].comments.length === 0, 'a 500: posted again, without line comments');
+      assert.ok(/: 500/.test(result.stderr) && /every finding in the summary instead/.test(result.stderr), result.stderr);
+    } finally {
+      failing.server.close();
+    }
+    // A review GitHub refuses whole still leaves every finding in the job summary, and fails plainly
+    const down = await fakeGitHub({ failReviews: true });
+    try {
+      result = await ciReview(['post', out], { ...env, GITHUB_API_URL: down.url }, dir);
+      assert.strictEqual(result.code, 1, 'no review posted: the job fails');
+      assert.ok(result.stdout.includes('| real bug | `src/a.ts:2` | two is 2 now'), `the job summary has it all the same: ${result.stdout}`);
+      assert.ok(/: 500/.test(result.stderr) && !/\n\s+at /.test(result.stderr), `one plain line: ${result.stderr}`);
+    } finally {
+      down.server.close();
+    }
 
     result = await ciReview(['post', out], { ...env, PR: '' }, dir);
     assert.strictEqual(result.code, 0, result.stderr);
@@ -764,6 +785,10 @@ export default async function run() {
   assert.ok(checkInput.includes('type: choice') && checkInput.includes('default: code') && checkInput.includes('options: [code, text]'), `the check input: ${checkInput}`);
   assert.ok(steps.includes('CHECK: ${{ inputs.check }}') && steps.includes('if [[ "$CHECK" == text ]]; then text=(--text pr); fi'), 'check=text: the PR\'s description');
   assert.ok(steps.includes('pattern: results-*') && steps.includes('pattern: coverage-*') && steps.includes('path: ci'), 'the run\'s results and coverage, downloaded as data');
+  // The script's own files, checked out sparsely: every file run reads (the review found the text check's prompt missing)
+  for (const file of ['/.github/review-prompt.md', '/.github/text-check-prompt.md', '/.github/writing-style.md', '/test/ci-review-budget.js']) {
+    assert.ok(steps.includes(file), `the review job checks out ${file}`);
+  }
   assert.ok(steps.includes('GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}'));
   assert.ok(steps.includes('name: review') && steps.includes('path: review/'), 'the review artifact');
   const upload = steps.indexOf('- name: Upload the review');
