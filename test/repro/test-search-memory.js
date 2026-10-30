@@ -35,6 +35,9 @@
 // dist/index.js with the SDK client, runs start_search (content, "needle",
 // maxResults: 200, the default contextLines) until it completes, and samples
 // the peak memory of the server and of its ripgrep (test/helpers/process-memory.js).
+// The server is the process that get_config names: on Windows with Node 22 the
+// process the client starts only waits, and a copy of it serves
+// (src/utils/threadpool-size.ts).
 //
 // Run: node test/repro/run-repro.js test-search-memory.js
 //      (REPRO_MB scales the fixtures, default 64; REPRO_SCENARIOS=many,line picks some;
@@ -56,7 +59,7 @@ import path from 'path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { LoggingMessageNotificationSchema } from '@modelcontextprotocol/sdk/types.js';
 import { watchPeakMemory, formatMB } from '../helpers/process-memory.js';
-import { readSearchAnswer, closeClient } from '../helpers/mcp-client.js';
+import { answerText, readSearchAnswer, closeClient } from '../helpers/mcp-client.js';
 import { serverTransport } from '../helpers/mcp-server.js';
 import { exitProcess } from '../../dist/utils/exit-process.js';
 
@@ -159,7 +162,9 @@ async function runScenario(name) {
     transport.onclose = () => { serverExited = true; };
     await client.connect(transport, { timeout: 30_000 });
 
-    const serverPid = transport.pid;
+    // The serving process, by its own process ID (get_config's systemInfo.processInfo.pid)
+    const config = answerText(await client.callTool({ name: 'get_config', arguments: {} }));
+    const serverPid = JSON.parse(config.slice(config.indexOf('{'))).systemInfo.processInfo.pid;
     const memory = watchPeakMemory(serverPid, SAMPLE_MS);
     let started = Date.now();
     try {
