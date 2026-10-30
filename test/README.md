@@ -50,7 +50,7 @@ A runner given no names that finds no test file in its folder fails, rather than
 
 Two files hold the exceptions, read by `readTestList` (`helpers/node-test-runner.js`). One test per line, `<name>  # <reason>`: a suite file by its name, the others as `repro/<name>`, `integration/<name>` or `docker/<name>`. A line without a reason, naming a file that isn't there, or naming one no runner finds by name (a helper, a fixture, a `.ps1` test: `test-powershell-tests.js` runs those), stops the run.
 - **`test/timed.txt`:** the timed tests (above).
-- **`test/excluded.txt`:** tests that never run in CI, for the reason on their line, such as a service CI doesn't have. The runners leave them out of the files they find and list them in their reports; one named on the command line still runs. `test/excluded.txt` lists no test now.
+- **`test/excluded.txt`:** tests that never run in CI, for the reason on their line, such as a service CI doesn't have. The runners leave them out of the files they find, list them in their reports, and the PR comment counts them; one named on the command line still runs. `test/excluded.txt` lists no test now.
 
 ## Reports
 
@@ -68,10 +68,10 @@ Each runner writes, in `test-results/suite/`, `test-results/repro/` or `test-res
   - every file under `src/` (`.ts` and `.js`);
   - the install scripts the package ships at its root: `setup-claude-server.js` (bin `setup`), `uninstall-claude-server.js` (bin `remove`), `track-installation.js` (postinstall);
   - the vendored `vendor/telemetry-contract/`, without its tests.
-- **Not counted:** `dist/`, `node_modules/`, `scripts/` and `test/`, as in a usual setup. `test/` holds the tests and the runners, coverage and CI scripts. Those scripts have tests of their own (`test/test-coverage-areas.js`, `test-check-coverage-report.js`, `test-map-copied-scripts.js`, `test-run-coverage.js`, `test-run-ci.js`, `test-select-tests.js`, `test-node-test-runner.js`, `test-runner-scripts.js`), which still run.
+- **Not counted:** `dist/`, `node_modules/`, `scripts/` and `test/`, as in a usual setup. `test/` holds the tests and the runners, coverage and CI scripts. Those scripts have tests of their own (`test/test-coverage-areas.js`, `test-check-coverage-report.js`, `test-map-copied-scripts.js`, `test-run-coverage.js`, `test-run-ci.js`, `test-ci-comment.js`, `test-ci-platforms.js`, `test-select-tests.js`, `test-node-test-runner.js`, `test-runner-scripts.js`), which still run.
 - **How:** c8 follows every Node process that keeps the test's environment, the server the tests start included, and maps `dist/` back to `src/` through the source maps of the coverage build: `tsconfig.coverage.json` for the TypeScript, and `test/map-copied-scripts.js` for the plain `.js` files the build copies into `dist/` (from `src/`, and the install scripts).
 - **Files no test loads** show at 0 %.
-- **By area:** the run prints the numbers per folder of `src/` (`src/ui` among them), plus `install scripts` and `vendor/telemetry-contract`, then one total (`test/coverage-areas.js`).
+- **By area:** the run prints, and the PR comment shows, the numbers per folder of `src/` (`src/ui` among them), plus `install scripts` and `vendor/telemetry-contract`, then one total (`test/coverage-areas.js`).
 - **The npm package never ships those source maps:** the next `npm run build` drops them.
 - **A test that rebuilds `dist/`** would drop those source maps for everything after it. `repro/test-release-packages-ship-contract.js` does, through `npm pack`, which runs the build under npm 10. Under coverage it runs last and uncovered, and the coverage build is made again after it (`test/run-ci.js`).
 - **The report is checked:** `test/check-coverage-report.js` fails on any file it doesn't count (a `dist/` file means something went unmapped) and on any counted file the report doesn't list.
@@ -90,3 +90,41 @@ Each runner writes, in `test-results/suite/`, `test-results/repro/` or `test-res
 - **`selection.md`** lists each picked file with the chain of imports that reaches the changed file. It also lists the changed files no test reaches (in `src/`, `scripts/`, `test/fixtures/`, `test/helpers/`).
 
 A change to a shared module reaches most tests, because many tests start the whole server. `--changed` saves the most for changes to tests themselves. Run everything once before you push.
+
+## CI
+
+`.github/workflows/tests.yml` runs on pull requests opened by the maintainers in `MAINTAINERS` (`test/helpers/ci-platforms.js`), the one list both workflows check.
+- **Platforms: add the `linux` label to run the tests on Linux.** The same goes for `windows` and `macos`. With none of them, nothing runs.
+  - A push runs every labelled platform. A new push cancels the older push's run.
+  - Adding a label runs its platform at once. Another label, or removing one, runs nothing and cancels nothing.
+  - A first job, `platforms`, picks them (`test/ci-platforms.js`, `test/helpers/ci-platforms.js`).
+- **From a PR comment:** a maintainer writes `/test linux`, `/test windows` or `/test macos`, or several at once (`/test windows macos`), and CI runs those platforms on the PR's head.
+  - Only comments from the logins in `MAINTAINERS` count. Other comments are ignored.
+  - **It only works once this workflow is on main:** GitHub runs comment-started workflows from the default branch's workflow file.
+- **On demand:** `gh workflow run tests.yml -f commit=<sha> -f platforms=linux,windows -f tests=<value>` runs exactly that commit on those platforms (Linux when none). GitHub lets only people with write access start it, and it works once this workflow is on main. The `tests` values (`test/run-ci.js`'s `planFor`):
+  - empty, the default: everything a push or label run runs (below), shown as "everything" in the comment;
+  - `test`: the suite (`npm test`'s files); `integration`; `repro`; `docker`: `test/docker/`, Linux only, failing when there's none to run;
+  - `timed`: the timed tests in `test/timed.txt`, one job per test and platform, each alone on its own runner, without coverage. Each job's results are an artifact of their own (`results-<runner>-timed-<test>`, a `/` as `-`). The comment's row for the platform counts them all, and a job that stopped before its test ran counts as failed, with its step;
+  - `changed:A..B`: what a push runs, each runner with `--changed A B`;
+  - `files:a.js,b.js`: exactly those, each through its folder's runner (`test/`, `repro/`, `integration/`, `docker/`).
+  - The run checks out the commit, with a read-only token and no npm cache. When the commit is an open PR's head, its rows go into that PR's comment, with the `tests` value (`Ran`) and the commit. Otherwise only the job summary has them: a run of an older commit leaves the comment as it is.
+- **How a `/test` or on-demand run stays safe:** GitHub starts both from main's workflow, with the repository's token, on code no one has merged. So:
+  - only a commenter in `MAINTAINERS` starts a `/test` run, and only someone with write access an on-demand one;
+  - the first job reads the commit's full SHA once (an on-demand `commit` must be a SHA), and the test job checks out exactly that commit;
+  - the inputs reach the scripts only through the environment, and the PR number found for a commit is checked to be a number;
+  - the test job has a read-only token (`contents: read`), names no secret, and skips the npm cache;
+  - the comment job runs main's script and reads the artifacts as data.
+- **What runs:** `npm run test:coverage`, so everything but the timed tests in `test/timed.txt`, on Node 22 with npm 11:
+  - the suite, the repro scripts and the integration tests, under coverage;
+  - Docker's tests (`test/docker/`) on Linux, outside coverage: one checks the shell installers, which coverage can't count, and the other runs the server inside the image. With none at the commit, that part passes and says so. On Windows and macOS they don't run, and the comment says why (GitHub's macOS runner has no Docker; its Windows runner has none for Linux containers);
+  - the release-packages repro last, outside coverage (`test/run-ci.js`).
+
+  npm 11, because Node 22's own npm 10 runs the prepare build inside `npm pack` even with ignore-scripts, which breaks `repro/test-release-packages-ship-contract.js`.
+- **Artifacts:** each platform uploads `results-<runner>` (`test-results/`) and `coverage-<runner>` (`coverage/`), e.g. `coverage-ubuntu-latest`. They download as zip files (logged in); open the coverage report's `index.html`.
+- **The PR comment:** a last job writes one comment on the PR, with no prose. It has:
+  - a heading with the commit;
+  - the results: a row per platform, with its tests passed of how many, what it ran (`everything` for what a push runs), with a note for a part that didn't run and why, how many tests `test/excluded.txt` leaves out (`; 2 excluded (test/excluded.txt)`) and how many checks were skipped, its test job's minutes (`…` while it runs), its commit and its run;
+  - it fails closed: a job that failed while its results show no failure, a `results.json` that can't be read, and a run where no test file ran each make the row ❌ and say which;
+  - the coverage: a row per platform, with lines, branches and functions, and links to its report and results;
+  - the lines by area, collapsed, a column per platform, then one total.
+- **A run replaces only its own platforms' rows,** so a platform that didn't run in the latest push keeps its last row, with its own commit. The comment keeps each platform's results as hidden data for that. The job summary has the same text.
