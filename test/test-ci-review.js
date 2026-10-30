@@ -20,7 +20,9 @@ import { spawn, spawnSync } from 'child_process';
 import fs from 'fs';
 import http from 'http';
 import path from 'path';
-import { answerOf, changedLines, promptOf, quiet, REVIEW_MARKER, reviewOf, usageOf } from './helpers/ci-review.js';
+import {
+  answerOf, changedLines, localTestsOf, promptOf, quiet, REVIEW_MARKER, reviewOf, testsOf, uncoveredOf, usageOf, withUncovered,
+} from './helpers/ci-review.js';
 import { ROOT } from './helpers/node-test-runner.js';
 import { runIfMain } from './helpers/run-if-main.js';
 import { createTempDir } from './helpers/test-env.js';
@@ -194,6 +196,55 @@ export default async function run() {
   }
   console.log('✓ the budget hook: N tool calls, then each refused with "answer now"');
 
+  // Coverage of the change: the added lines no platform ran, merged across platforms, by the report's own paths
+  const LCOV_LINUX = 'TN:\nSF:/home/runner/work/r/r/src/a.ts\nDA:1,1\nDA:2,0\nDA:3,4\nDA:10,1\nDA:11,0\nDA:12,0\nend_of_record\nSF:/home/runner/work/r/r/src/other.ts\nDA:1,0\nend_of_record\n';
+  const LCOV_WINDOWS = 'TN:\nSF:D:\\a\\r\\r\\src\\a.ts\nDA:2,3\nDA:11,0\nDA:12,0\nend_of_record\n';
+  assert.deepStrictEqual(uncoveredOf({ diff: DIFF, lcovs: [LCOV_LINUX, LCOV_WINDOWS] }), [{ file: 'src/a.ts', ranges: [[11, 12]] }],
+    'line 2 ran on Windows; 11-12 ran nowhere; an unchanged file or line is no business of the review');
+  assert.deepStrictEqual(uncoveredOf({ diff: DIFF, lcovs: [] }), [], 'no report, nothing to say');
+  console.log('✓ the changed lines no test ran, from every platform\'s lcov.info');
+
+  // The run's tests: CI's artifacts (a folder per platform), or this machine's last run
+  const testsDir = createTempDir('dc-ci-review-tests-');
+  try {
+    const put = (file, text) => {
+      fs.mkdirSync(path.dirname(path.join(testsDir, file)), { recursive: true });
+      fs.writeFileSync(path.join(testsDir, file), text);
+    };
+    const results = (files) => JSON.stringify({ files: files.map(([file, success]) => ({ path: file, success, skipped: [] })) });
+    put('ci/results-ubuntu-latest/suite/results.json', results([['test/test-a.js', false], ['test/test-b.js', true]]));
+    put('ci/results-windows-latest/suite/results.json', results([['test/test-a.js', true]]));
+    put('ci/coverage-ubuntu-latest/lcov.info', LCOV_LINUX);
+    put('ci/coverage-windows-latest/lcov.info', LCOV_WINDOWS);
+    const fromCi = testsOf(path.join(testsDir, 'ci'));
+    assert.deepStrictEqual(fromCi.platforms, ['ubuntu-latest', 'windows-latest']);
+    assert.deepStrictEqual(fromCi.failed, [{ platform: 'ubuntu-latest', file: 'test/test-a.js' }], 'the failed files, by platform');
+    assert.strictEqual(fromCi.lcovs.length, 2);
+    assert.strictEqual(testsOf(path.join(testsDir, 'none')), null, 'no results: null');
+
+    // This machine: test-results/ and coverage/ as npm run test:coverage leaves them, used only when its stamp is B on a clean tree
+    put('local/test-results/suite/results.json', results([['test/test-a.js', true]]));
+    put('local/coverage/lcov.info', LCOV_LINUX);
+    put('local/coverage/run.json', JSON.stringify({ head: HEAD, clean: true }));
+    const local = localTestsOf({ root: path.join(testsDir, 'local'), head: HEAD });
+    assert.deepStrictEqual([local.platforms, local.failed], [['this machine'], []], 'the last coverage run here, at B');
+    assert.strictEqual(localTestsOf({ root: path.join(testsDir, 'local'), head: OTHER }), null, 'made at another commit: not used');
+    put('local/coverage/run.json', JSON.stringify({ head: HEAD, clean: false }));
+    assert.strictEqual(localTestsOf({ root: path.join(testsDir, 'local'), head: HEAD }), null, 'made with uncommitted changes: not used');
+  } finally {
+    fs.rmSync(testsDir, { recursive: true, force: true });
+  }
+  console.log('✓ the run\'s tests and coverage: CI\'s artifacts, or this machine\'s run at B');
+
+  // Each uncovered range the model didn't mention becomes a not covered finding
+  const uncovered = [{ file: 'src/a.ts', ranges: [[11, 12]] }, { file: 'src/b.ts', ranges: [[1, 1], [4, 6]] }];
+  assert.deepStrictEqual(withUncovered([{ kind: 'nitpick', file: 'src/b.ts', line: 5, text: 'x' }], uncovered), [
+    { kind: 'nitpick', file: 'src/b.ts', line: 5, text: 'x' },
+    { kind: 'not covered', file: 'src/a.ts', line: 11, text: 'not covered: src/a.ts:11-12' },
+    { kind: 'not covered', file: 'src/b.ts', line: 1, text: 'not covered: src/b.ts:1' },
+  ], 'src/b.ts:4-6 was mentioned (line 5): left to the model\'s words; the others added');
+  console.log('✓ uncovered changed lines become findings, unless the model spoke to them');
+
   // The answer: JSON findings, also inside a code fence or after some words
   assert.deepStrictEqual(answerOf(JSON.stringify(FINDINGS)), FINDINGS);
   assert.deepStrictEqual(answerOf(`Here it is:\n\`\`\`json\n${JSON.stringify(FINDINGS, null, 2)}\n\`\`\`\n`), FINDINGS, 'in a fence');
@@ -238,6 +289,8 @@ export default async function run() {
   const clean = reviewOf({ answer: { summary: 'Clean.', findings: [] }, diff: DIFF, headSha: HEAD, baseSha: BASE, usage: null });
   assert.deepStrictEqual(clean.comments, []);
   assert.deepStrictEqual(clean.body.split('\n'), [REVIEW_MARKER, '**AI review of `0123456` against `fedcba9`:** clean. Clean.'], 'clean: the one line, no table');
+  const untested = reviewOf({ answer: { summary: 'Clean.', findings: [] }, diff: DIFF, headSha: HEAD, baseSha: BASE, tests: null });
+  assert.strictEqual(untested.body.split('\n')[1], '**AI review of `0123456` against `fedcba9`:** clean, with no test results. Clean.', 'no test results, said plainly');
   const odd = reviewOf({ answer: { summary: 'Two\nlines.', findings: [
     { kind: 'style', file: 'src/a.ts', line: 2, text: 'x' },
     { kind: 'nitpick', file: 'pr/src/a.ts', line: '2', text: 'a | b\n  c' },
@@ -275,6 +328,14 @@ export default async function run() {
     commits: ['0123456 fix: two is 2', 'fedcba9 test: two is 2 (failing first)'], diff: fenced, calls: 8, style,
   });
   assert.ok(prompt.includes(`## Writing style\n\n${style.trim()}`) && prompt.indexOf('## Writing style') < prompt.indexOf('## This review'), 'the writing style whole, with the rules');
+  assert.ok(prompt.includes('## The tests at the head\n\nNo test results came with this review'), 'without results, it says so');
+  const tested = promptOf({
+    template, headSha: HEAD, baseSha: BASE, files: ['src/a.ts'], diff: DIFF, calls: 8,
+    tests: { platforms: ['ubuntu-latest', 'windows-latest'], failed: [{ platform: 'ubuntu-latest', file: 'test/test-a.js' }], uncovered: [{ file: 'src/a.ts', ranges: [[11, 12], [20, 20]] }] },
+  });
+  assert.ok(tested.includes('They ran on ubuntu-latest, windows-latest. Failed: test/test-a.js (ubuntu-latest).'), 'where they ran, and what failed');
+  assert.ok(tested.includes('- src/a.ts: 11-12, 20'), 'the uncovered changed lines, by file');
+  assert.ok(/is each new or changed behaviour tested/i.test(tested) && /not covered/.test(tested) && /unless the PR says why/.test(tested), 'the questions it asks');
   assert.ok(prompt.includes('The commits:\n- 0123456 fix: two is 2\n- fedcba9 test: two is 2 (failing first)'), 'the commits, one line each');
   const opening = /^(`{5,})diff$/m.exec(prompt);
   assert.ok(opening && prompt.includes(`${opening[1]}diff\n${fenced}${opening[1]}\n`), 'the diff inline, in a fence longer than any run of backticks in it');
@@ -404,7 +465,8 @@ export default async function run() {
       summary: 'One bug.',
       findings: [{ kind: 'real bug', file: 'src/a.ts', line: 2, text: 'two is 2.' }, { kind: 'nitpick', file: 'src/b.ts', line: 1, text: 'b is unused.' }],
       usage: usageOf(STATS),
-    }, 'review.json: each finding with its file and line');
+      tests: null,
+    }, 'review.json: each finding with its file and line; no test results here');
     const md = fs.readFileSync(path.join(out, 'review.md'), 'utf8');
     assert.ok(md.startsWith(REVIEW_MARKER) && md.includes('| real bug | `src/a.ts:2` | two is 2. |') && md.includes('| nitpick | `src/b.ts:1` | b is unused. |'), md);
     assert.ok(seen.stdin.includes('## Writing style'), 'the writing style on stdin');
@@ -438,6 +500,25 @@ export default async function run() {
       }
     };
     assert.ok(!alive(childPid), 'its child process is stopped too: nothing runs on after the review');
+
+    assert.ok(seen.stdin.includes('No test results came with this review'), 'no --tests and no stamp here: no test results');
+    assert.strictEqual(written.tests, null);
+    const artifacts = path.join(dir, 'artifacts');
+    fs.mkdirSync(path.join(artifacts, 'results-ubuntu-latest', 'suite'), { recursive: true });
+    fs.mkdirSync(path.join(artifacts, 'coverage-ubuntu-latest'), { recursive: true });
+    fs.writeFileSync(path.join(artifacts, 'results-ubuntu-latest', 'suite', 'results.json'), JSON.stringify({ files: [{ path: 'test/test-a.js', success: true, skipped: [] }] }));
+    fs.writeFileSync(path.join(artifacts, 'coverage-ubuntu-latest', 'lcov.info'), 'SF:/w/r/src/a.ts\nDA:1,1\nDA:2,0\nend_of_record\n');
+    const quietAnswer = path.join(dir, 'answer-quiet.txt');
+    fs.writeFileSync(quietAnswer, answerFile('{"summary": "Fine.", "findings": []}', STATS));
+    result = await ciReview(['run', `${base}..${head}`, '--repo', repo, '--out', out, '--tests', artifacts], {
+      REVIEW_GEMINI: fake, FAKE_RECORD: record, FAKE_ANSWER: quietAnswer, PR: '', DC_GEMINI_API_KEY: 'local-key',
+    }, dir);
+    assert.strictEqual(result.code, 0, result.stderr);
+    const withTests = JSON.parse(fs.readFileSync(record, 'utf8'));
+    assert.ok(withTests.stdin.includes('They ran on ubuntu-latest.') && withTests.stdin.includes('- src/a.ts: 2'), 'the run\'s tests and the uncovered line, on stdin');
+    const reviewed = JSON.parse(fs.readFileSync(path.join(out, 'review.json'), 'utf8'));
+    assert.deepStrictEqual(reviewed.findings, [{ kind: 'not covered', file: 'src/a.ts', line: 2, text: 'not covered: src/a.ts:2' }], 'the model left it out: the review says it');
+    assert.deepStrictEqual(reviewed.tests, { platforms: ['ubuntu-latest'], failed: [], uncovered: [{ file: 'src/a.ts', ranges: [[2, 2]] }] });
 
     result = await runReview({ GEMINI_API_KEY: 'ci-key', PR: '7', ...api });
     assert.strictEqual(result.code, 0, result.stderr);
