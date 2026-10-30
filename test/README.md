@@ -64,14 +64,14 @@ Each runner writes, in `test-results/suite/`, `test-results/repro/` or `test-res
 | `selection.md` | with `--changed`: which files were picked, and why |
 
 `npm run test:coverage` writes `coverage/`. It holds the HTML report (`coverage/index.html`, a page per source file with each line marked), `lcov.info`, `coverage-final.json`, `coverage-summary.json` and `cobertura-coverage.xml`, and prints a text summary.
-- **What it counts:** our source, each file shown as itself (`.c8rc.json`). Nothing from `dist/`, `node_modules/`, the tests or `scripts/`. Counted are:
+- **What it counts:** the product code, each file shown as itself (`.c8rc.json`). Counted are:
   - every file under `src/` (`.ts` and `.js`);
   - the install scripts the package ships at its root: `setup-claude-server.js` (bin `setup`), `uninstall-claude-server.js` (bin `remove`), `track-installation.js` (postinstall);
-  - the vendored `vendor/telemetry-contract/`, without its tests;
-  - the test tooling: the runners, `test/run-ci.js` and the coverage scripts, listed in `TEST_TOOLING` (`test/check-coverage-report.js`). It's a feature with its own tests (`test/test-coverage-areas.js`, `test-check-coverage-report.js`, `test-map-copied-scripts.js`, `test-run-coverage.js`, `test-run-ci.js`, `test-select-tests.js`, `test-node-test-runner.js`, `test-runner-scripts.js`).
+  - the vendored `vendor/telemetry-contract/`, without its tests.
+- **Not counted:** `dist/`, `node_modules/`, `scripts/` and `test/`, as in a usual setup. `test/` holds the tests and the runners, coverage and CI scripts. Those scripts have tests of their own (`test/test-coverage-areas.js`, `test-check-coverage-report.js`, `test-map-copied-scripts.js`, `test-run-coverage.js`, `test-run-ci.js`, `test-select-tests.js`, `test-node-test-runner.js`, `test-runner-scripts.js`), which still run.
 - **How:** c8 follows every Node process that keeps the test's environment, the server the tests start included, and maps `dist/` back to `src/` through the source maps of the coverage build: `tsconfig.coverage.json` for the TypeScript, and `test/map-copied-scripts.js` for the plain `.js` files the build copies into `dist/` (from `src/`, and the install scripts).
 - **Files no test loads** show at 0 %.
-- **By area:** the run prints the numbers per folder of `src/` (`src/ui` among them), plus `install scripts`, `vendor/telemetry-contract` and `test tooling`, then one total (`test/coverage-areas.js`).
+- **By area:** the run prints the numbers per folder of `src/` (`src/ui` among them), plus `install scripts` and `vendor/telemetry-contract`, then one total (`test/coverage-areas.js`).
 - **The npm package never ships those source maps:** the next `npm run build` drops them.
 - **A test that rebuilds `dist/`** would drop those source maps for everything after it. `repro/test-release-packages-ship-contract.js` does, through `npm pack`, which runs the build under npm 10. Under coverage it runs last and uncovered, and the coverage build is made again after it (`test/run-ci.js`).
 - **The report is checked:** `test/check-coverage-report.js` fails on any file it doesn't count (a `dist/` file means something went unmapped) and on any counted file the report doesn't list.
