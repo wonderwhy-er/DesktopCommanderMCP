@@ -12,6 +12,9 @@
  *     helper calls don't replace them
  *   - the profile's aliases named like the helper's own functions don't
  *     replace those
+ *   - a profile that sets an alias only where the command's PowerShell runs
+ *     (with TERM, which start_process sets, and without -NonInteractive) sets
+ *     it for the helper too
  *
  * Each case writes a profile into this test home, where each PowerShell looks
  * for it ($PROFILE.CurrentUserCurrentHost: Windows PowerShell finds it only
@@ -25,7 +28,7 @@ import os from 'os';
 import path from 'path';
 import { configManager } from '../dist/config-manager.js';
 import { runIfMain, skip } from './helpers/run-if-main.js';
-import { isTestHome } from './helpers/test-env.js';
+import { isTestHome, withEnv } from './helpers/test-env.js';
 import { installedPowerShells } from './helpers/powershell.js';
 import { waitUntil } from './helpers/wait.js';
 
@@ -57,8 +60,12 @@ const OWN_FUNCTION_STAND_INS = [
   'function Test-Never { $false }',
 ];
 
+// The program net, as a profile alias names it on this system
+const NET_ALIAS = process.platform === 'win32' ? 'Set-Alias net net.exe' : 'Set-Alias net /usr/bin/net';
+
 // A case with `windows: true` runs on Windows only, one with `windows: false` everywhere else. An alias to
-// net.exe runs the program net on Windows only, and one to /usr/bin/net on the other systems.
+// net.exe runs the program net on Windows only, and one to /usr/bin/net on the other systems. A case's `env`
+// is this process's environment while it runs, as the server's may be (undefined: unset).
 const CASES = [
   {
     what: "a profile's alias to net.exe comes before the script's own function",
@@ -116,6 +123,18 @@ const CASES = [
     checks: [["function net { 'x' }; Remove-Item function:net; net user", BLOCKED_NET]],
   },
   {
+    // A server started by a desktop app often has no TERM; start_process gives the command's PowerShell one
+    what: "a profile's alias to net, set only where TERM is",
+    profile: `if ($env:TERM) { ${NET_ALIAS} }`,
+    env: { TERM: undefined },
+    checks: [["function net { 'x' }; net user", BLOCKED_NET]],
+  },
+  {
+    what: "a profile's alias to net, set only without -NonInteractive",
+    profile: `if (-not ([Environment]::GetCommandLineArgs() -match '^-noni')) { ${NET_ALIAS} }`,
+    checks: [["function net { 'x' }; net user", BLOCKED_NET]],
+  },
+  {
     what: 'a profile alias named Test-RunsUnreadCode',
     profile: [...OWN_FUNCTION_STAND_INS, 'Set-Alias Test-RunsUnreadCode Test-Never'].join('\n'),
     checks: [["function net { 'x' }; Invoke-Expression $text; net user", BLOCKED_NET]],
@@ -166,15 +185,17 @@ export default async function runTests() {
     // The helpers read the profile when they start: stop the running ones, the next check starts new ones
     for (const pid of runningPowerShellHelpers()) process.kill(pid);
     await waitUntil(() => runningPowerShellHelpers().length === 0, 10000, 'the helpers have ended');
-    for (const shell of shells) {
-      for (const [command, expected] of testCase.checks) {
-        const answer = await commandManager.checkCommand(command, shell);
-        const right = JSON.stringify(answer) === JSON.stringify(expected);
-        checks++;
-        console.log(`  ${right ? '✓' : '✗'} ${shell}: ${command} → ${JSON.stringify(answer)}`);
-        if (!right) failures.push(`${testCase.what} (${shell}): ${command} should be ${JSON.stringify(expected)} but was ${JSON.stringify(answer)}`);
+    await withEnv(testCase.env ?? {}, async () => {
+      for (const shell of shells) {
+        for (const [command, expected] of testCase.checks) {
+          const answer = await commandManager.checkCommand(command, shell);
+          const right = JSON.stringify(answer) === JSON.stringify(expected);
+          checks++;
+          console.log(`  ${right ? '✓' : '✗'} ${shell}: ${command} → ${JSON.stringify(answer)}`);
+          if (!right) failures.push(`${testCase.what} (${shell}): ${command} should be ${JSON.stringify(expected)} but was ${JSON.stringify(answer)}`);
+        }
       }
-    }
+    });
   }
   console.log(failures.length === 0 ? `All ${checks} checks right` : `${failures.length} of ${checks} checks wrong:\n  ${failures.join('\n  ')}`);
   assert.deepStrictEqual(failures, [], `${failures.length} of ${checks} PowerShell profile checks are wrong`);
