@@ -21,6 +21,7 @@ import assert from 'assert';
 import { spawnSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
+import * as ci from './helpers/ci-platforms.js';
 import {
   commandPlatforms, dataOf, isMaintainer, MAINTAINERS, MARKER, matrixFor, mergeComment, minutesOf, osOf, platformMinutes, platformsFor, plain,
   renderComment, timedNamesIn,
@@ -238,6 +239,38 @@ export default async function run() {
   // A failed run, and one that stopped before its tests wrote anything
   const failed = renderComment({ headSha: SHA_A, platforms: { linux: results(SHA_A, { tests: { files: 3, passed: 2, skipped: 0, failed: ['test/test-x.js'] } }) } });
   assert.ok(failed.includes('| Linux | ❌ 2 of 3 files passed | `everything` | 12 | `aaaaaaa` |'));
+
+  // Which files failed, per platform: each with its first error line and a link to its job
+  assert.strictEqual(typeof ci.firstError, 'function', 'ci-platforms.js picks a failed file\'s first error line');
+  const tail = ['✓ run: a crash is one plain line naming its error', '❌ Unhandled error: AssertionError: no token', 'at run'];
+  assert.strictEqual(ci.firstError(tail.join('\n')), '❌ Unhandled error: AssertionError: no token', 'the ❌ line, not a ✓ one');
+  assert.strictEqual(ci.firstError('starting\nTypeError: x is not a function\n  at y'), 'TypeError: x is not a function');
+  assert.strictEqual(ci.firstError('[2ms] pool = 16\n[31007ms] BLOCKED >30000ms -> no help\n'), '[31007ms] BLOCKED >30000ms -> no help',
+    'no error line: the last line');
+  assert.strictEqual(ci.firstError(''), '', 'no output: nothing');
+  assert.strictEqual(ci.firstError(`✗ ${'x'.repeat(400)}`).length, 200, 'a long line cut to 200 characters');
+  const jobUrl = 'https://github.com/o/r/actions/runs/1/job/9';
+  const failures = [
+    { file: 'test/repro/test-a.js', error: '[31007ms] BLOCKED >30000ms', job: jobUrl },
+    { file: 'test/test-b.js', error: 'with `ticks` | pipes <b>', job: 'javascript:alert(1)' },
+  ];
+  const listed = renderComment({ headSha: SHA_A, platforms: {
+    windows: results(SHA_A, { tests: { files: 3, passed: 1, skipped: 0, failed: failures.map((each) => each.file), failures } }),
+    linux: results(SHA_A),
+  } });
+  assert.ok(listed.includes('| Platform | Failed file | First error |\n|---|---|---|\n'), `a table of the failed files:\n${listed}`);
+  assert.ok(listed.includes(`| Windows | [\`test/repro/test-a.js\`](${jobUrl}) | \`[31007ms] BLOCKED >30000ms\` |`), 'linked to its job');
+  assert.ok(listed.includes('| Windows | `test/test-b.js` | `with ticks  pipes b` |'), 'no link that isn\'t one; no markup');
+  assert.ok(!listed.includes('| Linux | `'), 'a platform that passed has no rows');
+  assert.ok(!failed.includes('Failed file'), 'no failures recorded (an older comment\'s row): no table');
+  const many = Array.from({ length: 25 }, (_, i) => ({ file: `test/test-${i}.js`, error: 'x', job: jobUrl }));
+  const long = renderComment({ headSha: SHA_A, platforms: {
+    macos: results(SHA_A, { tests: { files: 30, passed: 5, skipped: 0, failed: many.map((each) => each.file), failures: many } }),
+  } });
+  assert.strictEqual(long.split('\n').filter((line) => line.startsWith('| macOS | [')).length, 20, 'at most 20 per platform');
+  assert.ok(long.includes('| macOS | … and 5 more | the results artifact has them |'), 'the rest counted');
+  assert.deepStrictEqual(prose(listed), [], 'still no prose');
+  console.log('✓ the failed files, per platform: each with its first error line and its job');
   const stopped = renderComment({ headSha: SHA_A, platforms: { windows: { sha: SHA_A, tests: null, stoppedAt: 'Install', coverage: null, areas: [], links: {} } } });
   assert.ok(stopped.includes('| Windows | ❌ no results: “Install” failed | – | – | `aaaaaaa` | – |') && stopped.includes('| Windows | – | – | – | – | – |'),
     'a row kept from before Ran and Minutes shows –');
