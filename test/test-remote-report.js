@@ -550,6 +550,8 @@ async function runTests() {
             try {
                 await new Promise((resolve) => setTimeout(resolve, 500));
                 await waitUntil(() => fs.existsSync(copyPidFile), 15_000, 'the copy of the stand-in pair runs');
+                // Without a copy (under --inspect, say) the first process writes the file itself, and the count would hold anyway
+                assert.notStrictEqual(Number(fs.readFileSync(copyPidFile, 'utf8')), standIns[3].pid, 'the stand-in pair should run as two processes');
                 const result = await runReport(env);
                 const after = JSON.parse(zipFile(result, 'report.json')).desktopCommanderMcp;
                 assert.strictEqual(after.running, before.running + 2,
