@@ -123,6 +123,8 @@ jobs:
             /.github/writing-style.md
             /test/ci-review.js
             /test/ci-review-budget.js
+            /test/check-coverage-report.js
+            /test/helpers/node-test-runner.js
             /test/helpers/ci-platforms.js
             /test/helpers/ci-review.js
             /test/helpers/github-api.js

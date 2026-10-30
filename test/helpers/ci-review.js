@@ -110,10 +110,12 @@ function lcovHits(text) {
  * The added lines of a diff that no platform's lcov.info ran: [{ file, ranges }]. A file
  * the reports don't count, and a line they don't list (not code), is left out
  */
-export function uncoveredOf({ diff, lcovs }) {
+export function uncoveredOf({ diff, lcovs, counted = () => true }) {
   const reports = lcovs.map(lcovHits);
   const uncovered = [];
   for (const [file, added] of changedLines(diff, { addedOnly: true })) {
+    // Only a file the coverage counts: whatever a report says about another, it's not the coverage's
+    if (!counted(file)) continue;
     // The report's paths are the runner's own: one ends with the file's path from the repo's root
     const records = reports.flatMap((report) => [...report].filter(([source]) => source === file || source.endsWith(`/${file}`)).map(([, hits]) => hits));
     const missed = [...added].filter((line) => records.some((hits) => hits.has(line)) && !records.some((hits) => (hits.get(line) ?? 0) > 0));
