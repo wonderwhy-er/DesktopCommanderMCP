@@ -7,7 +7,8 @@
  * telemetryEnabled and toolCallAuditLogEnabled count as on unless config.json
  * says false. A config.json written before a setting existed has no value for
  * it, which the server reads as on, and one edited by hand can say " FALSE ",
- * which it reads as off; the editor must show the same. The test edits
+ * which it reads as off, or null or 0, which it reads as on; the editor must
+ * show the same. The test edits
  * config.json by hand, starts the server, opens the editor page as a client
  * gets it (getConfigEditorResourceText()) in jsdom, answers the host's side of
  * the connection, and gives the editor the server's get_config answer.
@@ -99,6 +100,17 @@ async function runTests() {
 
   await test('" FALSE " written by hand in config.json shows as off, and a setting missing from it as on', () => {
     assert.deepStrictEqual(shownOn, ['toolCallAuditLogEnabled']);
+  });
+
+  // Values that aren't false: the server writes the logs and sends telemetry for them
+  const otherValues = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8'));
+  otherValues.telemetryEnabled = null;
+  otherValues.toolCallAuditLogEnabled = 0;
+  fs.writeFileSync(CONFIG_FILE, JSON.stringify(otherValues, null, 2));
+  const shownOnForOtherValues = await keysShownOn(await getConfig());
+
+  await test('null or 0 written by hand in config.json shows as on, as the server reads it', () => {
+    assert.deepStrictEqual([...shownOnForOtherValues].sort(), ['telemetryEnabled', 'toolCallAuditLogEnabled']);
   });
 
   if (failures.length > 0) {

@@ -8,7 +8,8 @@
  * result to tool-history.jsonl, which get_recent_tool_calls reads back after a
  * restart. With toolCallAuditLogEnabled set to false, neither file gets new
  * calls, and get_recent_tool_calls still lists the calls made since the server
- * started. That holds for a "false" written by hand in config.json too, and a
+ * started. That holds for a "false" written by hand in config.json too, also
+ * in a corrupt config.json whose readable start the server salvages, and a
  * config.json without the setting counts as on. The checks run on the real
  * server (dist/index.js over stdio), in the runner's temporary home.
  *
@@ -31,6 +32,8 @@ const LOG_OFF = 'written-with-the-log-off.txt';
 const LOG_ON_AGAIN = 'written-with-the-log-on-again.txt';
 const HAND_WRITTEN_FALSE = 'written-with-false-written-by-hand.txt';
 const AFTER_HAND_WRITTEN_FALSE = 'written-after-turning-the-log-on.txt';
+const SALVAGED_FALSE = 'written-with-false-in-a-salvaged-config.txt';
+const AFTER_SALVAGED_FALSE = 'written-after-turning-the-log-on-once-more.txt';
 const SETTING_MISSING = 'written-with-the-setting-missing.txt';
 
 /** The log files that have a line with `text` */
@@ -49,6 +52,17 @@ function editConfig(change) {
   const config = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8'));
   change(config);
   fs.writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2));
+}
+
+/**
+ * Changes config.json as editConfig() does, but leaves it with a broken last
+ * line, as a save cut off halfway does: the server can't parse it, and at
+ * start replaces it with the settings it can still read in it
+ */
+function corruptConfig(change) {
+  const config = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8'));
+  change(config);
+  fs.writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2).replace(/\n}$/, ',\n  "fileReadLineLimit": \n}'));
 }
 
 /** Starts the server, runs `steps` with a function that calls its tools, and stops it */
@@ -104,6 +118,14 @@ async function runTests() {
       await waitForLogs(AFTER_HAND_WRITTEN_FALSE);
     });
 
+    corruptConfig((config) => { config.toolCallAuditLogEnabled = 'false'; });
+    await withServer(async (call) => {
+      await write(call, SALVAGED_FALSE);
+      await setLog(call, true);
+      await write(call, AFTER_SALVAGED_FALSE);
+      await waitForLogs(AFTER_SALVAGED_FALSE);
+    });
+
     // As in a config.json written before the setting existed
     editConfig((config) => { delete config.toolCallAuditLogEnabled; });
     await withServer(async (call) => {
@@ -127,6 +149,10 @@ async function runTests() {
 
     await test('with "false" written by hand in config.json, a call is written to neither log file', () => {
       assert.deepStrictEqual(logsWith(HAND_WRITTEN_FALSE), [], 'a log file got the call made with "false" in config.json');
+    });
+
+    await test('with "false" in a corrupt config.json, salvaged at start, a call is written to neither log file', () => {
+      assert.deepStrictEqual(logsWith(SALVAGED_FALSE), [], 'a log file got the call made with "false" in a salvaged config.json');
     });
 
     await test('with toolCallAuditLogEnabled missing from config.json, a call is written to both log files', () => {
