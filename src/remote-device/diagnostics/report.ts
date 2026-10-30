@@ -358,7 +358,7 @@ function elapsedSeconds(etime: string): number {
 }
 
 /**
- * Every process with its command line and start time. process.ts's list uses
+ * Every process with its parent, command line and start time. process.ts's list uses
  * tasklist on Windows, which has no command lines, hence Win32_Process here.
  */
 function listProcesses(): Promise<ProcessInfo[]> {
