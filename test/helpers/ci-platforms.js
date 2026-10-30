@@ -200,9 +200,12 @@ const minutesCell = ({ minutes }) => {
 
 /**
  * The PR comment for some platforms' results ({ linux: results, … }); a
- * cross-test's (testsFrom, the commit whose tests ran) names both commits
+ * cross-test's (testsFrom, the commit whose tests ran) names both commits.
+ * combined: the three platforms together, where the 100 % target is, from this
+ * run's three reports ({ coverage, areas } as a platform's), or { missing: why
+ * there's no figure }; none is "needs Linux, Windows and macOS in one run"
  */
-export function renderComment({ headSha, testsFrom, platforms }) {
+export function renderComment({ headSha, testsFrom, platforms, combined }) {
   const ran = PLATFORMS.filter(({ name }) => platforms[name]);
   const testsNamed = testsFrom ? `, tests from ${commit(testsFrom)}` : '';
   const out = [MARKER, `## Tests and coverage for ${commit(headSha)}${testsNamed}`];
@@ -218,16 +221,25 @@ export function renderComment({ headSha, testsFrom, platforms }) {
       out.push(`| ${label} | ${ratio(coverage?.lines)} | ${ratio(coverage?.branches)} | ${ratio(coverage?.functions)}`
         + ` | ${link(`coverage-${os}`, links?.coverage)} | ${link(`results-${os}`, links?.results)} |`);
     }
-    // Lines per area, a column per platform: a single total hides where the gaps are
+    // The three platforms combined: a figure only from one run's three reports, else why not
+    const together = combined?.coverage ? combined : null;
+    if (ran.some(({ name }) => platforms[name].coverage)) {
+      const why = together ? '–' : plain(combined?.missing ?? 'needs Linux, Windows and macOS in one run');
+      out.push(`| **Combined** | ${ratio(together?.coverage.lines)} | ${ratio(together?.coverage.branches)} | ${ratio(together?.coverage.functions)} | ${why} | – |`);
+    }
+    // Lines per area, a column per platform and the combined one: a single total hides where the gaps are
     const withAreas = ran.filter(({ name }) => platforms[name].areas?.length);
     if (withAreas.length > 0) {
-      const areaOf = (name, area) => platforms[name].areas.find(([each]) => plain(each) === area);
-      const areas = [...new Set(withAreas.flatMap(({ name }) => platforms[name].areas.map(([area]) => plain(area))))].sort();
+      const areaOf = (list, area) => list.find(([each]) => plain(each) === area);
+      const togetherAreas = together?.areas?.length ? together.areas : null;
+      const areas = [...new Set([...withAreas.flatMap(({ name }) => platforms[name].areas), ...(togetherAreas ?? [])].map(([area]) => plain(area)))].sort();
+      const extra = (text) => (togetherAreas ? ` ${text} |` : '');
       out.push('', '<details><summary>Lines by area</summary>', '',
-        `| Area | ${withAreas.map(({ label }) => label).join(' | ')} |`,
-        `|---|${withAreas.map(() => '---').join('|')}|`,
-        ...areas.map((area) => `| \`${area}\` | ${withAreas.map(({ name }) => lines(areaOf(name, area)?.slice(1))).join(' | ')} |`),
-        `| **total** | ${withAreas.map(({ name }) => lines(platforms[name].coverage?.lines)).join(' | ')} |`,
+        `| Area | ${withAreas.map(({ label }) => label).join(' | ')} |${extra('Combined')}`,
+        `|---|${withAreas.map(() => '---').join('|')}|${togetherAreas ? '---|' : ''}`,
+        ...areas.map((area) => `| \`${area}\` | ${withAreas.map(({ name }) => lines(areaOf(platforms[name].areas, area)?.slice(1))).join(' | ')} |`
+          + extra(lines(togetherAreas && areaOf(togetherAreas, area)?.slice(1)))),
+        `| **total** | ${withAreas.map(({ name }) => lines(platforms[name].coverage?.lines)).join(' | ')} |${extra(lines(together?.coverage.lines))}`,
         '', '</details>');
     }
   }
@@ -251,5 +263,5 @@ export function dataOf(body) {
   return data;
 }
 
-/** The PR comment after a run: this run's platforms' results, and the earlier comment's for the others */
-export const mergeComment = ({ headSha, data, earlier }) => renderComment({ headSha, platforms: { ...dataOf(earlier), ...data } });
+/** The PR comment after a run: this run's platforms' results, and the earlier comment's for the others; the combined figure is this run's own */
+export const mergeComment = ({ headSha, data, earlier, combined }) => renderComment({ headSha, platforms: { ...dataOf(earlier), ...data }, combined });

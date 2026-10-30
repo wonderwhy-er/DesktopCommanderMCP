@@ -132,7 +132,9 @@ A change to a shared module reaches most tests, because many tests start the who
   - the results: a row per platform, with its tests passed of how many, what it ran (`everything` for what a push runs), with a note for a part that didn't run and why, how many tests `test/excluded.txt` leaves out (`; 2 excluded (test/excluded.txt)`) and how many checks were skipped, its test job's minutes (`…` while it runs), its commit and its run;
   - it fails closed: a job that failed while its results show no failure, a `results.json` that can't be read, and a run where no test file ran each make the row ❌ and say which;
   - the coverage: a row per platform, with lines, branches and functions, and links to its report and results;
-  - the lines by area, collapsed, a column per platform, then one total.
+  - a **Combined** row: the three platforms together, a line, branch or function covered when any platform ran it. The 100 % target is on this figure. It comes only from one run's three `coverage-final.json` files (`test/combined-coverage.js`). With fewer, or one that can't be read, the row has no figure and says why;
+  - the lines by area, collapsed, a column per platform and the combined one, then one total.
+- **The combined figure on your machine:** `node test/combined-coverage.js <coverage-final.json>...`, for example the three downloaded `coverage-<runner>` reports, prints the table by area.
 - **A run replaces only its own platforms' rows,** so a platform that didn't run in the latest push keeps its last row, with its own commit. The comment keeps each platform's results as hidden data for that. The job summary has the same text.
 
 ## AI review
