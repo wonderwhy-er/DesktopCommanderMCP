@@ -394,6 +394,15 @@ export default async function run() {
     assert.ok(reviewJob.includes(input), `it passes ${input}`);
   }
   assert.deepStrictEqual([...new Set(jobLines(workflow, 'review').join('\n').match(/secrets\.\w+/g))], ['secrets.GEMINI_API_KEY'], 'only the Gemini key goes to it');
+  // A called workflow's jobs get no more than the calling job grants, or GitHub won't start the run
+  const pairs = (lines) => lines.map((line) => line.split(':').map((part) => part.trim()));
+  const granted = Object.fromEntries(pairs(blockUnder(jobLines(workflow, 'review'), 'permissions')));
+  const called = readWorkflow('review.yml');
+  for (const job of ['request', 'review', 'post']) {
+    for (const [scope, level] of pairs(blockUnder(jobLines(called, job), 'permissions'))) {
+      assert.ok(granted[scope] === level || granted[scope] === 'write', `tests.yml's review job grants ${scope}: ${level}, which review.yml's ${job} job asks for`);
+    }
+  }
   const firstJob = jobLines(workflow, 'platforms').map((line) => line.trim());
   const request = firstJob.indexOf('run: node test/ci-review.js request');
   assert.ok(request > 0 && firstJob.slice(request - 6, request).includes("if: github.event_name != 'workflow_dispatch'"),
