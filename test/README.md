@@ -68,7 +68,7 @@ Each runner writes, in `test-results/suite/`, `test-results/repro/` or `test-res
   - every file under `src/` (`.ts` and `.js`);
   - the install scripts the package ships at its root: `setup-claude-server.js` (bin `setup`), `uninstall-claude-server.js` (bin `remove`), `track-installation.js` (postinstall);
   - the vendored `vendor/telemetry-contract/`, without its tests.
-- **Not counted:** `dist/`, `node_modules/`, `scripts/` and `test/`, as in a usual setup. `test/` holds the tests and the runners, coverage and CI scripts. Those scripts have tests of their own (`test/test-coverage-areas.js`, `test-check-coverage-report.js`, `test-map-copied-scripts.js`, `test-run-coverage.js`, `test-run-ci.js`, `test-ci-comment.js`, `test-ci-platforms.js`, `test-select-tests.js`, `test-node-test-runner.js`, `test-runner-scripts.js`), which still run.
+- **Not counted:** `dist/`, `node_modules/`, `scripts/` and `test/`, as in a usual setup. `test/` holds the tests and the runners, coverage and CI scripts. Those scripts have tests of their own (`test/test-coverage-areas.js`, `test-check-coverage-report.js`, `test-map-copied-scripts.js`, `test-run-coverage.js`, `test-run-ci.js`, `test-ci-comment.js`, `test-ci-platforms.js`, `test-ci-review.js`, `test-select-tests.js`, `test-node-test-runner.js`, `test-runner-scripts.js`), which still run.
 - **How:** c8 follows every Node process that keeps the test's environment, the server the tests start included, and maps `dist/` back to `src/` through the source maps of the coverage build: `tsconfig.coverage.json` for the TypeScript, and `test/map-copied-scripts.js` for the plain `.js` files the build copies into `dist/` (from `src/`, and the install scripts).
 - **Files no test loads** show at 0 %.
 - **By area:** the run prints, and the PR comment shows, the numbers per folder of `src/` (`src/ui` among them), plus `install scripts` and `vendor/telemetry-contract`, then one total (`test/coverage-areas.js`).
@@ -93,7 +93,7 @@ A change to a shared module reaches most tests, because many tests start the who
 
 ## CI
 
-`.github/workflows/tests.yml` runs on pull requests opened by the maintainers in `MAINTAINERS` (`test/helpers/ci-platforms.js`), the one list it checks.
+`.github/workflows/tests.yml` runs on pull requests opened by the maintainers in `MAINTAINERS` (`test/helpers/ci-platforms.js`), the one list both workflows check.
 - **Platforms: add the `linux` label to run the tests on Linux.** The same goes for `windows` and `macos`. With none of them, nothing runs.
   - A push runs every labelled platform. A new push cancels the older push's run.
   - Adding a label runs its platform at once. Another label, or removing one, runs nothing and cancels nothing.
@@ -129,3 +129,30 @@ A change to a shared module reaches most tests, because many tests start the who
   - the coverage: a row per platform, with lines, branches and functions, and links to its report and results;
   - the lines by area, collapsed, a column per platform, then one total.
 - **A run replaces only its own platforms' rows,** so a platform that didn't run in the latest push keeps its last row, with its own commit. The comment keeps each platform's results as hidden data for that. The job summary has the same text.
+
+## AI review
+
+`npm run review -- <commit A>..<commit B>` reviews the change from A to B with Gemini CLI, by the rules in `.github/review-prompt.md` and the writing style in `.github/writing-style.md`, on your machine. It needs the key in `DC_GEMINI_API_KEY`; without it, it stops at once and fails. It writes `test-results/review/`:
+- `review.md`: one line with the result and the summary, then a table `| Kind | Where | What |`, one line per finding;
+- `review.json`: the same findings, each with its kind (real bug, nitpick, handled elsewhere, not checked), file, line and text, and the run's tokens;
+- `diff.patch`, and `answer.json`, Gemini CLI's own JSON.
+
+The review is given the run's tests: the files that failed, and the changed lines no test ran, from `lcov.info` with every platform together. Each uncovered range becomes a `not covered` finding unless the PR says why. On your machine it uses `coverage/` and `test-results/` from the last `npm run test:coverage` only if that ran at B on a clean tree (its stamp, `coverage/run.json`); `--tests <folder>` names another run. Without results it says "with no test results".
+
+**The text check** reads a text about the change, usually a PR's description, the same way: `npm run review -- A..B --text <file> [--results <file>]...`. Gemini checks each claim in it against the diff, the code at B and the results files, and checks the writing by `.github/writing-style.md` (the rules: `.github/text-check-prompt.md`). It writes `text-check.md`: a `**Result:**` line (`clean`, or counts such as `1 wrong claim, 2 nitpicks`), one `- **Wrong claim**` or `- **Nitpick**` line a finding with the text's line, and `### Checked` with the claims that hold and where. Also `text-check.json`. On GitHub: `gh workflow run review.yml -f commit=<sha> -f base=<sha or branch> -f check=text` checks the PR's description and puts it in the job summary; it posts nothing.
+
+In CI the review comes after the tests: `.github/workflows/tests.yml` runs the PR's labelled platforms, then calls `.github/workflows/review.yml` (the same script, with the `GEMINI_API_KEY` secret), passed or failed, with the run's results and coverage. The same maintainers start it, in the same ways as the tests:
+- **Add the `review` label** to review the PR at once, alone: its platforms run on their own labels' events, so that run has no test results. A push to a PR with the label tests the labelled platforms, then reviews.
+- **From a PR comment:** a line `/review`, with the same labelled platforms first. It only works once the workflows are on main, as for `/test`.
+- **With no platform label,** the review runs alone and says it had no test results.
+- **On demand:** `gh workflow run review.yml -f commit=<sha> -f base=<sha or branch>`, a review alone, also once it's on main.
+
+What CI posts: one review with event COMMENT, never an approval. Its body is one line with the result and the summary, then the table of every finding; a finding on a line the diff changes is also a one-line comment on that line. The run's job summary and its `review` artifact always have every finding, so a commit no PR has as its head still gets them there. Without the secret, the review job fails.
+
+How it stays safe (`test/ci-review.js`, `test/helpers/ci-review.js`):
+- `tests.yml`'s first job decides with `reviewFor` (`test/helpers/ci-platforms.js`, through `test/ci-review.js request`) and reads the PR's head and base; `review.yml`'s `request` job takes them as given, or decides itself on demand.
+- `review` holds the only secret, `GEMINI_API_KEY`, with a read-only token. Gemini CLI (`@google/gemini-cli`, a fixed version) runs headless in a folder of its own: our settings, its own Gemini home, B's files written by git (a link as a plain file), and the diff. It can only read files (`read_file`, `list_directory`, `glob`, `grep_search`): no shell, no web, no GitHub tools, no GitHub token. An answer that holds the key writes no review.
+- `post` has the write token and no secret. It reads `review.json` as data. If GitHub refuses a line comment, every finding goes in the summary. @-mentions in the model's text are broken, so a review notifies no one.
+- **Whose script runs:** on a comment's or on-demand run, main's (GitHub starts those from main), and the PR's head is only read, by SHA. On a push or a label, the PR's own, as for the tests: a fork PR gets no secret, and a branch in the repo could change the workflow itself anyway.
+
+Set up once: the repository secret `GEMINI_API_KEY`, the label `review`, and optionally the variable `GEMINI_MODEL`. Without it the review uses `gemini-3.8-flash`, one model for every request (Gemini CLI's own routing between models is off); locally, set `GEMINI_MODEL` the same way. The model gets the diff in its prompt, and 8 tool calls to read files, the diff's files first; a hook (`test/ci-review-budget.js`) refuses later calls, and it answers. A review that runs over 12 minutes is stopped, with everything it started.

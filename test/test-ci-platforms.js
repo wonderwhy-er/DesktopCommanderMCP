@@ -10,7 +10,10 @@
  *   SHA, with a read-only token, no secret and no npm cache, and the comment job
  *   runs main's script.
  * - Only the maintainers start a run: PRs they opened, comments they wrote. One
- *   list, MAINTAINERS; the workflow names no login.
+ *   list, MAINTAINERS, for both workflows (tests.yml, review.yml); no workflow
+ *   names a login.
+ * - The AI review (review.yml): the label `review` on a push, adding it, a
+ *   `/review` line, or an on-demand run.
  * - The PR comment has no prose: a heading with the commit, a results table with
  *   a row per platform, the coverage tables and the links. A run replaces its own
  *   platforms' rows and keeps the others' last results, and the workflow's
@@ -22,8 +25,8 @@ import { spawnSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import {
-  commandPlatforms, dataOf, isMaintainer, MAINTAINERS, MARKER, matrixFor, mergeComment, minutesOf, osOf, platformMinutes, platformsFor, plain,
-  renderComment, timedNamesIn,
+  commandPlatforms, commandReview, dataOf, isMaintainer, MAINTAINERS, MARKER, matrixFor, mergeComment, minutesOf, osOf, platformMinutes, platformsFor, plain,
+  renderComment, reviewFor, timedNamesIn,
 } from './helpers/ci-platforms.js';
 import { ROOT } from './helpers/node-test-runner.js';
 import { runIfMain } from './helpers/run-if-main.js';
@@ -35,10 +38,14 @@ const push = (action, labels = [], login = 'mihailt') => ({ action, pull_request
 const labeled = (name, labels = [name], login = 'mihailt') => ({
   action: 'labeled', label: { name }, pull_request: { user: { login }, labels: labels.map((label) => ({ name: label })) },
 });
-const comment = (body, onPullRequest = true, login = 'mihailt') => ({
-  action: 'created', issue: onPullRequest ? { pull_request: {}, user: { login: 'mihailt' } } : {}, comment: { body, user: { login } },
+const comment = (body, onPullRequest = true, login = 'mihailt', labels = []) => ({
+  action: 'created',
+  issue: onPullRequest ? { pull_request: {}, user: { login: 'mihailt' }, labels: labels.map((name) => ({ name })) } : {},
+  comment: { body, user: { login } },
 });
-const WORKFLOWS = ['tests.yml'];
+// review.yml's on-demand run
+const reviewDispatch = (login = 'mihailt') => ({ inputs: { commit: 'a'.repeat(40), base: 'main' }, sender: { login } });
+const WORKFLOWS = ['tests.yml', 'review.yml'];
 
 const SHA_A = 'a'.repeat(40);
 const SHA_B = 'b'.repeat(40);
@@ -111,7 +118,7 @@ export default async function run() {
   assert.deepStrictEqual(platformsFor('workflow_dispatch', {}), ['linux'], 'no inputs at all: Linux');
   console.log('✓ an on-demand run: the platforms it names, Linux by default, docker on Linux only');
 
-  // Who starts a run: the maintainers, one list
+  // Who starts a run: the maintainers, one list for both workflows
   assert.deepStrictEqual(MAINTAINERS, ['wonderwhy-er', 'mihailt', 'ds-dcmpc', 'edgarsskore', 'Rkrizanovskis', 'serg33v']);
   assert.ok(isMaintainer('MihailT') && isMaintainer('serg33v'), 'logins in any case, as GitHub\'s contains() compares them');
   for (const login of ['someone', '', undefined, 'mihailt2', 'github-actions[bot]']) {
@@ -126,6 +133,39 @@ export default async function run() {
     for (const login of MAINTAINERS) assert.ok(!text.includes(login), `${file} names no login (${login}): the list is MAINTAINERS`);
   }
   console.log('✓ only the maintainers start a run, from one list');
+
+  // The AI review: the label review on a push, adding it, a /review line, or an on-demand run
+  for (const action of ['synchronize', 'reopened']) {
+    assert.strictEqual(reviewFor('pull_request', push(action, ['linux', 'review'])), true, `${action}, labelled review: reviewed`);
+    assert.strictEqual(reviewFor('pull_request', push(action, ['linux'])), false, `${action}, no review label: not reviewed`);
+  }
+  assert.strictEqual(reviewFor('pull_request', labeled('review')), true, 'adding the label reviews at once');
+  assert.strictEqual(reviewFor('pull_request', push('opened', ['linux', 'review'])), false, 'opened: tests.yml doesn\'t get it; the label\'s own event reviews');
+  assert.strictEqual(reviewFor('pull_request', labeled('linux', ['linux', 'review'])), false, 'another label added: no second review');
+  assert.strictEqual(reviewFor('pull_request', { ...push('unlabeled', ['linux']), label: { name: 'review' } }), false, 'removing it: nothing');
+  assert.strictEqual(reviewFor('pull_request', push('synchronize', ['review'], 'someone')), false, 'a PR someone else opened: not reviewed');
+  assert.strictEqual(reviewFor('issue_comment', comment('/review')), true);
+  assert.strictEqual(reviewFor('issue_comment', comment('Thanks.\r\n  /REVIEW  \n')), true, 'any line, any case');
+  for (const body of ['/reviewer', 'please /review', '/review now', '/test linux', '', undefined]) {
+    assert.strictEqual(commandReview(body), false, `no review for ${JSON.stringify(body)}`);
+  }
+  assert.strictEqual(reviewFor('issue_comment', comment('/review', false)), false, 'a comment on an issue, not a PR');
+  assert.strictEqual(reviewFor('issue_comment', { ...comment('/review'), action: 'edited' }), false, 'an edited comment: nothing');
+  assert.strictEqual(reviewFor('issue_comment', comment('/review', true, 'someone')), false, 'someone else\'s /review: nothing');
+  assert.strictEqual(reviewFor('workflow_dispatch', reviewDispatch()), true, 'an on-demand run by a maintainer');
+  assert.strictEqual(reviewFor('workflow_dispatch', reviewDispatch('someone')), false, 'an on-demand run by anyone else: nothing');
+  assert.strictEqual(reviewFor('push', {}), false);
+  console.log('✓ the review: its label on a push or added, a /review line, an on-demand run; maintainers only');
+
+  // A review event runs the PR's labelled platforms too, so the review comes after that commit's tests
+  assert.deepStrictEqual(platformsFor('pull_request', labeled('review', ['windows', 'review', 'linux'])), [],
+    'adding review runs no platform: each ran on its own label\'s event, and a push runs them all');
+  assert.deepStrictEqual(platformsFor('pull_request', labeled('review', ['review'])), [], 'no platform label: the review runs alone');
+  assert.deepStrictEqual(platformsFor('issue_comment', comment('/review', true, 'mihailt', ['macos', 'review'])), ['macos'], 'a /review comment: the labelled platforms');
+  assert.deepStrictEqual(platformsFor('issue_comment', comment('/test windows\n/review', true, 'mihailt', ['linux'])), ['linux', 'windows'],
+    '/test and /review together: both');
+  assert.deepStrictEqual(platformsFor('issue_comment', comment('/review', true, 'someone', ['linux'])), [], 'someone else\'s /review: nothing');
+  console.log('✓ a review event runs the labelled platforms, so the review comes after their tests');
 
   assert.deepStrictEqual(osOf(['macos', 'linux']), ['ubuntu-latest', 'macos-latest'], 'runner images, in order');
   assert.deepStrictEqual(osOf([]), []);
@@ -316,7 +356,33 @@ export default async function run() {
   }
   assert.deepStrictEqual(runs, { linux: 1, windows: 1, macos: 1 }, `a PR opened with its labels runs each platform once: ${JSON.stringify(runs)}`);
   assert.deepStrictEqual(platformsFor('pull_request', push('opened', openedWith)), [], 'opened alone starts no platform: its labeled events do');
+  const reviews = [push('opened', openedWith), ...openedWith.map((label) => labeled(label, openedWith))]
+    .filter((event) => prTypes.includes(event.action) && reviewFor('pull_request', event)).length;
+  assert.strictEqual(reviews, 1, 'and the review runs once, from the review label\'s own event');
   console.log('✓ a PR opened with its labels: each platform once, the review label\'s event none');
+
+  // A job that checks out a sparse list runs a script only with every file it imports in that list: a missing one
+  // stops the job before it does anything (c4590061: check-coverage-report.js, in three jobs' lists, so no platform ran)
+  const importsOf = (file, seen = new Set()) => {
+    if (seen.has(file)) return seen;
+    seen.add(file);
+    for (const [, spec] of fs.readFileSync(path.join(ROOT, file), 'utf8').matchAll(/^import [^;]*? from ['"](\.{1,2}\/[^'"]+)['"];/gms)) {
+      importsOf(path.posix.join(path.posix.dirname(file), spec), seen);
+    }
+    return seen;
+  };
+  for (const name of ['tests.yml', 'review.yml']) {
+    const text = readWorkflow(name);
+    const jobs = [...text.slice(text.indexOf('\njobs:\n')).matchAll(/^ {2}([\w-]+):$/gm)].map(([, job]) => job);
+    for (const job of jobs) {
+      const lines = jobLines(text, job).map((line) => line.trim());
+      const sparse = lines.filter((line) => /^\/[\w./-]+$/.test(line));
+      if (sparse.length === 0) continue;
+      for (const [script] of lines.join('\n').matchAll(/(?<=node )test\/[\w./-]+\.js/g)) {
+        for (const file of importsOf(script)) assert.ok(sparse.includes(`/${file}`), `${name}'s ${job} job runs ${script}, which needs ${file}`);
+      }
+    }
+  }
 
   const commentJob = jobLines(workflow, 'comment');
   const concurrency = blockUnder(commentJob, 'concurrency');
@@ -339,6 +405,32 @@ export default async function run() {
   // The gate starts the platforms job for a /test comment; that job's CLI checks the commenter (above)
   const gate = jobLines(workflow, 'platforms').find((line) => line.trim().startsWith('if:'));
   assert.ok(gate.includes("contains(github.event.comment.body, '/test')"), 'a /test comment passes the gate');
+  assert.ok(gate.includes("contains(github.event.comment.body, '/review')") && gate.includes("github.event.label.name == 'review'")
+    && gate.includes("contains(github.event.pull_request.labels.*.name, 'review')"), 'a review event passes the gate: a /review comment, the label added, a push with it');
+
+  // The review after the tests: tests.yml calls review.yml once its test jobs are done, whatever they did
+  const reviewJob = jobLines(workflow, 'review').map((line) => line.trim());
+  assert.ok(reviewJob.includes('uses: ./.github/workflows/review.yml'), 'the review job calls the reusable review workflow');
+  assert.ok(reviewJob.includes('needs: [platforms, unit]'), 'after the test jobs');
+  assert.ok(reviewJob.includes("if: ${{ !cancelled() && needs.platforms.outputs.review == 'true' }}"), 'after them, passed or failed, when the event reviews');
+  for (const input of ['pr: ${{ needs.platforms.outputs.pr }}', 'sha: ${{ needs.platforms.outputs.sha }}', 'base: ${{ needs.platforms.outputs.base }}']) {
+    assert.ok(reviewJob.includes(input), `it passes ${input}`);
+  }
+  assert.deepStrictEqual([...new Set(jobLines(workflow, 'review').join('\n').match(/secrets\.\w+/g))], ['secrets.GEMINI_API_KEY'], 'only the Gemini key goes to it');
+  // A called workflow's jobs get no more than the calling job grants, or GitHub won't start the run
+  const pairs = (lines) => lines.map((line) => line.split(':').map((part) => part.trim()));
+  const granted = Object.fromEntries(pairs(blockUnder(jobLines(workflow, 'review'), 'permissions')));
+  const called = readWorkflow('review.yml');
+  for (const job of ['request', 'review', 'post']) {
+    for (const [scope, level] of pairs(blockUnder(jobLines(called, job), 'permissions'))) {
+      assert.ok(granted[scope] === level || granted[scope] === 'write', `tests.yml's review job grants ${scope}: ${level}, which review.yml's ${job} job asks for`);
+    }
+  }
+  const firstJob = jobLines(workflow, 'platforms').map((line) => line.trim());
+  const request = firstJob.indexOf('run: node test/ci-review.js request');
+  assert.ok(request > 0 && firstJob.slice(request - 6, request).includes("if: github.event_name != 'workflow_dispatch'"),
+    'the first job decides about the review, except for an on-demand tests run');
+  console.log('✓ tests.yml runs the review after its test jobs');
   const unit = jobLines(workflow, 'unit');
   assert.ok(!unit.some((line) => line.includes('secrets.')), 'the test job names no secret');
   assert.deepStrictEqual(blockUnder(unit, 'permissions'), ['contents: read'], 'a read-only token');

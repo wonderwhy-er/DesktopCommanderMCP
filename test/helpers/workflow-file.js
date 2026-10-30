@@ -1,6 +1,6 @@
 /**
- * A workflow file's text, read the way the CI tests check it (test-ci-platforms.js):
- * a job's lines, and the lines under one of its keys.
+ * A workflow file's text, read the way the CI tests check it (test-ci-platforms.js,
+ * test-ci-review.js): a job's lines, and the lines under one of its keys.
  */
 import assert from 'assert';
 import fs from 'fs';
