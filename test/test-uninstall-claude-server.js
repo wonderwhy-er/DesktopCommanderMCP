@@ -1,10 +1,11 @@
 /**
- * The uninstall script (uninstall-claude-server.js, `npm run remove` and the
- * `remove` bin): it takes Desktop Commander out of Claude's config for each
- * platform, keeps the rest and a backup, says so when there's nothing to remove,
- * puts the backup back when it can't write the config, and exits 1 then. It sends
- * telemetry only when Desktop Commander's config allows it, with that config's
- * client id. Through helpers/install-script.js: a temporary home and stand-ins.
+ * The uninstall script (uninstall-claude-server.js, `npm run remove`, and the
+ * `remove` bin, dist/uninstall-claude-server.js): it takes Desktop Commander out
+ * of Claude's config for each platform, keeps the rest and a backup, says so when
+ * there's nothing to remove, puts the backup back when it can't write the config,
+ * and exits 1 then. It sends telemetry only when Desktop Commander's config allows
+ * it, with that config's client id. Through helpers/install-script.js: a temporary
+ * home and stand-ins.
  */
 import assert from 'assert';
 import fs from 'fs';
