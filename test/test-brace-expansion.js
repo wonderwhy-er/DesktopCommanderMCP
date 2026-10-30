@@ -4,7 +4,9 @@
  * the command. The expected words are bash 5's, measured with Git Bash 5.3
  * (splitting words with `set --` only); macOS's bash 3.2 has no step and no
  * zero padding. The commands whose name is built this way are in the
- * corpus's expansion group (fixtures/command-check-corpus.mjs).
+ * corpus's expansion group (fixtures/command-check-corpus.mjs). A word whose
+ * expansion takes too many steps (deeply nested braces after a long list)
+ * gives null within 2 s, as one that makes too many words does.
  *
  * Parse-only: nothing here runs a shell or a process.
  */
@@ -55,6 +57,18 @@ export default async function runTests() {
     if (JSON.stringify(got) !== JSON.stringify(want)) {
       failures.push(`braceWords(${word}) should be ${JSON.stringify(want)} but was ${JSON.stringify(got)}`);
     }
+  }
+
+  // A list of 1000 words, then a group whose second piece is 1500 braces deep (5005 characters): the words are too
+  // many, and reading them took 13.7 s before the steps of an expansion were bounded. It must give up quickly.
+  const deep = `{${Array(1000).fill('a').join(',')}}{b,${'{'.repeat(1500)}${'}'.repeat(1500)}}`;
+  const started = Date.now();
+  const deepWords = braceWords(unquotedChars(deep));
+  const took = Date.now() - started;
+  if (deepWords !== null || took > 2000) {
+    failures.push(`braceWords of a 1000-word list and 1500 nested braces should be null within 2 s, but was ${JSON.stringify(deepWords?.length ?? null)} words after ${took} ms`);
+  } else {
+    console.log(`✓ a 1000-word list and 1500 nested braces: null after ${took} ms`);
   }
 
   if (failures.length > 0) {
