@@ -6,7 +6,9 @@
 # code with read-only tools and answers with findings, by the rules in
 # .github/review-prompt.md, through test/ci-review.js run: the same script as
 # `npm run review -- A..B` on a machine. A last job posts the findings as one review
-# with event COMMENT, and the job summary has them all. See test/README.md.
+# with event COMMENT, and the job summary has them all. On demand, check=text checks
+# the PR's description against the change instead, in the job summary only. See
+# test/README.md.
 ---
 name: Review
 
@@ -37,6 +39,12 @@ on:
         description: What it's compared with (a SHA or a branch)
         required: true
         default: main
+      check:
+        description: "code: review the change; text: check the PR's description against it"
+        required: false
+        default: code
+        type: choice
+        options: [code, text]
 
 permissions:
   contents: read
@@ -154,7 +162,12 @@ jobs:
           PR: ${{ needs.request.outputs.pr }}
           HEAD_SHA: ${{ needs.request.outputs.sha }}
           BASE_SHA: ${{ needs.request.outputs.base }}
-        run: node test/ci-review.js run "$BASE_SHA..$HEAD_SHA" --repo pr --out review --tests ci
+          CHECK: ${{ inputs.check }}
+        # check=text (on demand): each claim in the PR's description, against the change
+        run: |
+          text=()
+          if [[ "$CHECK" == text ]]; then text=(--text pr); fi
+          node test/ci-review.js run "$BASE_SHA..$HEAD_SHA" --repo pr --out review --tests ci "${text[@]}"
       # review.json, review.md, the diff and Gemini CLI's own JSON; also when the review
       # failed, so a stopped run's answer.json and session.jsonl show what it spent
       - name: Upload the review
@@ -169,6 +182,8 @@ jobs:
   post:
     name: post
     needs: [request, review]
+    # A text check posts nothing: its job summary has it
+    if: inputs.check != 'text'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     # Writes the review: our script (main's on a comment's or on-demand run, the
