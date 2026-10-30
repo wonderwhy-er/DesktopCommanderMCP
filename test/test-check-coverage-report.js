@@ -3,13 +3,16 @@
  * code only (src/, the install scripts, the vendored telemetry contract without
  * its tests), never test/ (the tests and the tooling there, which have tests of
  * their own), the build or node_modules; .c8rc.json includes nothing under test/;
- * and the check fails a report that misses a counted file or has any other. It
- * runs the check on made-up reports in a temporary folder.
+ * a .ts file that compiles to no JavaScript (types only) isn't counted, and
+ * .c8rc.json excludes exactly those; and the check fails a report that misses a
+ * counted file or has any other. It runs the check on made-up reports in a
+ * temporary folder.
  */
 import assert from 'assert';
 import { spawnSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
+import * as report from './check-coverage-report.js';
 import { countedFiles, INSTALL_SCRIPTS, isCounted } from './check-coverage-report.js';
 import { ROOT } from './helpers/node-test-runner.js';
 import { runIfMain } from './helpers/run-if-main.js';
@@ -38,6 +41,24 @@ export default async function run() {
   }
   assert.ok(counted.every(isCounted), 'every counted file passes isCounted');
   console.log('✓ test/ is out of the number: .c8rc.json includes nothing there');
+
+  // A file of types only compiles to nothing a test could run: not counted, and .c8rc.json excludes it
+  assert.strictEqual(typeof report.isTypeOnly, 'function', 'check-coverage-report.js tells a type-only file');
+  for (const source of ['export interface A { x: number }\n', 'import type { B } from \'./b.js\';\nexport type C = B;\n',
+    'declare global {\n  var x: number | undefined;\n}\nexport {};\n', 'import { X } from \'./x.js\';\n// a note\nexport type Y = X;\n']) {
+    assert.ok(report.isTypeOnly(source), `types only: ${JSON.stringify(source)}`);
+  }
+  for (const source of ['export const x = 1;\n', 'export enum E { A }\n', 'export function f() {}\n', 'import \'./side-effect.js\';\nexport type Y = string;\n']) {
+    assert.ok(!report.isTypeOnly(source), `has code: ${JSON.stringify(source)}`);
+  }
+  const typeOnly = report.typeOnlyFiles();
+  assert.ok(typeOnly.includes('src/types.ts'), 'src/types.ts is types only');
+  const excluded = c8rc.exclude.filter((pattern) => pattern.startsWith('src/') && !pattern.includes('*'));
+  assert.deepStrictEqual([...excluded].sort(), [...typeOnly].sort(), '.c8rc.json excludes exactly the type-only files under src/');
+  for (const file of typeOnly) {
+    assert.ok(!isCounted(file) && !counted.includes(file), `${file} isn't counted`);
+  }
+  console.log('✓ a type-only file isn\'t counted, and .c8rc.json excludes exactly those');
 
   // The check itself, on reports made in another checkout ("/elsewhere")
   const dir = createTempDir('dc-check-coverage-report-');
