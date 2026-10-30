@@ -168,6 +168,31 @@ export default async function run() {
     }
     console.log('✓ fail closed: a failed job with passing results, and unreadable results, make the row ❌');
 
+    // Which files failed: each with its first error line, linked to the job it ran in
+    const failedDir = createTempDir('dc-ci-comment-failed-');
+    const windowsJob = 'https://github.com/o/r/actions/runs/42/job/7';
+    const failedApi = await fakeGitHub({
+      jobs: [{ name: 'unit (windows-latest)', conclusion: 'failure', html_url: windowsJob, steps: [],
+        started_at: '2026-10-30T04:00:00Z', completed_at: '2026-10-30T04:10:00Z' }],
+      artifacts: [],
+    });
+    try {
+      const tail = '[2ms] pool = 16\n\n[31007ms] BLOCKED >30000ms -> bootstrap did NOT help';
+      const repro = { path: 'test/repro/test-bootstrap-threadpool.js', success: false, exitCode: 1, skipped: [], outputTail: tail };
+      fs.mkdirSync(path.join(failedDir, 'results-windows-latest', 'repro'), { recursive: true });
+      fs.writeFileSync(path.join(failedDir, 'results-windows-latest', 'repro', 'results.json'),
+        JSON.stringify({ suite: 'repro', files: [repro, { path: 'test/repro/test-b.js', success: true, skipped: [] }] }));
+      const listed = await comment(failedDir, { PR: '', GH_TOKEN: 'x', GITHUB_API_URL: failedApi.url, TESTS: '' });
+      assert.strictEqual(listed.code, 0, listed.stderr);
+      const row = `| Windows | [\`test/repro/test-bootstrap-threadpool.js\`](${windowsJob}) | `
+        + '`[31007ms] BLOCKED >30000ms -> bootstrap did NOT help` |';
+      assert.ok(listed.stdout.includes(row), `the failed file, its first error line and its job:\n${listed.stdout}`);
+    } finally {
+      failedApi.server.close();
+      fs.rmSync(failedDir, { recursive: true, force: true });
+    }
+    console.log('✓ each failed file listed, with its first error line and its job');
+
     // The first run on a PR: a new comment, with the run's minutes and artifact links
     const first = await fakeGitHub({});
     const posted = await comment(dir, { PR: '7', GH_TOKEN: 'x', GITHUB_API_URL: first.url, TESTS: '' });
