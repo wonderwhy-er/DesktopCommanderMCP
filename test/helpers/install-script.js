@@ -12,12 +12,11 @@
 import { spawn } from 'child_process';
 import fs from 'fs';
 import path from 'path';
-import { pathToFileURL } from 'url';
+import { HOOKS_URL } from './install-stand-ins.js';
 import { hookArgs } from './module-hooks.js';
 import { ROOT } from './node-test-runner.js';
 import { createTempDir, createTestEnv } from './test-env.js';
 
-const HOOKS = pathToFileURL(path.join(ROOT, 'test', 'helpers', 'install-stand-ins.js')).href;
 // Before the script: another platform when asked, and timers scaled down
 const PRELOAD = [
   'const { platform, timeScale } = JSON.parse(process.env.DC_STAND_INS);',
@@ -47,7 +46,7 @@ export async function runInstallScript(script, {
     await prepare?.(testEnv.home);
     const standIns = JSON.stringify({ log, telemetry, commands, platform, timeScale });
     const preload = `data:text/javascript,${encodeURIComponent(PRELOAD)}`;
-    const argv = [...hookArgs(HOOKS), '--import', preload, path.join(ROOT, script), ...args];
+    const argv = [...hookArgs(HOOKS_URL), '--import', preload, path.join(ROOT, script), ...args];
     const appData = path.join(testEnv.home, 'AppData', 'Roaming');
     // A variable given as null is left out: the scripts read the terminal's (SHELL, TERM_PROGRAM, …). Windows'
     // names ignore case (COMSPEC is ComSpec): a given one replaces the inherited one, whatever its case

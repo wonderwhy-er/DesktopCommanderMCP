@@ -5,6 +5,10 @@
  * reaches the network or another process. A command with no answer gets an
  * error, as a missing one would: never the real thing.
  */
+
+/** This module's URL, for module.register(): importing it also tells --changed which tests use it */
+export const HOOKS_URL = import.meta.url;
+
 const STAND_INS = {
   https: 'https',
   'node:https': 'https',
