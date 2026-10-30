@@ -552,7 +552,7 @@ function render(container: HTMLElement, controller: ReturnType<typeof createConf
                 </div>
             `;
         } else if (entry.valueType === 'boolean') {
-            const checked = String(entry.value) === 'true' ? 'checked' : '';
+            const checked = entry.value ? 'checked' : '';
             controlHtml = `<label class="setting-switch"><input type="checkbox" data-action="toggle-boolean" data-key-index="${index}" ${checked}/><span class="config-boolean-slider"></span></label>`;
         } else if (entry.valueType === 'number') {
             controlHtml = `<input class="setting-inline-input" data-action="edit-number" data-key-index="${index}" type="number" step="any" value="${escapeHtml(String(entry.value ?? ''))}"/>`;
