@@ -13,8 +13,8 @@
  *   - the profile's aliases named like the helper's own functions don't
  *     replace those
  *   - a profile that sets an alias only where the command's PowerShell runs
- *     (with TERM, which start_process sets, and without -NonInteractive) sets
- *     it for the helper too
+ *     (with TERM, which start_process sets, without -NonInteractive, and off
+ *     Windows after pwsh -Login's ~/.profile) sets it for the helper too
  *
  * Each case writes a profile into this test home, where each PowerShell looks
  * for it ($PROFILE.CurrentUserCurrentHost: Windows PowerShell finds it only
@@ -65,7 +65,8 @@ const NET_ALIAS = process.platform === 'win32' ? 'Set-Alias net net.exe' : 'Set-
 
 // A case with `windows: true` runs on Windows only, one with `windows: false` everywhere else. An alias to
 // net.exe runs the program net on Windows only, and one to /usr/bin/net on the other systems. A case's `env`
-// is this process's environment while it runs, as the server's may be (undefined: unset).
+// is this process's environment while it runs, as the server's may be (undefined: unset); its `loginProfile`
+// is the home's ~/.profile, which pwsh -Login runs first off Windows.
 const CASES = [
   {
     what: "a profile's alias to net.exe comes before the script's own function",
@@ -135,6 +136,13 @@ const CASES = [
     checks: [["function net { 'x' }; net user", BLOCKED_NET]],
   },
   {
+    what: "a profile's alias to net, set only after a login shell's ~/.profile",
+    windows: false,
+    loginProfile: 'export DC_TEST_LOGIN=1',
+    profile: `if ($env:DC_TEST_LOGIN) { ${NET_ALIAS} }`,
+    checks: [["function net { 'x' }; net user", BLOCKED_NET]],
+  },
+  {
     what: 'a profile alias named Test-RunsUnreadCode',
     profile: [...OWN_FUNCTION_STAND_INS, 'Set-Alias Test-RunsUnreadCode Test-Never'].join('\n'),
     checks: [["function net { 'x' }; Invoke-Expression $text; net user", BLOCKED_NET]],
@@ -182,6 +190,9 @@ export default async function runTests() {
       fs.mkdirSync(path.dirname(file), { recursive: true });
       fs.writeFileSync(file, testCase.profile + '\n');
     }
+    const loginProfile = path.join(os.homedir(), '.profile');
+    if (testCase.loginProfile) fs.writeFileSync(loginProfile, testCase.loginProfile + '\n');
+    else fs.rmSync(loginProfile, { force: true });
     // The helpers read the profile when they start: stop the running ones, the next check starts new ones
     for (const pid of runningPowerShellHelpers()) process.kill(pid);
     await waitUntil(() => runningPowerShellHelpers().length === 0, 10000, 'the helpers have ended');
