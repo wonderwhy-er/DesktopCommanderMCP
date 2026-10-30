@@ -171,7 +171,11 @@ function ciReview(args, env, dir) {
   return new Promise((resolve) => {
     const child = spawn(process.execPath, [path.join(ROOT, 'test', 'ci-review.js'), ...args], {
       cwd: ROOT,
-      env: { ...process.env, GITHUB_REPOSITORY: 'o/r', GITHUB_OUTPUT: output, GH_TOKEN: 'token', GEMINI_API_KEY: '', DC_GEMINI_API_KEY: '', ...env },
+      // GitHub's own GITHUB_ACTIONS and GITHUB_STEP_SUMMARY reach a case only when it names them
+      env: {
+        ...process.env, GITHUB_REPOSITORY: 'o/r', GITHUB_OUTPUT: output, GH_TOKEN: 'token', GEMINI_API_KEY: '', DC_GEMINI_API_KEY: '',
+        GITHUB_ACTIONS: '', GITHUB_STEP_SUMMARY: '', ...env,
+      },
     });
     let stdout = '';
     let stderr = '';
