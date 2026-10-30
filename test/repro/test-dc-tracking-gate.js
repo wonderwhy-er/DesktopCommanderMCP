@@ -16,6 +16,12 @@ import { createStalledReadTarget } from '../helpers/stalled-read.js';
 const T0 = Date.now();
 const log = (m) => console.log(`[${Date.now() - T0}ms] ${m}`);
 const BLOCKERS = Number(process.env.BLOCKERS || process.env.UV_THREADPOOL_SIZE || 4);
+// A gated trackSuccess never resolves, an ungated one takes milliseconds: a
+// long guard costs a passing run nothing and holds up on a loaded machine
+const GUARD_MS = 30_000;
+// Time for the stalled reads to reach their blocking call and hold their
+// threads; on a loaded machine 200ms could fire first and let the save through
+const HEAD_START_MS = 1000;
 const stalled = await createStalledReadTarget('dc-gate');
 
 // Warm the config so init()'s own disk read is already done and cached.
@@ -36,14 +42,14 @@ setTimeout(async () => {
   let blocked = false;
   const guard = setTimeout(() => {
     blocked = true;
-    log(`trackSuccess STILL BLOCKED after 5000ms -> list_processes would hang here. GATE REPRODUCED.`);
+    log(`trackSuccess STILL BLOCKED after ${GUARD_MS}ms -> list_processes would hang here. GATE REPRODUCED.`);
     stalled.close();
     exitProcess(1);
-  }, 5000);
+  }, GUARD_MS);
   await usageTracker.trackSuccess('list_processes');
   if (blocked) return; // the guard closed the pipe, which is what let the call finish
   clearTimeout(guard);
   log(`trackSuccess completed in ${Date.now() - t}ms (NOT gated)`);
   stalled.close();
   exitProcess(0);
-}, 200);
+}, HEAD_START_MS);

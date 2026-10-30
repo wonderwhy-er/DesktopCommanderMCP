@@ -3,6 +3,8 @@ import os from 'os';
 import path from 'path';
 
 const TEST_HOME_PREFIX = 'dc-test-home-';
+// The variables a test process doesn't inherit (see createTestEnv); the test-home hook removes them too
+export const LEFT_OUT = ['FORCE_COLOR', 'XDG_CONFIG_HOME'];
 
 /**
  * Environment for one test process. The runners start every test file with it:
@@ -14,11 +16,14 @@ const TEST_HOME_PREFIX = 'dc-test-home-';
  *   production server
  * - no FORCE_COLOR, so processes the tests start print the same plain text
  *   whichever terminal launched the run
+ * - no XDG_CONFIG_HOME, so a tool that reads it (pwsh, for its profile) keeps
+ *   its settings under the test home, not where the machine says (GitHub's
+ *   Linux runner sets it to the real ~/.config)
  * Values already set by the caller win; tests that need others set them themselves.
  */
 export function createTestEnv() {
   const home = createTempDir(TEST_HOME_PREFIX);
-  const { FORCE_COLOR, ...inherited } = process.env;
+  const inherited = Object.fromEntries(Object.entries(process.env).filter(([name]) => !LEFT_OUT.includes(name)));
   const env = {
     ...inherited,
     HOME: home,

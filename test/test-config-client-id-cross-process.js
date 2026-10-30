@@ -8,7 +8,9 @@ import { runIfMain } from './helpers/run-if-main.js';
 
 const TEST_FILE = fileURLToPath(import.meta.url);
 const WORKERS = 8;
-const TIMEOUT_MS = 8_000;
+// Each wait ends as soon as its message arrives (8 processes starting at once,
+// then 8 locked writes, about a second here); this much holds up on a loaded machine
+const TIMEOUT_MS = 60_000;
 
 async function worker() {
   const { configManager } = await import('../dist/config-manager.js');

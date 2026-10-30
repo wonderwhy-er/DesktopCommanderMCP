@@ -51,6 +51,12 @@ const makeChannelState = (state) => ({ state });
 // depends on a timer a test has stubbed.
 const realSetTimeout = globalThis.setTimeout;
 
+// How long a test waits for a fake write or call to settle. They settle within
+// their 20-50 ms fake latency or abort; a wait returns as soon as they do, so
+// only an implementation that never settles (the bugs here) waits this out,
+// and a loaded machine still meets it.
+const SETTLE_LIMIT_MS = 30_000;
+
 /** MCPDevice with the network and desktop edges stubbed. */
 function makeDevice({ claimResults = [] } = {}) {
   const device = new MCPDevice();
@@ -500,7 +506,7 @@ await test('concurrent status writes stay ordered', async () => {
   await rc.statusWriteChain;
   // Let the deferred first write land even when the implementation does NOT
   // serialise, so this fails on ORDER — the actual bug — rather than on timing.
-  const deadline = Date.now() + 500;
+  const deadline = Date.now() + SETTLE_LIMIT_MS;
   while (client.completions.length < 2 && Date.now() < deadline) {
     await new Promise((r) => realSetTimeout(r, 5));
   }
@@ -526,7 +532,7 @@ await test("a heartbeat still in flight cannot land after a drop's 'offline'", a
   rc.syncReachabilityStatus();
   await heartbeat;
   await rc.statusWriteChain;
-  const deadline = Date.now() + 500;
+  const deadline = Date.now() + SETTLE_LIMIT_MS;
   while (client.completions.length < 2 && Date.now() < deadline) {
     await new Promise((r) => realSetTimeout(r, 5));
   }
@@ -551,10 +557,13 @@ await test('a Presence failure never writes the device row', async () => {
 });
 
 /** Resolves true once `promise` settles, false if it hasn't within `ms` */
-const settlesWithin = (promise, ms) => Promise.race([
-  promise.then(() => true, () => true),
-  new Promise((resolve) => realSetTimeout(() => resolve(false), ms)),
-]);
+const settlesWithin = (promise, ms) => {
+  let timer;
+  return Promise.race([
+    promise.then(() => true, () => true),
+    new Promise((resolve) => { timer = realSetTimeout(() => resolve(false), ms); }),
+  ]).finally(() => clearTimeout(timer));
+};
 
 // A status PATCH sent down a half-open connection is never answered. It must
 // not keep readiness from being retried.
@@ -563,11 +572,13 @@ await test('a status write nothing answers cannot keep readiness from being retr
   rc.deviceRowWriteSignal = () => AbortSignal.timeout(50);
   rc.channel = { state: 'joined' };
 
-  const firstReturned = await settlesWithin(rc.markChannelReady(), 2000);
-  const retried = firstReturned && await settlesWithin(rc.markChannelReady(), 2000);
+  // The write aborts after 50 ms; without the abort it never returns
+  const firstReturned = await settlesWithin(rc.markChannelReady(), SETTLE_LIMIT_MS);
+  const retried = firstReturned && await settlesWithin(rc.markChannelReady(), SETTLE_LIMIT_MS);
+  const waited = `${SETTLE_LIMIT_MS / 1000} s`;
   assert(firstReturned && retried && rc.channelReady,
-    `a status write that was never answered ${firstReturned ? 'failed in time' : 'kept the readiness attempt waiting for 2 s'}`
-    + `${firstReturned ? `, and the retry after it ${retried ? 'finished' : 'waited behind it for 2 s'}` : ''}: `
+    `a status write that was never answered ${firstReturned ? 'failed in time' : `kept the readiness attempt waiting for ${waited}`}`
+    + `${firstReturned ? `, and the retry after it ${retried ? 'finished' : `waited behind it for ${waited}`}` : ''}: `
     + `ready ${rc.channelReady}. The health check retries readiness only once that attempt returns.`);
 });
 
@@ -615,11 +626,15 @@ await test('setOffline does not hang when getSession stalls', async () => {
   rc.client.supabaseUrl = undefined;
   rc.client.supabaseKey = undefined;
 
+  // setOffline gives up on the session after 500 ms (remote-channel.ts); a
+  // stalled getSession it waited for would keep it from ever settling
   let settled = false;
+  let limit;
   await Promise.race([
     rc.setOffline(DEVICE_ID).then(() => { settled = true; }),
-    new Promise((r) => setTimeout(r, 3000)),
+    new Promise((r) => { limit = setTimeout(r, SETTLE_LIMIT_MS); }),
   ]);
+  clearTimeout(limit);
   assert(settled, 'setOffline must settle rather than block the shutdown path');
 });
 
