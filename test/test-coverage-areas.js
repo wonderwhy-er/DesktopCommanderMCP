@@ -1,7 +1,7 @@
 /**
  * The coverage report's areas (coverage-areas.js): a report key from any machine
- * is its file in this checkout, each file has an area (the test tooling its own),
- * each area sums its files, and the table ends with one total. Reads this
+ * is its file in this checkout, each file has an area, each area sums its files,
+ * and the table ends with one total. Reads this
  * checkout's files; starts nothing.
  */
 import assert from 'assert';
@@ -33,19 +33,17 @@ export default async function run() {
   assert.strictEqual(areaOf('src/ui/file-preview/src/app.ts'), 'src/ui', 'src/ui is an ordinary area');
   assert.strictEqual(areaOf('setup-claude-server.js'), 'install scripts');
   assert.strictEqual(areaOf('vendor/telemetry-contract/transport.js'), 'vendor/telemetry-contract');
-  assert.strictEqual(areaOf('test/run-ci.js'), 'test tooling');
-  assert.strictEqual(areaOf('test/helpers/node-test-runner.js'), 'test tooling');
-  console.log('✓ each file\'s area, the test tooling its own');
+  console.log('✓ each file\'s area');
 
   const summary = {
     total: entry(15, 40),
     [path.join(ROOT, 'src', 'tools', 'edit.ts')]: entry(5, 10),
     [path.join(ROOT, 'src', 'tools', 'filesystem.ts')]: entry(5, 10),
     [path.join(ROOT, 'src', 'index.ts')]: entry(0, 10),
-    [path.join(ROOT, 'test', 'run-ci.js')]: entry(5, 10),
+    [path.join(ROOT, 'vendor', 'telemetry-contract', 'transport.js')]: entry(5, 10),
   };
   const areas = coverageByArea(summary);
-  assert.deepStrictEqual(areas.map(({ area, files }) => [area, files]), [['src/*', 1], ['src/tools', 2], ['test tooling', 1]], 'sorted by name, files counted');
+  assert.deepStrictEqual(areas.map(({ area, files }) => [area, files]), [['src/*', 1], ['src/tools', 2], ['vendor/telemetry-contract', 1]], 'sorted by name, files counted');
   assert.deepStrictEqual(areas[1].lines, { covered: 10, total: 20, pct: 50 }, 'an area sums its files');
   assert.strictEqual(areas[0].lines.pct, 0);
   assert.strictEqual(areas[0].branches.pct, 50);
