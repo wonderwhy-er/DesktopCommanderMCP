@@ -22,7 +22,9 @@
 //
 // Needs `npm run build` first (the tarball takes dist/ as it is) and network
 // (npm). No install scripts run (npm_config_ignore_scripts), npm's cache is a
-// temporary folder, telemetry is off. mcpb-bundle/ (git-ignored) is removed at
+// temporary folder unless REPRO_NPM_CACHE names one (CI points it at the job's
+// own npm cache: from an empty one, the tarball's install took 522 s on GitHub's
+// Windows), telemetry is off. mcpb-bundle/ (git-ignored) is removed at
 // the end. If the script is stopped (Ctrl+C, SIGTERM), or is still running
 // 15 s before run-repro.js's limit (REPRO_TIMEOUT_MS, default 180 s), it stops
 // the processes it started and removes what they made.
@@ -46,7 +48,7 @@ const deadline = Date.now() + OWN_LIMIT_MS;
 const work = createTempDir('dc-release-packages-');
 const env = {
   ...process.env,
-  npm_config_cache: path.join(work, 'npm-cache'),
+  npm_config_cache: process.env.REPRO_NPM_CACHE || path.join(work, 'npm-cache'),
   npm_config_ignore_scripts: 'true',
   npm_config_audit: 'false',
   npm_config_fund: 'false',
