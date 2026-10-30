@@ -303,6 +303,21 @@ export default async function run() {
   // The comment jobs write one at a time per PR, and none is dropped: GitHub's default
   // queue keeps one waiting job and cancels it when a third run's comment job comes
   const workflow = readWorkflow('tests.yml');
+
+  // A PR opened with its labels: GitHub sends opened, then a labeled event for each label. Each platform runs once:
+  // opened starts nothing (the labeled events run the platforms), and the review label's event picks no platform
+  const prTypes = (/^ {2}pull_request:\n {4}types: \[([^\]]*)\]/m.exec(workflow)?.[1] ?? '').split(',').map((type) => type.trim());
+  assert.ok(['synchronize', 'reopened', 'labeled'].every((type) => prTypes.includes(type)), `a push, a reopen and a label still run: ${prTypes}`);
+  const openedWith = ['linux', 'windows', 'macos', 'review'];
+  const runs = {};
+  for (const event of [push('opened', openedWith), ...openedWith.map((label) => labeled(label, openedWith))]) {
+    if (!prTypes.includes(event.action)) continue;
+    for (const name of platformsFor('pull_request', event)) runs[name] = (runs[name] ?? 0) + 1;
+  }
+  assert.deepStrictEqual(runs, { linux: 1, windows: 1, macos: 1 }, `a PR opened with its labels runs each platform once: ${JSON.stringify(runs)}`);
+  assert.deepStrictEqual(platformsFor('pull_request', push('opened', openedWith)), [], 'opened alone starts no platform: its labeled events do');
+  console.log('✓ a PR opened with its labels: each platform once, the review label\'s event none');
+
   const commentJob = jobLines(workflow, 'comment');
   const concurrency = blockUnder(commentJob, 'concurrency');
   assert.ok(concurrency.some((line) => line.startsWith('group: tests-comment-')), 'one group per PR');
