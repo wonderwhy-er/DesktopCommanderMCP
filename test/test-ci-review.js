@@ -242,6 +242,8 @@ export default async function run() {
   assert.deepStrictEqual(uncoveredOf({ diff: DIFF, lcovs: [LCOV_LINUX, LCOV_WINDOWS] }), [{ file: 'src/a.ts', ranges: [[11, 12]] }],
     'line 2 ran on Windows; 11-12 ran nowhere; an unchanged file or line is no business of the review');
   assert.deepStrictEqual(uncoveredOf({ diff: DIFF, lcovs: [] }), [], 'no report, nothing to say');
+  assert.deepStrictEqual(uncoveredOf({ diff: DIFF, lcovs: [LCOV_LINUX], counted: (file) => file !== 'src/a.ts' }), [],
+    'a file the coverage doesn\'t count is never "not covered", whatever a report says');
   console.log('✓ the changed lines no test ran, from every platform\'s lcov.info');
 
   // The run's tests: CI's artifacts (a folder per platform), or this machine's last run
@@ -687,7 +689,9 @@ export default async function run() {
     fs.mkdirSync(path.join(artifacts, 'results-ubuntu-latest', 'suite'), { recursive: true });
     fs.mkdirSync(path.join(artifacts, 'coverage-ubuntu-latest'), { recursive: true });
     fs.writeFileSync(path.join(artifacts, 'results-ubuntu-latest', 'suite', 'results.json'), JSON.stringify({ files: [{ path: 'test/test-a.js', success: true, skipped: [] }] }));
-    fs.writeFileSync(path.join(artifacts, 'coverage-ubuntu-latest', 'lcov.info'), 'SF:/w/r/src/a.ts\nDA:1,1\nDA:2,0\nend_of_record\n');
+    // link changed and a report has it unrun, but the coverage doesn't count it (check-coverage-report.js' isCounted)
+    fs.writeFileSync(path.join(artifacts, 'coverage-ubuntu-latest', 'lcov.info'),
+      'SF:/w/r/src/a.ts\nDA:1,1\nDA:2,0\nend_of_record\nSF:/w/r/link\nDA:1,0\nend_of_record\n');
     const quietAnswer = path.join(dir, 'answer-quiet.txt');
     fs.writeFileSync(quietAnswer, answerFile('{"summary": "Fine.", "findings": []}', STATS));
     result = await ciReview(['run', `${base}..${head}`, '--repo', repo, '--out', out, '--tests', artifacts], {
@@ -794,7 +798,8 @@ export default async function run() {
   assert.ok(steps.includes('CHECK: ${{ inputs.check }}') && steps.includes('if [[ "$CHECK" == text ]]; then text=(--text pr); fi'), 'check=text: the PR\'s description');
   assert.ok(steps.includes('pattern: results-*') && steps.includes('pattern: coverage-*') && steps.includes('path: ci'), 'the run\'s results and coverage, downloaded as data');
   // The script's own files, checked out sparsely: every file run reads (the review found the text check's prompt missing)
-  for (const file of ['/.github/review-prompt.md', '/.github/text-check-prompt.md', '/.github/writing-style.md', '/test/ci-review-budget.js']) {
+  for (const file of ['/.github/review-prompt.md', '/.github/text-check-prompt.md', '/.github/writing-style.md', '/test/ci-review-budget.js',
+    '/test/check-coverage-report.js', '/test/helpers/node-test-runner.js']) {
     assert.ok(steps.includes(file), `the review job checks out ${file}`);
   }
   assert.ok(steps.includes('GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}'));
