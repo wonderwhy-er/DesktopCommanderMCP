@@ -10,20 +10,27 @@
  *   - a lookup that waited in line still runs in its own tool call: what that
  *     call sends to telemetry afterwards has the path it resolved to replaced
  *     whole
- *   - a lookup that waits more than 10 seconds fails with an error that names
- *     the folder and the path, instead of "__ERROR__: Path validation
+ *   - a lookup that has had its turn for more than 10 seconds fails with an
+ *     error that names its path, instead of "__ERROR__: Path validation
  *     operation timed out after 10 seconds", and is sent to telemetry once,
  *     as server_path_validation_timeout
- *   - while that lookup still waits, the folder itself, or a path in or below
- *     it, fails at once with the same error, without a lookup on the disk
+ *   - while that lookup still waits, its path, or a path below it, fails at
+ *     once with the same error, without a lookup on the disk. Other paths in
+ *     its folder still work
+ *   - once a second, different path in the folder hangs too, the folder
+ *     itself, or a path in or below it, fails at once with an error that
+ *     names the folder, and so do the lookups waiting in line there
  *   - a path in another folder still works
  *   - a lookup's 10 seconds start when it gets its turn, not while it waits
  *     in line: in a slow folder whose lookups each answer well within 10
  *     seconds, every lookup answers, also the last ones in line
  *   - once the waiting lookups answer, the folder works again
- *   - a root is its own folder: when its lookups stop answering, the lookups
- *     of the root itself that wait in line fail at once with the others, so
- *     no more than LOOKUPS_PER_FOLDER lookups there reach the disk
+ *   - a root is never marked stalled: when the lookups of folders in it don't
+ *     answer, as hung mount points don't, a path elsewhere on it still works
+ *   - a root is its own folder: when every turn in its line is held by a
+ *     lookup that ran out of time, the lookups of the root itself waiting in
+ *     line fail at once, so no more than LOOKUPS_PER_FOLDER lookups there
+ *     reach the disk
  *
  * Telemetry is caught the way test-telemetry-paths.js catches it. Takes about
  * 20 seconds: a lookup's own time limit, twice. Runs as part of `npm test`, or
@@ -180,13 +187,18 @@ async function runTests() {
   fs.symlinkSync(real, linked, 'junction');
   const queuedFiles = Array.from({ length: LOOKUPS_STARTED }, (_, i) => path.join(linked, `file ${i}.md`));
   for (const file of queuedFiles) fs.writeFileSync(file, 'queued');
-  // A root, which is its own folder: / on macOS and Linux, and on Windows a
-  // drive letter not in use, so the lookups the test lets answer find nothing
-  const stalledRoot = process.platform !== 'win32'
-    ? path.sep
-    : [...'ZYXWVUTSRQPONMLKJIHGFED'].map((letter) => `${letter}:\\`).find((drive) => !fs.existsSync(drive));
-  if (!stalledRoot) throw new Error('every drive letter from D: to Z: is in use; the root check needs a free one');
-  const inRoot = Array.from({ length: LOOKUPS_PER_FOLDER }, (_, i) => path.join(stalledRoot, `dc-stalled-root-${i}.md`));
+  // A folder where only one path hangs, beside a file that answers
+  const oneHung = path.join(root, 'one hung');
+  fs.mkdirSync(oneHung);
+  const hungFile = path.join(oneHung, 'hung.md');
+  const besideHung = path.join(oneHung, 'beside.md');
+  fs.writeFileSync(besideHung, 'beside');
+  // The root the temp folder is on (/ on macOS and Linux, a drive such as C:\
+  // on Windows), so a path elsewhere on it exists. Folders directly in it that
+  // don't exist stand for hung mount points: the lookups the test lets answer
+  // find nothing
+  const stalledRoot = path.parse(root).root;
+  const hungMounts = Array.from({ length: LOOKUPS_PER_FOLDER }, (_, i) => path.join(stalledRoot, `dc-stalled-mount-${process.pid}-${i}`));
 
   let failures = 0;
   function check(name, ok, detail) {
@@ -201,6 +213,7 @@ async function runTests() {
   // Installed first, so the stand-ins installed after it call it, and it is put back last
   const slowFolder = slowLookups((p) => isInside(p, slow), SLOW_LOOKUP_MS);
   const lookups = stallLookups((p) => samePath(p, stalled) || isInside(p, stalled));
+  let oneHungLookups;
   let rootLookups;
   try {
     console.log(`\n--- ${LOOKUPS_STARTED} lookups at once in ${linked}, each in its own tool call ---`);
@@ -223,10 +236,13 @@ async function runTests() {
     // Every lookup that reaches the disk has by now: the ones still in line failed with the others
     check(`only ${LOOKUPS_PER_FOLDER} of them reach the disk; the others wait in line`, lookups.calls.length === LOOKUPS_PER_FOLDER,
       `${lookups.calls.length} reached fs.promises.realpath`);
-    check('a lookup that waits more than 10 seconds fails with an error naming the folder and the path',
-      failsFor(answers[0], stalled, stalledFiles[0]), errorText(answers[0]));
-    check('the lookups waiting in line fail with that error too',
-      answers.every((answer, i) => failsFor(answer, stalled, stalledFiles[i])), answers.map(errorText).join(' | '));
+    check('a lookup that runs out of time fails with an error naming its own path, the one that hung',
+      failsFor(answers[0], stalledFiles[0], stalledFiles[0]), errorText(answers[0]));
+    check(`each of the ${LOOKUPS_PER_FOLDER} that ran out of time names its own path; once a second path in the folder hung, the lookups waiting in line fail with an error naming the folder`,
+      answers.every((answer, i) => (i < LOOKUPS_PER_FOLDER
+        ? failsFor(answer, stalledFiles[i], stalledFiles[i])
+        : failsFor(answer, stalled, stalledFiles[i]))),
+      answers.map(errorText).join(' | '));
     // Telemetry is sent in the background; the check below reports a timeout
     await waitUntil(() => timeoutEvents() >= LOOKUPS_PER_FOLDER, DEADLINE_MS, 'the timeouts are sent').catch(() => {});
     check('each lookup that ran out of time is sent to telemetry once', timeoutEvents() === LOOKUPS_PER_FOLDER,
@@ -258,18 +274,42 @@ async function runTests() {
     await waitUntil(async () => (again = await settle(stalledFiles[0])).value !== undefined, DEADLINE_MS, 'the folder works again').catch(() => {});
     check('the folder works again', again.value === stalledFiles[0], errorText(again));
 
-    console.log(`\n--- ${inRoot.length} lookups in ${stalledRoot}, whose lookups don't answer, then ${LOOKUPS_STARTED} of the root itself ---`);
-    // Only the root and what's directly in it: on macOS and Linux every other path is below it
+    console.log(`\n--- ${hungMounts.length} lookups of folders in ${stalledRoot} that don't answer, as hung mount points don't, then ${LOOKUPS_STARTED} of the root itself; beside them, one of ${hungFile} ---`);
+    oneHungLookups = stallLookups((p) => samePath(p, hungFile));
+    // Only the root and what's directly in it: every other path the test uses is deeper
     rootLookups = stallLookups((p) => samePath(p, stalledRoot) || samePath(path.dirname(p), stalledRoot));
     // The root is in its own line too, so the lookups of it wait behind the others
-    const rootPaths = [...inRoot, ...Array(LOOKUPS_STARTED).fill(stalledRoot)];
-    const rootAnswers = await Promise.all(rootPaths.map(settle));
-    check(`the lookups of the root itself fail with the others, and only ${LOOKUPS_PER_FOLDER} lookups there reach the disk`,
-      rootLookups.calls.length === LOOKUPS_PER_FOLDER && rootAnswers.every((answer, i) => failsFor(answer, stalledRoot, rootPaths[i])),
-      `${rootLookups.calls.length} reached fs.promises.realpath; the root itself: ${errorText(rootAnswers.at(-1))}`);
+    const rootPaths = [...hungMounts, ...Array(LOOKUPS_STARTED).fill(stalledRoot)];
+    const [rootAnswers, oneHungAnswer] = await Promise.all([Promise.all(rootPaths.map(settle)), settle(hungFile)]);
+    check(`only ${LOOKUPS_PER_FOLDER} lookups in the root reach the disk`, rootLookups.calls.length === LOOKUPS_PER_FOLDER,
+      `${rootLookups.calls.length} reached fs.promises.realpath`);
+    check('each folder in the root that ran out of time fails with an error naming that folder, not the root',
+      hungMounts.every((mount, i) => failsFor(rootAnswers[i], mount, mount)),
+      rootAnswers.slice(0, hungMounts.length).map(errorText).join(' | '));
+    check('once every turn in the root\'s line is held by a lookup that ran out of time, the lookups of the root itself waiting in line fail at once',
+      rootAnswers.slice(hungMounts.length).every((answer) => failsFor(answer, stalledRoot, stalledRoot)), errorText(rootAnswers.at(-1)));
+    check('the one file that hung in its folder fails with an error naming that file, not its folder',
+      failsFor(oneHungAnswer, hungFile, hungFile), errorText(oneHungAnswer));
+
+    console.log('\n--- while those lookups still wait ---');
+    const rootLookupsSoFar = rootLookups.calls.length;
+    const inMount = path.join(hungMounts[0], 'file.md');
+    const [elsewhereOnRoot, inMountAnswer, beside, hungAgain] = await Promise.all([settle(otherFile), settle(inMount), settle(besideHung), settle(hungFile)]);
+    check(`the root isn't marked stalled: a path elsewhere on ${stalledRoot} still works`, elsewhereOnRoot.value === otherFile, errorText(elsewhereOnRoot));
+    check('a path in a folder of the root that hung fails at once, without a lookup on the disk',
+      rootLookups.calls.length === rootLookupsSoFar && failsFor(inMountAnswer, hungMounts[0], inMount),
+      `${errorText(inMountAnswer)} (${rootLookups.calls.length - rootLookupsSoFar} new lookups)`);
+    check('with only one path hung in a folder, the folder isn\'t marked stalled: the file beside it works',
+      beside.value === besideHung, errorText(beside));
+    check('the file that hung fails at once, without a lookup on the disk',
+      oneHungLookups.calls.length === 1 && failsFor(hungAgain, hungFile, hungFile),
+      `${errorText(hungAgain)} (${oneHungLookups.calls.length} lookups of it)`);
   } finally {
+    // Put back in the order opposite to how they were installed
     rootLookups?.answer();
     rootLookups?.restore();
+    oneHungLookups?.answer();
+    oneHungLookups?.restore();
     lookups.answer();
     lookups.restore();
     slowFolder.restore();
