@@ -74,7 +74,9 @@ export async function crossTest({
     throw new Error(`A cross-test needs the test framework on both commits: ${missing.join('; ')}`);
   }
 
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dc-cross-'));
+  // Its long real path, as the runner and the server name files (realpathSync.native): Windows' 8.3
+  // short names (GitHub's runner's TEMP is C:\Users\RUNNER~1\…) become long ones, macOS's /var /private/var
+  const dir = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'dc-cross-')));
   git(root, 'worktree', 'add', '--detach', '-q', dir, codeSha);
   try {
     // test/ exactly as the tests commit has it: the code commit's own test files go first
