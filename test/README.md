@@ -137,6 +137,8 @@ A change to a shared module reaches most tests, because many tests start the who
 - `review.json`: the same findings, each with its kind (real bug, nitpick, handled elsewhere, not checked), file, line and text, and the run's tokens;
 - `diff.patch`, and `answer.json`, Gemini CLI's own JSON.
 
+The review is given the run's tests: the files that failed, and the changed lines no test ran, from `lcov.info` with every platform together. Each uncovered range becomes a `not covered` finding unless the PR says why. On your machine it uses `coverage/` and `test-results/` from the last `npm run test:coverage` only if that ran at B on a clean tree (its stamp, `coverage/run.json`); `--tests <folder>` names another run. Without results it says "with no test results".
+
 `.github/workflows/review.yml` runs the same script in CI, with the `GEMINI_API_KEY` secret. The same maintainers start it, in the same ways as the tests:
 - **Add the `review` label** to review the PR at once. A push to a PR with the label reviews it again.
 - **From a PR comment:** a line `/review`. It only works once this workflow is on main, as for `/test`.
