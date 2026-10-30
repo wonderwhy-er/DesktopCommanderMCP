@@ -56,27 +56,34 @@ export default { request };
 `;
 
 // The answers for commands: by the start of the command (cmd.exe /c left out): { stdout }, { error }, { throw }
-// to throw at once, or { uncaught } / { unhandled } for an error or a rejection nothing catches; with no
-// answer, an error
+// to throw at once; { uncaught } / { unhandled } answer as told and then raise an error or a rejection
+// nothing catches; with no answer, an error
 const CHILD_PROCESS = `
 import fs from 'node:fs';
 const { log, commands = {} } = JSON.parse(process.env.DC_STAND_INS);
-export function exec(command, options, callback) {
-  const done = typeof options === 'function' ? options : callback;
+function answerFor(command) {
   const asked = command.replace(/^cmd\\.exe \\/c /, '');
   const key = Object.keys(commands).find((start) => asked.startsWith(start));
-  const answer = key ? commands[key] : { error: 'stand-in: no answer for ' + asked };
   fs.appendFileSync(log, JSON.stringify({ command }) + '\\n');
+  return key ? commands[key] : { error: 'stand-in: no answer for ' + asked };
+}
+export function execSync(command) {
+  const answer = answerFor(command);
+  if (answer.error || answer.throw) throw Object.assign(new Error(answer.error || answer.throw), { status: 1 });
+  return answer.stdout ?? '';
+}
+export function exec(command, options, callback) {
+  const done = typeof options === 'function' ? options : callback;
+  const answer = answerFor(command);
   if (answer.throw) throw new Error(answer.throw);
   if (answer.uncaught) setImmediate(() => { throw new Error(answer.uncaught); });
   if (answer.unhandled) setImmediate(() => { Promise.reject(new Error(answer.unhandled)); });
-  if (answer.uncaught || answer.unhandled) return { pid: 0 };
   setImmediate(() => (answer.error
     ? done(Object.assign(new Error(answer.error), { code: 1 }), '', answer.error)
     : done(null, answer.stdout ?? '', '')));
   return { pid: 0 };
 }
-export default { exec };
+export default { exec, execSync };
 `;
 
 export async function resolve(specifier, context, next) {
