@@ -135,11 +135,12 @@ export default async function run() {
   console.log('✓ only the maintainers start a run, from one list');
 
   // The AI review: the label review on a push, adding it, a /review line, or an on-demand run
-  for (const action of ['opened', 'synchronize', 'reopened']) {
+  for (const action of ['synchronize', 'reopened']) {
     assert.strictEqual(reviewFor('pull_request', push(action, ['linux', 'review'])), true, `${action}, labelled review: reviewed`);
     assert.strictEqual(reviewFor('pull_request', push(action, ['linux'])), false, `${action}, no review label: not reviewed`);
   }
   assert.strictEqual(reviewFor('pull_request', labeled('review')), true, 'adding the label reviews at once');
+  assert.strictEqual(reviewFor('pull_request', push('opened', ['linux', 'review'])), false, 'opened: tests.yml doesn\'t get it; the label\'s own event reviews');
   assert.strictEqual(reviewFor('pull_request', labeled('linux', ['linux', 'review'])), false, 'another label added: no second review');
   assert.strictEqual(reviewFor('pull_request', { ...push('unlabeled', ['linux']), label: { name: 'review' } }), false, 'removing it: nothing');
   assert.strictEqual(reviewFor('pull_request', push('synchronize', ['review'], 'someone')), false, 'a PR someone else opened: not reviewed');
@@ -157,8 +158,8 @@ export default async function run() {
   console.log('✓ the review: its label on a push or added, a /review line, an on-demand run; maintainers only');
 
   // A review event runs the PR's labelled platforms too, so the review comes after that commit's tests
-  assert.deepStrictEqual(platformsFor('pull_request', labeled('review', ['windows', 'review', 'linux'])), ['linux', 'windows'],
-    'adding review: the labelled platforms run, then the review');
+  assert.deepStrictEqual(platformsFor('pull_request', labeled('review', ['windows', 'review', 'linux'])), [],
+    'adding review runs no platform: each ran on its own label\'s event, and a push runs them all');
   assert.deepStrictEqual(platformsFor('pull_request', labeled('review', ['review'])), [], 'no platform label: the review runs alone');
   assert.deepStrictEqual(platformsFor('issue_comment', comment('/review', true, 'mihailt', ['macos', 'review'])), ['macos'], 'a /review comment: the labelled platforms');
   assert.deepStrictEqual(platformsFor('issue_comment', comment('/test windows\n/review', true, 'mihailt', ['linux'])), ['linux', 'windows'],
@@ -355,6 +356,9 @@ export default async function run() {
   }
   assert.deepStrictEqual(runs, { linux: 1, windows: 1, macos: 1 }, `a PR opened with its labels runs each platform once: ${JSON.stringify(runs)}`);
   assert.deepStrictEqual(platformsFor('pull_request', push('opened', openedWith)), [], 'opened alone starts no platform: its labeled events do');
+  const reviews = [push('opened', openedWith), ...openedWith.map((label) => labeled(label, openedWith))]
+    .filter((event) => prTypes.includes(event.action) && reviewFor('pull_request', event)).length;
+  assert.strictEqual(reviews, 1, 'and the review runs once, from the review label\'s own event');
   console.log('✓ a PR opened with its labels: each platform once, the review label\'s event none');
 
   const commentJob = jobLines(workflow, 'comment');
