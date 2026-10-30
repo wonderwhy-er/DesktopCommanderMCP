@@ -361,6 +361,29 @@ export default async function run() {
   assert.strictEqual(reviews, 1, 'and the review runs once, from the review label\'s own event');
   console.log('✓ a PR opened with its labels: each platform once, the review label\'s event none');
 
+  // A job that checks out a sparse list runs a script only with every file it imports in that list: a missing one
+  // stops the job before it does anything (c4590061: check-coverage-report.js, in three jobs' lists, so no platform ran)
+  const importsOf = (file, seen = new Set()) => {
+    if (seen.has(file)) return seen;
+    seen.add(file);
+    for (const [, spec] of fs.readFileSync(path.join(ROOT, file), 'utf8').matchAll(/^import [^;]*? from ['"](\.{1,2}\/[^'"]+)['"];/gms)) {
+      importsOf(path.posix.join(path.posix.dirname(file), spec), seen);
+    }
+    return seen;
+  };
+  for (const name of ['tests.yml', 'review.yml']) {
+    const text = readWorkflow(name);
+    const jobs = [...text.slice(text.indexOf('\njobs:\n')).matchAll(/^ {2}([\w-]+):$/gm)].map(([, job]) => job);
+    for (const job of jobs) {
+      const lines = jobLines(text, job).map((line) => line.trim());
+      const sparse = lines.filter((line) => /^\/[\w./-]+$/.test(line));
+      if (sparse.length === 0) continue;
+      for (const [script] of lines.join('\n').matchAll(/(?<=node )test\/[\w./-]+\.js/g)) {
+        for (const file of importsOf(script)) assert.ok(sparse.includes(`/${file}`), `${name}'s ${job} job runs ${script}, which needs ${file}`);
+      }
+    }
+  }
+
   const commentJob = jobLines(workflow, 'comment');
   const concurrency = blockUnder(commentJob, 'concurrency');
   assert.ok(concurrency.some((line) => line.startsWith('group: tests-comment-')), 'one group per PR');
