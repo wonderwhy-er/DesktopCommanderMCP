@@ -50,8 +50,8 @@ jobs:
     # On demand: anyone GitHub lets start it (write access). Otherwise it starts for
     # a /test comment on a PR, an added platform label, or a push to a PR with one.
     # Whether a maintainer opened the PR or wrote the comment is test/ci-platforms.js's:
-    # MAINTAINERS in test/helpers/ci-platforms.js, the one list the review workflow
-    # checks too. For anyone else it picks no platform.
+    # MAINTAINERS in test/helpers/ci-platforms.js. For anyone else it picks no
+    # platform.
     if: github.event_name == 'workflow_dispatch' || github.event_name == 'issue_comment' && github.event.issue.pull_request && contains(github.event.comment.body, '/test') || github.event.action == 'labeled' && contains(fromJSON('["linux","windows","macos"]'), github.event.label.name) || github.event_name == 'pull_request' && github.event.action != 'labeled' && (contains(github.event.pull_request.labels.*.name, 'linux') || contains(github.event.pull_request.labels.*.name, 'windows') || contains(github.event.pull_request.labels.*.name, 'macos'))
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -177,6 +177,11 @@ jobs:
         run: npm ci
         env:
           GITHUB_TOKEN: ${{ github.token }}
+      # The release-packages repro installs from this job's npm cache, which npm ci has
+      # just filled: from an empty one, its first install took 522 s on Windows
+      - name: The npm cache for the release repro
+        shell: bash
+        run: echo "REPRO_NPM_CACHE=$(npm config get cache)" >> "$GITHUB_ENV"
       # Under c8. A push, a label, a comment, or an on-demand run with no tests value:
       # the suite, the repro scripts and the integration tests, without the timed tests
       # in test/timed.txt (a shared machine can't time them), and Docker's tests on Linux

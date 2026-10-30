@@ -93,7 +93,7 @@ A change to a shared module reaches most tests, because many tests start the who
 
 ## CI
 
-`.github/workflows/tests.yml` runs on pull requests opened by the maintainers in `MAINTAINERS` (`test/helpers/ci-platforms.js`), the one list both workflows check.
+`.github/workflows/tests.yml` runs on pull requests opened by the maintainers in `MAINTAINERS` (`test/helpers/ci-platforms.js`), the one list it checks.
 - **Platforms: add the `linux` label to run the tests on Linux.** The same goes for `windows` and `macos`. With none of them, nothing runs.
   - A push runs every labelled platform. A new push cancels the older push's run.
   - Adding a label runs its platform at once. Another label, or removing one, runs nothing and cancels nothing.
