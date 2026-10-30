@@ -133,6 +133,11 @@ process.stdin.on('end', () => {
   const chats = path.join(process.env.GEMINI_CLI_HOME, '.gemini', 'tmp', 'project', 'chats');
   fs.mkdirSync(chats, { recursive: true });
   fs.writeFileSync(path.join(chats, 'session-1.jsonl'), '{"type":"user"}\\n{"type":"gemini"}\\n');
+  if (process.env.FAKE_CRASH) {
+    // Gemini CLI's own uncaught error: Node prints its stack, its fields and its version, and exits 1
+    console.error('Loaded cached credentials for', process.env.GEMINI_API_KEY);
+    throw Object.assign(new RangeError('Invalid string length'), { status: 429 });
+  }
   process.stdout.write(fs.readFileSync(process.env.FAKE_ANSWER, 'utf8'));
   process.exitCode = Number(process.env.FAKE_EXIT ?? 0);
   if (process.env.FAKE_HANG) {
@@ -490,6 +495,20 @@ export default async function run() {
     assert.ok(!/\n\s+at /.test(result.stderr + stopped) && !/FatalTurnLimitedError/.test(result.stderr + stopped), 'a plain line, never a crash\'s stack');
     assert.ok(/turns/.test(result.stderr) && /20/.test(result.stderr), `it says it ran out of its 20 turns: ${result.stderr}`);
     assert.ok(fs.existsSync(path.join(out, 'answer.json')), 'Gemini CLI\'s JSON is kept, so the tokens of a failed run show');
+    // Gemini CLI's own crash (on a 16,150-line diff): one plain line naming its error,
+    // and its whole output in a file, never its stack and Node's footer passed off as the script's own crash
+    fs.writeFileSync(summary, '');
+    result = await runReview({ DC_GEMINI_API_KEY: 'local-key', FAKE_CRASH: '1', GITHUB_STEP_SUMMARY: summary });
+    assert.strictEqual(result.code, 1, 'Gemini CLI crashed: the review fails');
+    const crashed = fs.readFileSync(summary, 'utf8');
+    assert.ok(/^\*\*AI review: not done\.\*\* Gemini CLI crashed \(exit 1\): RangeError: Invalid string length\. /.test(crashed), `the job summary names its error: ${crashed}`);
+    assert.ok(!/Node\.js v\d/.test(result.stderr + crashed) && !/\n\s+at /.test(result.stderr + crashed), `one plain line, no stack, no Node footer: ${result.stderr}`);
+    const geminiLog = path.join(out, 'gemini.log');
+    assert.ok(result.stderr.includes(geminiLog), `it names the file with Gemini CLI's whole output: ${result.stderr}`);
+    const logged = fs.readFileSync(geminiLog, 'utf8');
+    assert.ok(/Node\.js v\d/.test(logged) && /\n\s+at /.test(logged) && /status: 429/.test(logged), `the file has the whole crash: ${logged}`);
+    assert.ok(!logged.includes('local-key') && logged.includes('<the Gemini key>'), 'never the key, in the file either');
+    console.log('✓ run: Gemini CLI\'s own crash is one plain line naming its error, and its whole output is kept, without the key');
     const hung = path.join(dir, 'hung-child');
     result = await runReview({ DC_GEMINI_API_KEY: 'local-key', FAKE_HANG: hung, REVIEW_TIMEOUT_MS: '3000' });
     assert.strictEqual(result.code, 1, 'a hung model: the review fails');
