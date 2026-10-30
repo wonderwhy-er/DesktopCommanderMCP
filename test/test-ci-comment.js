@@ -138,6 +138,12 @@ export default async function run() {
     }
     console.log('✓ tests=timed: a platform\'s row counts every timed job\'s results, and a job that stopped before its tests');
 
+    // A cross-test (tests_from): the summary names the code's commit and the tests' commit
+    const cross = await comment(dir, { PR: '', GH_TOKEN: '', TESTS: '', TESTS_FROM: OLDER });
+    assert.strictEqual(cross.code, 0, cross.stderr);
+    assert.ok(cross.stdout.includes('## Tests and coverage for `0123456`, tests from `fffffff`'), `both commits named:\n${cross.stdout.slice(0, 400)}`);
+    console.log('✓ a cross-test\'s summary names both commits');
+
     // Fail closed: a job that failed while its results show no failure (a part that crashed before writing
     // its results.json), and a results.json that can't be read, each make the row ❌ and say so
     const closedDir = createTempDir('dc-ci-comment-closed-');
