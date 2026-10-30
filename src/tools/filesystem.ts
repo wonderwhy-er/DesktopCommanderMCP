@@ -410,11 +410,12 @@ function startWaitingLookups(key: string, line: LookupLine): void {
  * Runs `lookup`, the disk part of validatePath for `absolutePath`, in the line
  * of `folder`, the folder that path is in:
  * - at most LOOKUPS_PER_FOLDER lookups run at a time in one folder. The others
- *   wait in line in memory, not on a thread, within their own time limit.
+ *   wait in line in memory, not on a thread. A lookup's time limit starts when
+ *   it gets its turn, so a slow folder that still answers isn't taken for one
+ *   that doesn't, however long its line.
  * - a lookup that runs out of time fails with stalledFolderError and is sent
- *   to telemetry. One still running then marks its folder stalled until it
- *   returns, and the lookups waiting in line in that folder, or below it,
- *   fail at once.
+ *   to telemetry. It marks its folder stalled until it returns, and the
+ *   lookups waiting in line in that folder, or below it, fail at once.
  */
 function lookUpInFolder(folder: string, absolutePath: string, lookup: () => Promise<string>): Promise<string> {
     const key = comparablePath(folder);
@@ -422,7 +423,8 @@ function lookUpInFolder(folder: string, absolutePath: string, lookup: () => Prom
     folderLookups.set(key, line);
 
     return new Promise<string>((resolve, reject) => {
-        let state: 'waiting' | 'running' | 'stalled' = 'waiting';
+        let stalled = false;
+        let timeout: ReturnType<typeof setTimeout> | undefined;
         let startTurn!: () => void;
 
         // The call that frees a turn only starts it: the lookup goes on here, in
@@ -433,30 +435,23 @@ function lookUpInFolder(folder: string, absolutePath: string, lookup: () => Prom
             if (stalledFolder !== undefined) {
                 throw stalledFolderError(stalledFolder, absolutePath);
             }
-            state = 'running';
+            timeout = setTimeout(() => {
+                capture('server_path_validation_timeout', {
+                    timeoutMs: FILE_OPERATION_TIMEOUTS.PATH_VALIDATION
+                });
+                reject(stalledFolderError(folder, absolutePath));
+                stalled = true;
+                markStalled(key, folder);
+            }, FILE_OPERATION_TIMEOUTS.PATH_VALIDATION);
             return lookup();
         }).then(resolve, reject).finally(() => {
             clearTimeout(timeout);
             line.running--;
-            if (state === 'stalled') {
+            if (stalled) {
                 unmarkStalled(key);
             }
             startWaitingLookups(key, line);
         });
-
-        const timeout = setTimeout(() => {
-            capture('server_path_validation_timeout', {
-                timeoutMs: FILE_OPERATION_TIMEOUTS.PATH_VALIDATION
-            });
-            reject(stalledFolderError(folder, absolutePath));
-            if (state === 'waiting') {
-                line.waiting.splice(line.waiting.indexOf(startTurn), 1);
-                startWaitingLookups(key, line);
-                return;
-            }
-            state = 'stalled';
-            markStalled(key, folder);
-        }, FILE_OPERATION_TIMEOUTS.PATH_VALIDATION);
 
         line.waiting.push(startTurn);
         startWaitingLookups(key, line);
