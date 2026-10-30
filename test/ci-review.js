@@ -60,8 +60,12 @@ const SETTINGS = {
   // The loop detector is a second model's requests
   model: { maxSessionTurns: MAX_TURNS, disableLoopDetection: true },
   privacy: { usageStatisticsEnabled: false },
-  tools: { core: ['read_file', 'list_directory', 'glob', 'grep_search'] },
 };
+const READ_TOOLS = ['read_file', 'list_directory', 'glob', 'grep_search'];
+// A text check may also run these, read-only, to check its claims about commits and runs (the budget
+// hook refuses any other command, and any shell character)
+const SHELL_TOOLS = ['git log', 'git show', 'git rev-parse', 'git merge-base', 'gh pr view', 'gh run view'].map((command) => `run_shell_command(${command})`);
+const settingsFor = (shell) => ({ ...SETTINGS, tools: { core: shell ? [...READ_TOOLS, ...SHELL_TOOLS] : READ_TOOLS } });
 // After the prompt on stdin (Gemini CLI appends --prompt to it)
 const ASK = 'Review the change as the rules above say. Answer with the JSON object only.';
 
@@ -258,7 +262,7 @@ async function run(range, ...options) {
       + 'the model\'s window leaves for it. Review it in parts: npm run review -- A..B for each.');
   }
 
-  const result = await askGemini({ prompt, head, git, key, out, diff });
+  const result = await askGemini({ prompt, head, git, key, out, diff, shell: Boolean(text) });
   const usage = usageOf(result.stats);
   fs.writeFileSync(path.join(out, 'diff.patch'), diff);
   if (text) {
@@ -285,13 +289,13 @@ async function run(range, ...options) {
  * Gemini CLI on the prompt, in a folder of its own with B's files and the diff, read-only tools and the reading
  * budget. Returns its JSON; its session log, its JSON and its stderr are kept in out
  */
-async function askGemini({ prompt, head, git, key, out, diff }) {
+async function askGemini({ prompt, head, git, key, out, diff, shell }) {
   // The model's folder: nothing in it but what we put there. By its real path, as
   // Gemini CLI sees its working folder (macOS's temp folder is behind a link)
   const folder = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'dc-review-')));
   try {
     fs.mkdirSync(path.join(folder, '.gemini'));
-    fs.writeFileSync(path.join(folder, '.gemini', 'settings.json'), JSON.stringify(SETTINGS, null, 2));
+    fs.writeFileSync(path.join(folder, '.gemini', 'settings.json'), JSON.stringify(settingsFor(shell), null, 2));
     // Its own Gemini home: a user's settings and servers don't apply. The budget hook goes in
     // its user settings, where Gemini CLI runs hooks it was given (project hooks are untrusted)
     fs.mkdirSync(path.join(folder, 'home', '.gemini'), { recursive: true });
@@ -312,6 +316,12 @@ async function askGemini({ prompt, head, git, key, out, diff }) {
     const env = { ...process.env, GEMINI_API_KEY: key, GEMINI_CLI_TRUST_WORKSPACE: 'true', GEMINI_CLI_HOME: path.join(folder, 'home') };
     for (const name of ['DC_GEMINI_API_KEY', 'GH_TOKEN', 'GITHUB_TOKEN']) delete env[name];
     delete env.GEMINI_MODEL;
+    if (shell) {
+      // git reads the checkout's repository from the model's folder; gh reads this repository only,
+      // through the machine's own login (on GitHub, the job's read-only token); nothing pages or asks
+      Object.assign(env, { GIT_DIR: git(['rev-parse', '--absolute-git-dir']).trim(), GIT_PAGER: 'cat', GH_PAGER: 'cat', GH_PROMPT_DISABLED: '1', GH_NO_UPDATE_NOTIFIER: '1' });
+      if (repo) env.GH_REPO = repo;
+    }
     const model = process.env.GEMINI_MODEL || MODEL;
     const [command, args, extra] = geminiCommand(['--model', model, '--approval-mode=yolo', '--output-format', 'json', '--prompt', ASK]);
     const gemini = await runGemini(command, args, { cwd: folder, env, ...extra }, prompt);
