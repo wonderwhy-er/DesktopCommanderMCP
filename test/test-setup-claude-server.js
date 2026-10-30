@@ -122,7 +122,7 @@ async function restartFails() {
   const answering = (command, answer) => setup({ platform: 'linux', commands: { ...ANSWERED, [command]: answer } });
   const notRunning = await answering('pkill', { error: 'no process' });
   assert.strictEqual(notRunning.code, 0, notRunning.stderr);
-  assert.ok(sent(notRunning, 'npx_setup_kill_claude_not_needed'), 'Claude wasn\'t running: fine');
+  assert.ok(sent(notRunning, 'npx_setup_kill_claude_not_needed'), 'Claude not running: fine');
   const noStart = await answering('claude', { error: 'not found' });
   assert.strictEqual(noStart.code, 0, noStart.stderr);
   assert.ok(sent(noStart, 'npx_setup_start_claude_error', 'npx_setup_restart_claude_error'));
