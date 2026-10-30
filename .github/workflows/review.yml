@@ -139,8 +139,10 @@ jobs:
           HEAD_SHA: ${{ needs.request.outputs.sha }}
           BASE_SHA: ${{ needs.request.outputs.base }}
         run: node test/ci-review.js run "$BASE_SHA..$HEAD_SHA" --repo pr --out review
-      # review.json, review.md, the diff and Gemini CLI's own JSON
+      # review.json, review.md, the diff and Gemini CLI's own JSON; also when the review
+      # failed, so a stopped run's answer.json and session.jsonl show what it spent
       - name: Upload the review
+        if: always()
         uses: actions/upload-artifact@v7
         with:
           name: review
