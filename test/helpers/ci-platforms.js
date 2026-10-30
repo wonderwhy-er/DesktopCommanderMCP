@@ -40,9 +40,10 @@ export const REVIEW_LABEL = 'review';
 /** Whether a login is a maintainer's, in any case, as GitHub's own contains() compares them */
 export const isMaintainer = (login) => typeof login === 'string' && MAINTAINERS.some((name) => name.toLowerCase() === login.toLowerCase());
 
-/** Who started a PR's run: the comment's writer, or the PR's author */
+/** Who started a run: the comment's writer, the on-demand run's starter, or the PR's author */
 function startedBy(eventName, event) {
   if (eventName === 'issue_comment') return event.comment?.user?.login;
+  if (eventName === 'workflow_dispatch') return event.sender?.login;
   return event.pull_request?.user?.login;
 }
 
