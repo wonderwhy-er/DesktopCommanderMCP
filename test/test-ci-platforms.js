@@ -396,6 +396,15 @@ export default async function run() {
   assert.ok(step(unitJob, 'Upload the coverage report').includes('if: ${{ always() && !matrix.timed }}'), 'and no coverage artifact');
   console.log('✓ tests=timed: the list read at the commit as data, a job per test without coverage, each with its own results');
 
+  // The release-packages repro installs from the job's own npm cache, which npm ci has just filled, not an empty one:
+  // from an empty cache its first install took 522 s on GitHub's Windows (REPRO_NPM_CACHE, read by the repro)
+  const cacheStep = step(unitJob, 'The npm cache for the release repro');
+  assert.ok(cacheStep.includes('shell: bash') && cacheStep.includes('run: echo "REPRO_NPM_CACHE=$(npm config get cache)" >> "$GITHUB_ENV"'),
+    `the job's npm cache, named for the repro:\n${cacheStep.join('\n')}`);
+  assert.ok(unitJob.indexOf('- name: Install') < unitJob.indexOf('- name: The npm cache for the release repro')
+    && unitJob.indexOf('- name: The npm cache for the release repro') < unitJob.indexOf('- name: Tests with coverage'), 'after npm ci fills it, before the tests');
+  console.log('✓ the release repro installs from the job\'s npm cache');
+
   // The test job installs with npm 11 on every platform: Node 22's npm 10 runs the prepare
   // build inside `npm pack` even with ignore-scripts, into the JSON the release test reads
   const steps = unit.map((line) => line.trim());
