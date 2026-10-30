@@ -188,6 +188,9 @@ const git = (cwd, args, input) => {
 };
 
 export default async function run() {
+  // As on GitHub, whose runner sets it for every step (#972 failed there): a case's script sees it only when the case
+  // says so
+  process.env.GITHUB_ACTIONS = 'true';
   // The diff: each file's new-side lines a review comment can sit on
   const lines = changedLines(DIFF);
   assert.deepStrictEqual([...lines.keys()], ['src/a.ts'], 'a deleted file has no new-side lines');
