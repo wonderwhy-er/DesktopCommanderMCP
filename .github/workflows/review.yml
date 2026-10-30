@@ -104,9 +104,11 @@ jobs:
     # main's on a comment's or on-demand run; on a push or a label they're the PR's
     # own, as for the tests (a fork PR gets no secret). Writing is the post job's.
     # The script stops Gemini CLI after 12 minutes, inside this job's 15.
+    # Reads only: actions: read is for a text check's gh run view
     permissions:
       contents: read
       pull-requests: read
+      actions: read
 
     steps:
       # Our script and prompt (on a comment's run, main's: GitHub starts it from main)
