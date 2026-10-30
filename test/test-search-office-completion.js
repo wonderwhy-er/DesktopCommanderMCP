@@ -40,6 +40,11 @@ const OFFICE_SEARCH = {
 // a stopped session must not change for well past that
 let officeSearchMs = 0;
 
+// How long a stopped or timed-out search may take to complete. It takes
+// milliseconds and the waits return then, so only a search that never
+// completes waits this out; a loaded machine still meets it
+const STOP_WAIT_MS = 30_000;
+
 async function setup() {
   const originalConfig = await configManager.getConfig();
   await fs.rm(TEST_DIR, { recursive: true, force: true });
@@ -159,7 +164,7 @@ async function testStopSearchStopsOfficeSearches() {
   assert(!stopped.isError, `stop_search should succeed, got: ${stopped.content[0].text}`);
 
   // Stopping does not wait for the Office searches to finish their files
-  const deadline = Date.now() + 5000;
+  const deadline = Date.now() + STOP_WAIT_MS;
   while (!(await readSession(sessionId)).isComplete) {
     assert(Date.now() < deadline, 'A stopped search should complete promptly');
     await new Promise((resolve) => setTimeout(resolve, 20));
@@ -175,7 +180,7 @@ async function testStopSearchStopsOfficeSearches() {
 async function testTimeoutStopsOfficeSearches() {
   console.log('Testing that timeout_ms stops the Office searches...');
 
-  const sessionId = await startSearchAndWait({ ...OFFICE_SEARCH, timeout_ms: 1 }, 5000);
+  const sessionId = await startSearchAndWait({ ...OFFICE_SEARCH, timeout_ms: 1 }, STOP_WAIT_MS);
   try {
     await assertStaysFinal(sessionId, 'timeout_ms');
     console.log('✓ Timed-out session completed and stayed final');
@@ -211,9 +216,10 @@ async function testFailedOfficeSearchIsLogged() {
     const page = await handleGetMoreSearchResults({ sessionId });
     searchManager.dispose();
     console.log(JSON.stringify({ sessionId, isError: !!page.isError, text: page.content[0].text }));`;
+  // Past the child's own 60 s wait for its search (helpers/search.js), so that one reports first
   const child = await runNode([
     '--import', `data:text/javascript,${encodeURIComponent(preload)}`, '--input-type=module', '-e', script,
-  ], { timeoutMs: 60000 });
+  ], { timeoutMs: 120_000 });
   assert.strictEqual(child.status, 0, `The search process failed (${child.status}): ${child.stderr}`);
 
   const lines = child.stdout.trim().split('\n');

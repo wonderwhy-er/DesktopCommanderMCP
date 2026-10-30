@@ -1,0 +1,37 @@
+{
+  "all": true,
+  "include": [
+    "src/**",
+    "setup-claude-server.js",
+    "uninstall-claude-server.js",
+    "track-installation.js",
+    "vendor/telemetry-contract/**",
+    "test/check-coverage-report.js",
+    "test/coverage-areas.js",
+    "test/docker/run-docker-tests.js",
+    "test/helpers/node-test-runner.js",
+    "test/helpers/select-tests.js",
+    "test/helpers/test-home.js",
+    "test/integration/run-all-integration-tests.js",
+    "test/map-copied-scripts.js",
+    "test/repro/run-repro.js",
+    "test/run-all-tests.js",
+    "test/run-ci.js",
+    "test/run-coverage.js"
+  ],
+  "exclude": [
+    "**/*.d.ts",
+    "vendor/**/*.test.js"
+  ],
+  "exclude-after-remap": true,
+  "reporter": [
+    "html",
+    "lcovonly",
+    "json",
+    "json-summary",
+    "cobertura",
+    "text-summary"
+  ],
+  "reports-dir": "coverage",
+  "temp-directory": "test-results/c8-tmp"
+}
