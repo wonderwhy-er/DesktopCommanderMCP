@@ -379,6 +379,10 @@ export default async function run() {
     assert.strictEqual(result.output, `earlier=line\nreview=true\npr=7\nsha=${HEAD}\nbase=${BASE}\n`, 'on demand: both resolved; the open PR whose head it is');
     result = await request('workflow_dispatch', { inputs: { commit: OTHER, base: 'main' }, sender: { login: 'mihailt' } });
     assert.strictEqual(result.output, `earlier=line\nreview=true\npr=\nsha=${OTHER}\nbase=${BASE}\n`, 'on demand, no PR has it as head: the job summary only');
+    result = await ciReview(['request'], { ...api, GITHUB_EVENT_NAME: 'pull_request', GITHUB_EVENT_PATH: eventFile('called', {}), CALLED_PR: '7', CALLED_SHA: HEAD, CALLED_BASE: BASE }, dir);
+    assert.strictEqual(result.output, `earlier=line\nreview=true\npr=7\nsha=${HEAD}\nbase=${BASE}\n`, 'called by tests.yml: its PR, head and base');
+    result = await ciReview(['request'], { ...api, GITHUB_EVENT_NAME: 'pull_request', GITHUB_EVENT_PATH: eventFile('called', {}), CALLED_PR: 'x', CALLED_SHA: HEAD, CALLED_BASE: BASE }, dir);
+    assert.strictEqual(result.code, 1, 'a PR that is no number: no review');
     for (const bad of ['-x', 'a b', '$(id)']) {
       result = await request('workflow_dispatch', { inputs: { commit: bad, base: 'main' }, sender: { login: 'mihailt' } });
       assert.strictEqual(result.code, 1, `${JSON.stringify(bad)} is no commit`);
@@ -571,12 +575,14 @@ export default async function run() {
 
   // The workflow: triggers, and who holds what
   const workflow = readWorkflow('review.yml');
-  assert.ok(/^ {2}pull_request:\n {4}types: \[opened, synchronize, reopened, labeled\]$/m.test(workflow), 'a push, and an added label');
-  assert.ok(/^ {2}issue_comment:\n {4}types: \[created\]$/m.test(workflow), 'a new comment');
+  assert.ok(/^ {2}workflow_call:\n {4}inputs:\n {6}pr:/m.test(workflow) && /^ {6}sha:/m.test(workflow), 'called by tests.yml after its tests, with the PR, head and base');
+  assert.ok(/^ {4}secrets:\n {6}GEMINI_API_KEY:/m.test(workflow), 'and given the key');
+  assert.ok(!/^ {2}pull_request:/m.test(workflow) && !/^ {2}issue_comment:/m.test(workflow), 'the PR\'s events are tests.yml\'s: the review comes after their tests');
   assert.ok(/^ {2}workflow_dispatch:\n {4}inputs:\n {6}commit:/m.test(workflow) && /^ {6}base:/m.test(workflow), 'on demand, with commit and base');
   const requestJob = jobLines(workflow, 'request');
   assert.deepStrictEqual(blockUnder(requestJob, 'permissions'), ['contents: read', 'pull-requests: read']);
   assert.ok(requestJob.some((line) => line.trim() === 'run: node test/ci-review.js request'), 'the request job decides with our script');
+  assert.ok(requestJob.some((line) => line.trim() === 'CALLED_SHA: ${{ inputs.sha }}'), 'called: the head tests.yml gives it');
   const reviewJob = jobLines(workflow, 'review');
   assert.deepStrictEqual(blockUnder(reviewJob, 'permissions'), ['contents: read', 'pull-requests: read'], 'the job with the key can\'t write');
   assert.deepStrictEqual([...new Set(reviewJob.join('\n').match(/secrets\.\w+/g))], ['secrets.GEMINI_API_KEY'], 'and holds no other secret');
@@ -584,7 +590,8 @@ export default async function run() {
   const prCheckout = steps.indexOf('path: pr');
   assert.ok(prCheckout > 0 && steps.slice(prCheckout - 5, prCheckout + 4).includes('ref: ${{ needs.request.outputs.sha }}'), 'the PR\'s head, by SHA, into pr/');
   assert.strictEqual(steps.filter((line) => line === 'persist-credentials: false').length, 2, 'neither checkout keeps the token');
-  assert.ok(steps.includes('run: node test/ci-review.js run "$BASE_SHA..$HEAD_SHA" --repo pr --out review'), 'the same script as on a machine');
+  assert.ok(steps.includes('run: node test/ci-review.js run "$BASE_SHA..$HEAD_SHA" --repo pr --out review --tests ci'), 'the same script as on a machine, with the run\'s tests');
+  assert.ok(steps.includes('pattern: results-*') && steps.includes('pattern: coverage-*') && steps.includes('path: ci'), 'the run\'s results and coverage, downloaded as data');
   assert.ok(steps.includes('GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}'));
   assert.ok(steps.includes('name: review') && steps.includes('path: review/'), 'the review artifact');
   const upload = steps.indexOf('- name: Upload the review');
