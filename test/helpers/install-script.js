@@ -28,12 +28,12 @@ const PRELOAD = [
 /**
  * Runs `script` (its path from the root) with `args`, and resolves with { code,
  * stdout, stderr, posts: [{ post, event, answer, body }], commands: [command],
- * home: { file: text } }. telemetry and commands are the stand-ins' answers
- * (install-stand-ins.js); `env` adds to the test environment; `prepare(home)`
- * runs before the script
+ * home: { file: text } }. telemetry, commands and fs are the stand-ins' answers
+ * (install-stand-ins.js; fs only when given); `env` adds to the test
+ * environment; `prepare(home)` runs before the script
  */
 export async function runInstallScript(script, {
-  args = [], env = {}, platform, telemetry = {}, commands = { 'npm --version': { stdout: '10.9.0' } },
+  args = [], env = {}, platform, telemetry = {}, commands = { 'npm --version': { stdout: '10.9.0' } }, fs: fsPlan,
   prepare, timeScale = 100, timeoutMs = 60000,
 } = {}) {
   const testEnv = createTestEnv();
@@ -44,7 +44,7 @@ export async function runInstallScript(script, {
   const hadSetupLog = fs.existsSync(setupLog);
   try {
     await prepare?.(testEnv.home);
-    const standIns = JSON.stringify({ log, telemetry, commands, platform, timeScale });
+    const standIns = JSON.stringify({ log, telemetry, commands, fs: fsPlan, platform, timeScale });
     const preload = `data:text/javascript,${encodeURIComponent(PRELOAD)}`;
     const argv = [...hookArgs(HOOKS_URL), '--import', preload, path.join(ROOT, script), ...args];
     const appData = path.join(testEnv.home, 'AppData', 'Roaming');
