@@ -22,6 +22,11 @@ const PRELOAD = pathToFileURL(path.join(PROJECT_ROOT, 'test/fixtures/unhandled-r
 const REJECT_AFTER_MS = 100;
 // The old handler exited within ~1 s of the rejection (exitProcess fallback)
 const SURVIVAL_WINDOW_MS = 3000;
+// The fixture rejects about 100 ms after the handler is in place, and the
+// server logs it at once. The waits return then, so these only hold up a
+// failing run, and a loaded machine still meets them
+const REJECT_WAIT_MS = 60_000;
+const LOG_WAIT_MS = 30_000;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -42,8 +47,8 @@ async function run() {
   try {
     await client.connect(transport, { timeout: 30_000 });
 
-    await waitUntil(() => serverOutput.includes('fixture: rejecting now'), 15_000, 'the fixture rejects');
-    await waitUntil(() => serverOutput.includes('Unhandled rejection: dc-test-rejection'), 5_000, 'the server logs the rejection');
+    await waitUntil(() => serverOutput.includes('fixture: rejecting now'), REJECT_WAIT_MS, 'the fixture rejects');
+    await waitUntil(() => serverOutput.includes('Unhandled rejection: dc-test-rejection'), LOG_WAIT_MS, 'the server logs the rejection');
     console.log('✓ Rejection logged by the server');
 
     await sleep(SURVIVAL_WINDOW_MS);

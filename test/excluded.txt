@@ -1,0 +1,8 @@
+# The excluded tests: they never run in CI, each for the reason on its line, for
+# example a service CI doesn't have. The runners leave them out of the files
+# they find; one named on the command line still runs
+# (node test/run-all-tests.js <name>). The PR comment counts them.
+# One test per line, "<name>  # <reason>": a suite file by its name, the others
+# as repro/<name>, integration/<name> or docker/<name>. A line without a reason,
+# naming a file that isn't there, or naming one no runner finds by name (a .ps1
+# test: list test-powershell-tests.js), stops the run. See test/README.md.

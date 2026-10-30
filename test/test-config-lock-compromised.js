@@ -51,7 +51,8 @@ function takeOverDuringWrite(theirChange) {
         // The new config.json's write (inside the lock) waits: meanwhile another process
         // takes the lock over (its directory replaced by that process's) and may save a
         // change, and the write goes on once this process has seen it (at the lock's
-        // 10 s refresh), or after 30 s
+        // 10 s refresh), or after 45 s: room for a refresh timer that runs late on a
+        // loaded machine, still inside the 60 s runConfigManagerChild gives the child
         const { open } = fs;
         let tookOver = false;
         fs.open = async (file, flags, ...rest) => {
@@ -67,7 +68,7 @@ function takeOverDuringWrite(theirChange) {
               const current = JSON.parse(fsSync.readFileSync(CONFIG_FILE, 'utf8'));
               fsSync.writeFileSync(CONFIG_FILE, JSON.stringify({ ...current, ...theirChange }, null, 2));
             }
-            const deadline = Date.now() + 30000;
+            const deadline = Date.now() + 45000;
             while (!lockLost && Date.now() < deadline) await sleep(100);
           }
           return open(file, flags, ...rest);

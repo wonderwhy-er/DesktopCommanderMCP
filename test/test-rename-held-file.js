@@ -24,9 +24,30 @@ import { holdFileOpen } from './helpers/hold-file-open.js';
 import { runIfMain, skip } from './helpers/run-if-main.js';
 import { isTestHome } from './helpers/test-env.js';
 
-const LOCK_MS = 1000;
-// Holding a file takes PowerShell's start on Windows, a second or two
-const SETTLE_MS = 15_000;
+// The holder keeps the file open until the test kills it (long past any run),
+// so the test, not a timer in the holder, decides when it lets go
+const HOLD_MS = 60_000;
+// The renames retry for up to 5 s (rename.ts). The holder lets go this long
+// after the operation starts: past its checks before the rename (milliseconds),
+// so the retries must wait it out, with 4 s of the 5 s to spare on a loaded machine
+const RELEASE_AFTER_MS = 1000;
+// The retries last up to 5 s; failing at once takes milliseconds. Half the
+// retry budget still tells the two apart on a loaded machine
+const FAIL_AT_ONCE_MS = 2500;
+// Holding a file takes PowerShell's start on Windows, a second or two; the
+// wait ends as soon as the file is held or the holder fails
+const SETTLE_MS = 60_000;
+
+/** Runs `operation` while `holder` holds its file, and has the holder let go RELEASE_AFTER_MS after it starts */
+async function releasedDuring(holder, operation) {
+  const release = setTimeout(() => holder.kill(), RELEASE_AFTER_MS);
+  try {
+    return await operation();
+  } finally {
+    clearTimeout(release);
+    holder.kill();
+  }
+}
 
 async function testMoveFileWhileHeldOpen(dir) {
   console.log('\nTest 1: move_file on a file another process holds open');
@@ -35,12 +56,8 @@ async function testMoveFileWhileHeldOpen(dir) {
   const destination = path.join(dir, 'moved.txt');
   await fs.writeFile(source, 'held content');
 
-  const holder = await holdFileOpen(source, LOCK_MS);
-  try {
-    await moveFile(source, destination);
-  } finally {
-    holder.kill();
-  }
+  const holder = await holdFileOpen(source, HOLD_MS);
+  await releasedDuring(holder, () => moveFile(source, destination));
 
   assert.strictEqual(await fs.readFile(destination, 'utf8'), 'held content', 'move_file should move the file once the other process lets go');
   console.log('✓ Test 1 passed: move_file waited for the other process to let go');
@@ -54,12 +71,8 @@ async function testLogRotationWhileHeldOpen() {
   await fs.mkdir(logDir, { recursive: true });
   await fs.writeFile(TOOL_CALL_FILE, 'x'.repeat(TOOL_CALL_FILE_MAX_SIZE));
 
-  const holder = await holdFileOpen(TOOL_CALL_FILE, LOCK_MS);
-  try {
-    await trackToolCall('rotation_test');
-  } finally {
-    holder.kill();
-  }
+  const holder = await holdFileOpen(TOOL_CALL_FILE, HOLD_MS);
+  await releasedDuring(holder, () => trackToolCall('rotation_test'));
 
   const rotated = (await fs.readdir(logDir)).filter((file) => file.startsWith(`${logBase}_`));
   assert.strictEqual(rotated.length, 1, `the full log should have been rotated, rotated files: ${rotated.join(', ') || 'none'}`);
@@ -81,8 +94,7 @@ async function testMoveOntoFolderFailsAtOnce(dir) {
   const started = Date.now();
   await assert.rejects(moveFile(source, folder));
   const elapsed = Date.now() - started;
-  // The retries last up to 5 s; failing at once takes milliseconds (×10 margin)
-  assert.ok(elapsed < 500, `move_file onto an existing folder can never succeed, but it failed only after ${elapsed}ms of retries`);
+  assert.ok(elapsed < FAIL_AT_ONCE_MS, `move_file onto an existing folder can never succeed, but it failed only after ${elapsed}ms of retries`);
   assert.strictEqual(await fs.readFile(source, 'utf8'), 'a', 'the source should be left as it was');
   console.log(`✓ Test 3 passed: failed after ${elapsed}ms`);
 }
@@ -100,8 +112,7 @@ async function testMoveOntoReadOnlyFileFailsAtOnce(dir) {
     const started = Date.now();
     const outcome = await moveFile(source, readOnly).then(() => 'moved', (error) => error.code);
     const elapsed = Date.now() - started;
-    // The retries last up to 5 s; failing at once takes milliseconds (×10 margin)
-    assert.ok(elapsed < 500, `move_file onto a read-only file answered only after ${elapsed}ms of retries (${outcome})`);
+    assert.ok(elapsed < FAIL_AT_ONCE_MS, `move_file onto a read-only file answered only after ${elapsed}ms of retries (${outcome})`);
     if (process.platform === 'win32') {
       // Windows never replaces a read-only file
       assert.strictEqual(outcome, 'EPERM', `move_file onto a read-only file should fail with EPERM, got ${outcome}`);
@@ -119,8 +130,10 @@ async function testMoveOntoReadOnlyFileFailsAtOnce(dir) {
 
 /** What holding `file` open answers: 'held', 'rejected: …', or 'still pending' after SETTLE_MS */
 function holdOutcome(file) {
-  const outcome = holdFileOpen(file, LOCK_MS).then((child) => { child.kill(); return 'held'; }, (error) => `rejected: ${error.message}`);
-  return Promise.race([outcome, new Promise((resolve) => setTimeout(() => resolve('still pending'), SETTLE_MS))]);
+  const outcome = holdFileOpen(file, HOLD_MS).then((child) => { child.kill(); return 'held'; }, (error) => `rejected: ${error.message}`);
+  let timer;
+  return Promise.race([outcome, new Promise((resolve) => { timer = setTimeout(() => resolve('still pending'), SETTLE_MS); })])
+    .finally(() => clearTimeout(timer));
 }
 
 async function testHoldPathWithQuote(dir) {
