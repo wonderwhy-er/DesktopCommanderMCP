@@ -20,7 +20,9 @@
  */
 import fs from 'fs';
 import path from 'path';
-import { MARKER, mergeComment, PLATFORMS, platformJobs, platformMinutes, renderComment, resultsArtifactOf } from './helpers/ci-platforms.js';
+import {
+  firstError, MARKER, mergeComment, PLATFORMS, platformJobs, platformMinutes, renderComment, resultsArtifactOf,
+} from './helpers/ci-platforms.js';
 import { coverageByArea } from './coverage-areas.js';
 import { githubApi } from './helpers/github-api.js';
 
@@ -90,7 +92,12 @@ function testResults(os, own) {
     .map(({ job, test }) => ({
       name: test ?? job.name,
       step: job.steps?.find((item) => item.conclusion === 'failure')?.name ?? job.conclusion ?? 'the job',
+      url: job.html_url,
     }));
+  // The job an artifact's results came from, to link a failed file to it
+  const jobOf = (artifact) => own.find((job) => resultsArtifactOf(job, os).artifact === artifact)?.html_url;
+  const failedFiles = parts.flatMap((part) => part.files.filter((file) => !file.success)
+    .map((file) => ({ file: file.path, error: firstError(file.outputTail), job: jobOf(part.artifact) })));
   return {
     files: files.length + unreadable.length + stopped.length,
     passed: files.filter((file) => file.success).length,
@@ -99,6 +106,11 @@ function testResults(os, own) {
       ...files.filter((file) => !file.success).map((file) => file.path),
       ...unreadable.map(({ part }) => part),
       ...stopped.map(({ name }) => name),
+    ],
+    failures: [
+      ...failedFiles,
+      ...unreadable.map(({ part, artifact }) => ({ file: part, error: 'results unreadable', job: jobOf(artifact) })),
+      ...stopped.map(({ name, step, url }) => ({ file: name, error: `“${step}” failed`, job: url })),
     ],
     excluded: parts.reduce((total, part) => total + (part.excluded?.length ?? 0), 0),
     notes: [

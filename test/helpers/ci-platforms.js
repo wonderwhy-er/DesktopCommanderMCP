@@ -116,13 +116,41 @@ const percent = ([covered, total], digits, cut) => (count(total) > 0 ? cut((10 *
 // The coverage table cuts to two decimals, as c8's own report does; the areas round to one, as the run's table does
 const ratio = (pair) => (Array.isArray(pair) ? `${percent(pair, 2, Math.floor)} %` : '–');
 const lines = (pair) => (Array.isArray(pair) ? `${percent(pair, 1, Math.round)} % (${count(pair[0])}/${count(pair[1])})` : '–');
-const link = (text, url) => (typeof url === 'string' && /^https:\/\/[^\s()<>[\]|`]+$/.test(url) ? `[${text}](${url})` : '–');
+const isLink = (url) => typeof url === 'string' && /^https:\/\/[^\s()<>[\]|`]+$/.test(url);
+const link = (text, url) => (isLink(url) ? `[${text}](${url})` : '–');
 const commit = (sha) => `\`${plain(sha ?? '').slice(0, 7)}\``;
+
+/**
+ * A failed file's first error line, from its last output lines: a ❌ or ✗ line, else one naming an Error
+ * (never a ✓ line), else its last line; at most 200 characters
+ */
+export function firstError(outputTail) {
+  const lines = String(outputTail ?? '').split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  const failing = lines.find((line) => /^(❌|✗)/.test(line));
+  const named = lines.find((line) => !line.startsWith('✓') && /\b[A-Z]\w*Error\b/.test(line));
+  return [...(failing ?? named ?? lines.at(-1) ?? '')].slice(0, 200).join('');
+}
+
+const MOST_FAILED = 20;
+// Text for a code span in a table cell: no backtick, pipe or line break (< and > show as they are in one)
+const inCode = (text) => String(text ?? '').replace(/[`|\r\n]/g, '');
+/** A platform's rows in the failed files' table: each file linked to its job, at most 20, then how many more */
+function failedRows(label, failures) {
+  if (!Array.isArray(failures)) return [];
+  const rows = failures.slice(0, MOST_FAILED).map(({ file, error, job }) => {
+    const name = `\`${inCode(file)}\``;
+    const why = inCode(error);
+    return `| ${label} | ${isLink(job) ? `[${name}](${job})` : name} | ${why ? `\`${why}\`` : '–'} |`;
+  });
+  const more = failures.length - MOST_FAILED;
+  return more > 0 ? [...rows, `| ${label} | … and ${more} more | the results artifact has them |`] : rows;
+}
 
 /**
  * One platform's results, as ci-comment.js gathers them and the comment keeps them:
  * { sha, ran (what it tested, e.g. `everything`), minutes (the test job's, null
- * while it runs), tests: { files, passed, skipped, failed: [paths], notes: [why a
+ * while it runs), tests: { files, passed, skipped, failed: [paths], failures:
+ * [{ file, error: its first error line, job: its job's link }], notes: [why a
  * part didn't run], excluded: how many } or null, stoppedAt (the failed step
  * when there are no results), coverage: { lines, branches, functions: [covered,
  * total] } or null, areas: [[area, covered lines, lines]], links: { run,
@@ -181,6 +209,9 @@ export function renderComment({ headSha, platforms }) {
       const results = platforms[name];
       out.push(`| ${label} | ${testsCell(results)} | ${ranCell(results)} | ${minutesCell(results)} | ${commit(results.sha)} | ${link('run', results.links?.run)} |`);
     }
+    // Which files failed, and why: "207 of 211 files passed" alone doesn't say
+    const failed = ran.flatMap(({ name, label }) => failedRows(label, platforms[name].tests?.failures));
+    if (failed.length > 0) out.push('', '| Platform | Failed file | First error |', '|---|---|---|', ...failed);
     out.push('', '| Platform | Lines | Branches | Functions | Report (HTML, lcov, JSON, Cobertura) | Results (JUnit, JSON, TAP) |', '|---|---|---|---|---|---|');
     for (const { name, os, label } of ran) {
       const { coverage, links } = platforms[name];
