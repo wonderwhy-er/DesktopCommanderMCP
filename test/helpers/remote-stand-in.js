@@ -367,6 +367,9 @@ export async function startRemoteStandIn({
   server.on('upgrade', (request, socket, head) => {
     standIn.requests.push({ method: 'UPGRADE', url: request.url, apikey: request.headers.apikey });
     if (!sockets || new URL(request.url, standIn.url).pathname !== '/realtime/v1/websocket') {
+      // The http server stops listening for this socket's errors once it hands the socket here. Without
+      // a listener, a device that resets the connection while the 503 is on its way stops the test process.
+      socket.on('error', () => {});
       socket.end('HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\n\r\n');
       return;
     }
