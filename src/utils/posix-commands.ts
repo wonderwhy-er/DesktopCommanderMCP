@@ -93,7 +93,7 @@ function partChars(part: WordPart): WordChar[] {
 
 /**
  * The words bash makes from a word, each with its value (null when it is known
- * only at run time) and whether bash may drop it, or null past MAX_BRACE_WORDS.
+ * only at run time) and whether bash may drop it, or null past braceWords' limits.
  * A brace expansion makes several and bash drops the empty ones: {,sudo} ls
  * runs sudo, {,} sudo runs sudo, and {$X,sudo} id runs sudo when $X is empty.
  */
@@ -128,7 +128,7 @@ export async function readPosixCommands(command: string): Promise<CommandReading
       for (let i = 0; i < words.length; i++) {
         const made = wordsMade(words[i]);
         if (made === null) {
-          parseError ??= `brace expansion makes more than ${MAX_BRACE_WORDS} words`;
+          parseError ??= `brace expansion makes more than ${MAX_BRACE_WORDS} words, or takes too long to read`;
           break;
         }
         // Each word made is the name while the ones before it may vanish; those known only at run time all

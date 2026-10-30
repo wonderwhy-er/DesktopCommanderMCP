@@ -14,6 +14,16 @@ export interface WordChar {
 /** The most words of one expansion the check reads; past that it gives up rather than check part of it */
 export const MAX_BRACE_WORDS = 1000;
 
+/**
+ * The most steps one expansion may take, a step being a character looked at
+ * to find a brace or one put in a word. The words are bounded by
+ * MAX_BRACE_WORDS, but the work to make them isn't: the rest of the word is
+ * expanded again for each word of a list, and a nested group's braces take
+ * a time that grows with the square of its depth. This keeps the check to a
+ * fraction of a second; past it the check gives up, as past MAX_BRACE_WORDS.
+ */
+const MAX_BRACE_STEPS = 10_000_000;
+
 /** Characters that are all text: a quoted part of a word, or a part with no brace syntax in it */
 export function quotedChars(text: string): WordChar[] {
   return Array.from(text, (char) => ({ char, quoted: true }));
@@ -36,33 +46,52 @@ export function unquotedChars(text: string): WordChar[] {
 /**
  * The words bash makes from a word by brace expansion, in bash's order, without
  * the empty ones: bash drops an empty unquoted word, so {,sudo} ls runs sudo.
- * A word without an expansion gives itself. Past MAX_BRACE_WORDS words it
- * gives null, and the reader takes the command as unreadable.
+ * A word without an expansion gives itself. Past MAX_BRACE_WORDS words or
+ * MAX_BRACE_STEPS steps it gives null, and the reader takes the command as
+ * unreadable.
  */
 export function braceWords(chars: WordChar[]): string[] | null {
   const words: string[] = [];
+  const steps = { left: MAX_BRACE_STEPS };
   let read = 0;
-  for (const word of expand(chars)) {
-    if (++read > MAX_BRACE_WORDS) return null;
-    if (word !== '') words.push(word);
+  try {
+    for (const word of expand(chars, steps)) {
+      if (++read > MAX_BRACE_WORDS) return null;
+      take(steps, word.length);
+      if (word !== '') words.push(word);
+    }
+  } catch (error) {
+    if (error instanceof TooManySteps) return null;
+    throw error;
   }
   return words;
+}
+
+/** The steps an expansion has left (MAX_BRACE_STEPS) */
+type Steps = { left: number };
+
+class TooManySteps extends Error {}
+
+/** Takes n steps, or stops the expansion when there aren't that many left */
+function take(steps: Steps, n: number): void {
+  steps.left -= n;
+  if (steps.left < 0) throw new TooManySteps();
 }
 
 const isSyntax = (c: WordChar, char: string): boolean => !c.quoted && c.char === char;
 const textOf = (chars: WordChar[]): string => chars.map((c) => c.char).join('');
 
 /** Yields the words of an expansion one at a time, so {1..1000000000} costs only the words that are read */
-function* expand(chars: WordChar[]): Generator<string> {
-  const brace = findBrace(chars);
+function* expand(chars: WordChar[], steps: Steps): Generator<string> {
+  const brace = findBrace(chars, steps);
   if (!brace) {
     yield textOf(chars);
     return;
   }
   const preamble = textOf(chars.slice(0, brace.open));
   const postscript = chars.slice(brace.close + 1);
-  for (const middle of middles(chars, brace)) {
-    for (const end of expand(postscript)) {
+  for (const middle of middles(chars, brace, steps)) {
+    for (const end of expand(postscript, steps)) {
       yield preamble + middle + end;
     }
   }
@@ -72,14 +101,14 @@ function* expand(chars: WordChar[]): Generator<string> {
 type Brace = { open: number; close: number } & ({ commas: number[] } | { text: string });
 
 /** The words that replace the braces, in order: each piece between the commas, expanded, or the sequence */
-function* middles(chars: WordChar[], brace: Brace): Generator<string> {
+function* middles(chars: WordChar[], brace: Brace, steps: Steps): Generator<string> {
   if ('text' in brace) {
     yield* sequence(brace.text);
     return;
   }
   const bounds = [brace.open, ...brace.commas, brace.close];
   for (let k = 0; k + 1 < bounds.length; k++) {
-    yield* expand(chars.slice(bounds[k] + 1, bounds[k + 1]));
+    yield* expand(chars.slice(bounds[k] + 1, bounds[k + 1]), steps);
   }
 }
 
@@ -92,13 +121,15 @@ const LETTERS = /^([A-Za-z])\.\.([A-Za-z])(?:\.\.([-+]?\d+))?$/;
  * "}", or whose braces hold neither a comma nor a sequence ({sudo}), is text,
  * and the search goes on after it.
  */
-function findBrace(chars: WordChar[]): Brace | null {
+function findBrace(chars: WordChar[], steps: Steps): Brace | null {
+  take(steps, chars.length);
   for (let open = 0; open < chars.length; open++) {
     if (!isSyntax(chars[open], '{')) continue;
     let depth = 0;
     let close = -1;
     const commas: number[] = [];
-    for (let i = open + 1; i < chars.length && close < 0; i++) {
+    let i = open + 1;
+    for (; i < chars.length && close < 0; i++) {
       if (isSyntax(chars[i], '{')) {
         depth++;
       } else if (isSyntax(chars[i], '}')) {
@@ -108,6 +139,7 @@ function findBrace(chars: WordChar[]): Brace | null {
         commas.push(i);
       }
     }
+    take(steps, i - open);
     if (close < 0) continue;
     if (commas.length > 0) return { open, close, commas };
     const inside = chars.slice(open + 1, close);
