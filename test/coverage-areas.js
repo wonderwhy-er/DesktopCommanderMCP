@@ -1,15 +1,15 @@
 /**
  * Coverage per area, from c8's coverage-summary.json: each folder under src/
  * (src/tools, src/utils, src/remote-device, src/ui, …), src/'s own files, the
- * install scripts at the root, vendor/telemetry-contract, and the test tooling. A
- * single total hides where the gaps are.
+ * install scripts at the root, and vendor/telemetry-contract. A single total hides
+ * where the gaps are.
  *
  *   node test/coverage-areas.js [coverage-summary.json]   # prints the table
  */
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { INSTALL_SCRIPTS, TEST_TOOLING } from './check-coverage-report.js';
+import { INSTALL_SCRIPTS } from './check-coverage-report.js';
 import { ROOT } from './helpers/node-test-runner.js';
 
 const METRICS = ['lines', 'branches', 'functions'];
@@ -27,10 +27,9 @@ export function inCheckout(key) {
   return key;
 }
 
-/** The area of a file: the install scripts, the test tooling, vendor/<package>, or its folder under src/ */
+/** The area of a file: the install scripts, vendor/<package>, or its folder under src/ */
 export function areaOf(file) {
   if (INSTALL_SCRIPTS.includes(file)) return 'install scripts';
-  if (TEST_TOOLING.includes(file)) return 'test tooling';
   const parts = file.split('/');
   if (parts[0] === 'vendor') return parts.slice(0, 2).join('/');
   return parts.length > 2 ? parts.slice(0, 2).join('/') : `${parts[0]}/*`;

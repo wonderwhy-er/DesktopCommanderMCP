@@ -5,19 +5,7 @@
     "setup-claude-server.js",
     "uninstall-claude-server.js",
     "track-installation.js",
-    "vendor/telemetry-contract/**",
-    "test/check-coverage-report.js",
-    "test/coverage-areas.js",
-    "test/docker/run-docker-tests.js",
-    "test/helpers/node-test-runner.js",
-    "test/helpers/select-tests.js",
-    "test/helpers/test-home.js",
-    "test/integration/run-all-integration-tests.js",
-    "test/map-copied-scripts.js",
-    "test/repro/run-repro.js",
-    "test/run-all-tests.js",
-    "test/run-ci.js",
-    "test/run-coverage.js"
+    "vendor/telemetry-contract/**"
   ],
   "exclude": [
     "**/*.d.ts",
