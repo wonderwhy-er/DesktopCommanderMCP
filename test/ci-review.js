@@ -30,7 +30,9 @@ import os from 'os';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { reviewFor } from './helpers/ci-platforms.js';
-import { answerOf, filesOf, findingsOf, localTestsOf, promptOf, reviewOf, testsOf, uncoveredOf, usageOf, withUncovered } from './helpers/ci-review.js';
+import {
+  answerOf, filesOf, findingsOf, localTestsOf, promptOf, reviewOf, testsOf, textAnswerOf, textCheckOf, textPromptOf, uncoveredOf, usageOf, withUncovered,
+} from './helpers/ci-review.js';
 import { githubApi } from './helpers/github-api.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -174,6 +176,24 @@ function geminiCommand(args) {
   return ['npx', ['-y', GEMINI_CLI, ...args], {}];
 }
 
+/** The text a text check reads: a file's, or (pr) the PR's description, which run read already */
+function textToCheck(source, pull) {
+  if (source === 'pr') {
+    if (!process.env.PR) throw new Error('No PR, so no description to check: --text pr needs the PR (PR=<number>).');
+    return { file: `PR #${Number(process.env.PR)}`, text: pull.body ?? '' };
+  }
+  if (!fs.existsSync(source)) throw new Error(`No text to check at ${source}.`);
+  return { file: path.basename(source), text: fs.readFileSync(source, 'utf8') };
+}
+
+/** The results files a text check is given (--results, any number), by name */
+function resultsOf(files) {
+  return files.map((file) => {
+    if (!fs.existsSync(file)) throw new Error(`No results file at ${file}.`);
+    return { name: path.basename(file), text: fs.readFileSync(file, 'utf8') };
+  });
+}
+
 async function run(range, ...options) {
   // The key before anything else: without one, no work and no pass
   const key = process.env.DC_GEMINI_API_KEY || process.env.GEMINI_API_KEY;
@@ -182,6 +202,7 @@ async function run(range, ...options) {
       + 'in CI, add the repository\'s GEMINI_API_KEY secret.');
   }
   const option = (name, fallback) => (options.includes(name) ? options[options.indexOf(name) + 1] : fallback);
+  const every = (name) => options.flatMap((each, at) => (each === name ? [options[at + 1]] : []));
   const repoDir = option('--repo', ROOT);
   const out = path.resolve(option('--out', path.join(ROOT, 'test-results', 'review')));
   const [from, to, more] = String(range ?? '').split('..');
@@ -201,9 +222,25 @@ async function run(range, ...options) {
   // The run's tests (CI: its artifacts, --tests) or this machine's last coverage run at B
   const ran = option('--tests') ? testsOf(path.resolve(option('--tests'))) : localTestsOf({ root: ROOT, head });
   const tests = ran && { platforms: ran.platforms, failed: ran.failed, uncovered: uncoveredOf({ diff, lcovs: ran.lcovs }) };
-  const prompt = promptOf({
+  // A text check (--text): each claim in a text against the change, with the results files it cites
+  const text = option('--text') && textToCheck(option('--text'), pull);
+  const style = fs.readFileSync(path.join(ROOT, '.github', 'writing-style.md'), 'utf8');
+  const prompt = text ? textPromptOf({
+    template: fs.readFileSync(path.join(ROOT, '.github', 'text-check-prompt.md'), 'utf8'),
+    style,
+    file: text.file,
+    text: text.text,
+    headSha: head,
+    baseSha: base,
+    commits,
+    diff,
+    files: filesOf(diff),
+    calls: TOOL_CALLS,
+    tests,
+    results: resultsOf(every('--results')),
+  }) : promptOf({
     template: fs.readFileSync(path.join(ROOT, '.github', 'review-prompt.md'), 'utf8'),
-    style: fs.readFileSync(path.join(ROOT, '.github', 'writing-style.md'), 'utf8'),
+    style,
     headSha: head,
     baseSha: base,
     files: filesOf(diff),
@@ -221,6 +258,34 @@ async function run(range, ...options) {
       + 'the model\'s window leaves for it. Review it in parts: npm run review -- A..B for each.');
   }
 
+  const result = await askGemini({ prompt, head, git, key, out, diff });
+  const usage = usageOf(result.stats);
+  fs.writeFileSync(path.join(out, 'diff.patch'), diff);
+  if (text) {
+    const answer = textAnswerOf(result.response);
+    const markdown = textCheckOf({ answer, file: text.file, headSha: head });
+    const check = { head, base, file: text.file, summary: answer.summary, findings: answer.findings, checked: answer.checked, usage };
+    fs.writeFileSync(path.join(out, 'text-check.json'), `${JSON.stringify(check, null, 2)}\n`);
+    fs.writeFileSync(path.join(out, 'text-check.md'), `${markdown}\n`);
+    // A text check posts nothing: on GitHub the job summary has it
+    if (process.env.GITHUB_STEP_SUMMARY) fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, `${markdown}\n`);
+    console.log(`${markdown.split('\n')[1]}\nThe text check: ${path.join(out, 'text-check.md')}`);
+    return;
+  }
+  const answer = answerOf(result.response);
+  const findings = withUncovered(findingsOf(answer, diff), tests?.uncovered ?? []);
+  const review = { head, base, summary: answer.summary, findings, usage, tests };
+  const markdown = reviewOf({ answer: review, diff, headSha: head, baseSha: base, usage, inline: false, tests }).body;
+  fs.writeFileSync(path.join(out, 'review.json'), `${JSON.stringify(review, null, 2)}\n`);
+  fs.writeFileSync(path.join(out, 'review.md'), `${markdown}\n`);
+  console.log(`${markdown.split('\n')[1]}\nThe review: ${path.join(out, 'review.md')}\nIts findings: ${path.join(out, 'review.json')}`);
+}
+
+/**
+ * Gemini CLI on the prompt, in a folder of its own with B's files and the diff, read-only tools and the reading
+ * budget. Returns its JSON; its session log, its JSON and its stderr are kept in out
+ */
+async function askGemini({ prompt, head, git, key, out, diff }) {
   // The model's folder: nothing in it but what we put there. By its real path, as
   // Gemini CLI sees its working folder (macOS's temp folder is behind a link)
   const folder = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'dc-review-')));
@@ -272,16 +337,7 @@ async function run(range, ...options) {
       // Not Gemini CLI's JSON: the exit code and stderr say why
     }
     if (gemini.status !== 0) throw new Error(stoppedWhy({ status: gemini.status, stderr: gemini.stderr.split(key).join('<the Gemini key>'), error: result.error, log }));
-    const answer = answerOf(result.response);
-    const usage = usageOf(result.stats);
-    const findings = withUncovered(findingsOf(answer, diff), tests?.uncovered ?? []);
-    const review = { head, base, summary: answer.summary, findings, usage, tests };
-    const markdown = reviewOf({ answer: review, diff, headSha: head, baseSha: base, usage, inline: false, tests }).body;
-
-    fs.writeFileSync(path.join(out, 'diff.patch'), diff);
-    fs.writeFileSync(path.join(out, 'review.json'), `${JSON.stringify(review, null, 2)}\n`);
-    fs.writeFileSync(path.join(out, 'review.md'), `${markdown}\n`);
-    console.log(`${markdown.split('\n')[1]}\nThe review: ${path.join(out, 'review.md')}\nIts findings: ${path.join(out, 'review.json')}`);
+    return result;
   } finally {
     // A file still held open mustn't hide the error that got us here
     try {
@@ -314,7 +370,7 @@ async function post(folder) {
 const [command, ...args] = process.argv.slice(2);
 const commands = { request, run, post };
 if (!commands[command]) {
-  console.error('Usage: npm run review -- <commit A>..<commit B> | node test/ci-review.js request | post <folder>');
+  console.error('Usage: npm run review -- <commit A>..<commit B> [--text <file> [--results <file>]...] | node test/ci-review.js request | post <folder>');
   process.exitCode = 2;
 } else {
   commands[command](...args).catch((error) => {
