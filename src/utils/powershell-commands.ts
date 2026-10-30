@@ -3,7 +3,7 @@ import { randomBytes } from 'crypto';
 import type { Socket } from 'net';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { getCommandEnvironment, resolveProgramPath } from './shell.js';
+import { getShellEnvironment, resolveProgramPath } from './shell.js';
 import type { CommandReading } from './command-reading.js';
 
 /**
@@ -14,9 +14,11 @@ import type { CommandReading } from './command-reading.js';
  * run PowerShell commands, and it is kept running: a check then takes a few
  * milliseconds instead of PowerShell's start (about a second for Windows
  * PowerShell). It is not a terminal session, so list_sessions never shows it.
- * It loads the user's profile, as the PowerShell a command runs in does
- * (start_process starts it without -NoProfile), so it knows the profile's
- * aliases.
+ * It starts as the PowerShell a command runs in starts: with the user's
+ * profile (start_process starts it without -NoProfile), without
+ * -NonInteractive, with -Login for PowerShell 7, and with the commands'
+ * environment. So a profile sets the same aliases for both. Only its working
+ * folder is its own (see start()).
  */
 
 /** How long a check waits for a running helper's answer. A helper that doesn't answer is stopped, and the check fails. */
@@ -162,7 +164,17 @@ while ($true) {
 }
 `;
 
-const HELPER_ARGS = ['-NonInteractive', '-EncodedCommand', Buffer.from(HELPER_SCRIPT, 'utf16le').toString('base64')];
+/**
+ * The helper's arguments for a PowerShell program: its script, and -Login for
+ * PowerShell 7, as getShellSpawnArgs() starts it, which off Windows runs the
+ * login shell's profile first. No -NonInteractive, which start_process
+ * doesn't pass either: a profile that prompts reads the first request
+ * instead, and that check fails.
+ */
+function helperArgs(program: string): string[] {
+  const login = ['pwsh', 'pwsh.exe'].includes(path.basename(program).toLowerCase()) ? ['-Login'] : [];
+  return [...login, '-EncodedCommand', Buffer.from(HELPER_SCRIPT, 'utf16le').toString('base64')];
+}
 
 interface PendingRequest {
   resolve: (reading: CommandReading) => void;
@@ -182,7 +194,7 @@ export class PowerShellHelper {
   private token = '';
 
   /** args replace the helper's arguments, for a stand-in in tests */
-  constructor(private readonly program: string, private readonly args: string[] = HELPER_ARGS) {}
+  constructor(private readonly program: string, private readonly args: string[] = helperArgs(program)) {}
 
   /** The running helper's process id: undefined before the first read and after the process ended */
   get pid(): number | undefined {
@@ -213,11 +225,12 @@ export class PowerShellHelper {
   }
 
   private start(): ChildProcess {
-    // The environment commands get, so names are looked up as the command will see them.
+    // The environment the command's shell gets, so the profile and the names are as the command will see them.
     // PowerShell's module analysis cache is off, so the helper doesn't write it (with a home
     // that has no AppData folder, PowerShell would write it into the working folder).
-    const env = { ...getCommandEnvironment(), PSModuleAnalysisCachePath: process.platform === 'win32' ? 'NUL' : '/dev/null' };
-    // Not in the caller's working folder: the helper keeps running, and Windows can't delete a folder a process is in
+    const env = { ...getShellEnvironment(), PSModuleAnalysisCachePath: process.platform === 'win32' ? 'NUL' : '/dev/null' };
+    // Not in the caller's working folder: the helper keeps running, and Windows can't delete a folder a process is
+    // in, though the server may leave it (a profile that looks at the folder isn't matched)
     const child = spawn(this.program, this.args, { cwd: mcpRoot, env, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
     this.child = child;
     this.output = '';
