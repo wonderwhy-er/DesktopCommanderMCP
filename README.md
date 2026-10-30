@@ -600,6 +600,8 @@ The server provides a comprehensive set of tools organized into several categori
 | | `get_recent_tool_calls` | Get recent tool call history with arguments and outputs for debugging and context recovery |
 | | `give_feedback_to_desktop_commander` | Open feedback form in browser to provide feedback to Desktop Commander Team |
 
+> **Exact-content note:** `read_file` and `read_multiple_files` are content-reading interfaces, not general-purpose lossless file transports. Public text reads decode and paginate by lines: LF, CRLF, and lone CR line endings are returned as `\n`, a final line terminator is not preserved, and UTF-16LE files with a BOM are decoded without returning that BOM. Different original byte sequences can therefore produce the same text response. There is no arbitrary-file raw-byte/Base64 mode. Supported image files are a format-specific exception and are returned as MCP image content backed by Base64 of the image file bytes. `read_multiple_files` has no per-file offset/length arguments, so each text item uses the configured default read limit. For byte-exact verification, prefer a local hash or comparison with `start_process` rather than round-tripping file contents through tool output. Text pagination status may include total/remaining lines for smaller files, but larger files can omit totals, so it is not a complete-file proof.
+
 ### Quick Examples
 
 **Data Analysis:**
