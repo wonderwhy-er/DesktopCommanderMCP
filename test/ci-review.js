@@ -149,6 +149,17 @@ function runGemini(command, args, options, input) {
   });
 }
 
+/**
+ * Why Gemini CLI stopped, in one line. An uncaught error of its own ends its stderr with Node's
+ * version: its crash, named by its error line. Otherwise its JSON error, or that same line.
+ */
+function stoppedWhy({ status, stderr, error, log }) {
+  const crashed = /^Node\.js v\d/m.test(stderr);
+  const errorLine = stderr.split('\n').map((line) => line.trim()).find((line) => /^\w*(Error|Exception)\b/.test(line));
+  const why = (crashed ? errorLine : error?.message ?? errorLine) ?? stderr.trim().split('\n').pop() ?? 'no output';
+  return `Gemini CLI ${crashed ? 'crashed' : 'stopped'} (exit ${status}): ${why.replace(/\s+/g, ' ').slice(0, 300).replace(/\.$/, '')}. Its whole output: ${log}`;
+}
+
 /** Gemini CLI, or the stand-in a test names in REVIEW_GEMINI, as a command for spawn */
 function geminiCommand(args) {
   if (process.env.REVIEW_GEMINI) return [process.execPath, [process.env.REVIEW_GEMINI, ...args], {}];
@@ -236,8 +247,11 @@ async function run(range, ...options) {
     const session = logs.map((file) => fs.readFileSync(path.join(chats, file), 'utf8')).join('');
     fs.mkdirSync(out, { recursive: true });
     if (session && !session.includes(key)) fs.writeFileSync(path.join(out, 'session.jsonl'), session);
-    // Gemini CLI's own JSON, with its token counts, also when it stops without an answer
+    // Gemini CLI's own JSON, with its token counts, also when it stops without an answer;
+    // and its stderr, whole, for a run that fails. The key goes in neither file
     fs.writeFileSync(path.join(out, 'answer.json'), gemini.stdout);
+    const log = path.join(out, 'gemini.log');
+    fs.writeFileSync(log, gemini.stderr.split(key).join('<the Gemini key>'));
     if (gemini.status === 53) throw new Error(`Gemini CLI used all ${MAX_TURNS} turns without an answer (exit 53): no review was written. Its session log: ${path.join(out, 'session.jsonl')}`);
     let result = {};
     try {
@@ -245,7 +259,7 @@ async function run(range, ...options) {
     } catch {
       // Not Gemini CLI's JSON: the exit code and stderr say why
     }
-    if (gemini.status !== 0) throw new Error(`Gemini CLI stopped (exit ${gemini.status}): ${result.error?.message ?? gemini.stderr.slice(-2000)}`);
+    if (gemini.status !== 0) throw new Error(stoppedWhy({ status: gemini.status, stderr: gemini.stderr.split(key).join('<the Gemini key>'), error: result.error, log }));
     const answer = answerOf(result.response);
     const usage = usageOf(result.stats);
     const findings = withUncovered(findingsOf(answer, diff), tests?.uncovered ?? []);
