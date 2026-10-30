@@ -3,6 +3,7 @@ import os from 'os';
 import path from 'path';
 
 const TEST_HOME_PREFIX = 'dc-test-home-';
+const NO_WSL_INTEROP = new URL('../fixtures/no-wsl-interop-preload.mjs', import.meta.url).href;
 
 /**
  * Environment for one test process. The runners start every test file with it:
@@ -14,9 +15,10 @@ const TEST_HOME_PREFIX = 'dc-test-home-';
  *   production server
  * - no FORCE_COLOR, so processes the tests start print the same plain text
  *   whichever terminal launched the run
- * - no WSL_DISTRO_NAME, so a test that reads command names as on Linux needs
- *   only to stand in for WSL's interop entry; a test of WSL's reading sets it
- *   itself
+ * - on Linux, no WSL: no WSL_DISTRO_NAME, and WSL's interop entry hidden from
+ *   every test process (NODE_OPTIONS preloads fixtures/no-wsl-interop-preload.mjs),
+ *   so in WSL command names are read as on any other Linux machine; a test of
+ *   WSL's reading sets them itself
  * Values already set by the caller win; tests that need others set them themselves.
  */
 export function createTestEnv() {
@@ -29,6 +31,7 @@ export function createTestEnv() {
     DESKTOP_COMMANDER_DISABLE_TELEMETRY: process.env.DESKTOP_COMMANDER_DISABLE_TELEMETRY ?? '1',
     DC_FLAG_URL: process.env.DC_FLAG_URL ?? 'http://127.0.0.1:9/',
   };
+  if (process.platform === 'linux') env.NODE_OPTIONS = [process.env.NODE_OPTIONS, `--import ${NO_WSL_INTEROP}`].filter(Boolean).join(' ');
   return {
     env,
     home,
