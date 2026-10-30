@@ -240,9 +240,11 @@ jobs:
     name: review
     needs: [platforms, unit]
     if: ${{ !cancelled() && needs.platforms.outputs.review == 'true' }}
+    # actions: read for a text check's gh run view, in review.yml (a called job gets no more than this)
     permissions:
       contents: read
       pull-requests: write
+      actions: read
     uses: ./.github/workflows/review.yml
     with:
       pr: ${{ needs.platforms.outputs.pr }}

@@ -323,6 +323,8 @@ async function askGemini({ prompt, head, git, key, out, diff, shell }) {
       // through the machine's own login (on GitHub, the job's read-only token); nothing pages or asks
       Object.assign(env, { GIT_DIR: git(['rev-parse', '--absolute-git-dir']).trim(), GIT_PAGER: 'cat', GH_PAGER: 'cat', GH_PROMPT_DISABLED: '1', GH_NO_UPDATE_NOTIFIER: '1' });
       if (repo) env.GH_REPO = repo;
+      // On GitHub gh has no login of its own: the job's token, which only reads
+      if (process.env.GITHUB_ACTIONS === 'true' && token) env.GH_TOKEN = token;
     }
     const model = process.env.GEMINI_MODEL || MODEL;
     const [command, args, extra] = geminiCommand(['--model', model, '--approval-mode=yolo', '--output-format', 'json', '--prompt', ASK]);
