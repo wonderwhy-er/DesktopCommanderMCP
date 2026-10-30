@@ -1,0 +1,25 @@
+{
+  "all": true,
+  "include": [
+    "src/**",
+    "setup-claude-server.js",
+    "uninstall-claude-server.js",
+    "track-installation.js",
+    "vendor/telemetry-contract/**"
+  ],
+  "exclude": [
+    "**/*.d.ts",
+    "vendor/**/*.test.js"
+  ],
+  "exclude-after-remap": true,
+  "reporter": [
+    "html",
+    "lcovonly",
+    "json",
+    "json-summary",
+    "cobertura",
+    "text-summary"
+  ],
+  "reports-dir": "coverage",
+  "temp-directory": "test-results/c8-tmp"
+}

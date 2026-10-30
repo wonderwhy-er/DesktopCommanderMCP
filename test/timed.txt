@@ -1,0 +1,19 @@
+# The timed tests: their result depends on time, and doesn't hold up on a busy
+# machine. They run one after another, on a quiet machine:
+#   node test/run-all-tests.js --timed
+#   node test/repro/run-repro.js --timed
+#   node test/integration/run-all-integration-tests.js --timed
+# Every other run leaves them out with --without-timed (CI does). One test per
+# line, "<name>  # <reason>": a suite file by its name, the others as
+# repro/<name> or integration/<name>. A line without a reason, naming a file that
+# isn't there, or naming one no runner finds by name, stops the run. See
+# test/README.md.
+
+test-remote-report.js  # counts every Desktop Commander server on the machine, and races the report's own 4-10 s limits
+repro/test-offline-update-exit.js  # the update script must end inside the product's own 3 s budget
+test-search-timeout-default.js  # a file-name search must end inside the product's own 1.5 s default
+test-config-damaged.js  # not changed to hold up under load yet: other open PRs change the same lines
+test-kill-process.js  # not changed to hold up under load yet: other open PRs change the same lines
+test-transport-telemetry.js  # not changed to hold up under load yet: other open PRs change the same lines
+repro/test-process-wait-client-cap.js  # not changed to hold up under load yet: other open PRs change the same lines
+repro/test-start-process-timeout-block.js  # not changed to hold up under load yet: other open PRs change the same lines

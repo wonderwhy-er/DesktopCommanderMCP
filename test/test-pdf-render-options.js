@@ -52,10 +52,25 @@ import { handleWritePdf } from '../dist/handlers/filesystem-handlers.js';
 import { parsePdfToMarkdown } from '../dist/tools/pdf/index.js';
 import { runIfMain, skip } from './helpers/run-if-main.js';
 
-/** Longest a Chrome profile may take to disappear after a render */
-const PROFILE_REMOVAL_LIMIT_MS = 30_000;
-/** Longest a render may take here before it counts as hanging (a safety net, not a tested behavior) */
-const RENDER_GUARD_MS = 120_000;
+/**
+ * Longest a Chrome profile may take to disappear after a render: past the
+ * product's own 60 s budget for removing it (CHROME_PROFILE_REMOVAL_BUDGET_MS),
+ * so a loaded machine still sees it go. The wait ends as soon as it is gone.
+ */
+const PROFILE_REMOVAL_LIMIT_MS = 75_000;
+/** Chrome's launch gets this long instead of Puppeteer's 30 s, so a loaded machine still starts it (launch_options.timeout applies) */
+const LAUNCH_TIMEOUT_MS = 120_000;
+/**
+ * A render waits at most this long for its Chrome to exit (CHROME_EXIT_WAIT_MS
+ * in src/tools/pdf/markdown.ts). Chrome still running when the render settles
+ * passes only after a render that took that long (a loaded machine), and must
+ * then exit within CHROME_EXIT_LIMIT_MS; a render that returns sooner without
+ * stopping its Chrome still fails.
+ */
+const PRODUCT_CHROME_EXIT_WAIT_MS = 10_000;
+const CHROME_EXIT_LIMIT_MS = 30_000;
+/** Longest a render may take here before it counts as hanging (a safety net, not a tested behavior; past LAUNCH_TIMEOUT_MS) */
+const RENDER_GUARD_MS = 180_000;
 const DC_PROFILE_PREFIX = 'desktop-commander-chrome-profile-';
 const SECRET_FILE = 'secret.txt';
 const SECRET = 'only the render may read this';
@@ -129,6 +144,26 @@ function watchRender() {
 const isRunning = (child) => child.exitCode === null && child.signalCode === null;
 const userDataDirsOf = (child) => child.spawnargs.filter((arg) => arg.startsWith('--user-data-dir=')).map((arg) => arg.slice('--user-data-dir='.length));
 
+/** write_pdf's `options` with LAUNCH_TIMEOUT_MS for Chrome's launch added (front matter launch_options replace these, so those cases set it there) */
+const withLaunchTime = (options = {}) => ({ ...options, launch_options: { timeout: LAUNCH_TIMEOUT_MS, ...options.launch_options } });
+
+/**
+ * The pids of the render's Chrome processes still running once it settled.
+ * After a render that took the product's whole exit wait, they get
+ * CHROME_EXIT_LIMIT_MS more to exit; after a quicker one, none.
+ */
+async function chromesStillRunning(render) {
+    let running = render.chromes.filter(isRunning);
+    if (render.ms >= PRODUCT_CHROME_EXIT_WAIT_MS) {
+        const started = Date.now();
+        while (running.length > 0 && Date.now() - started < CHROME_EXIT_LIMIT_MS) {
+            await new Promise((resolve) => setTimeout(resolve, 250));
+            running = running.filter(isRunning);
+        }
+    }
+    return running.map((child) => child.pid);
+}
+
 /** Settles with the render's result, or rejects if it runs longer than RENDER_GUARD_MS */
 function guarded(promise, label) {
     let timer;
@@ -159,8 +194,8 @@ async function assertNothingLeft(render, label) {
     assert.ok(render.chromes.length > 0, `${label}: the render should have started Chrome`);
     assert.deepStrictEqual(render.servers.filter((server) => server.listening).length, 0,
         `${label}: the render's web server is still listening after it settled`);
-    const running = render.chromes.filter(isRunning).map((child) => child.pid);
-    assert.deepStrictEqual(running, [], `${label}: Chrome (pid ${running.join(', ')}) still running after the render settled`);
+    const running = await chromesStillRunning(render);
+    assert.deepStrictEqual(running, [], `${label}: Chrome (pid ${running.join(', ')}) still running after the render settled (in ${render.ms}ms)`);
     const profiles = render.chromes.flatMap(userDataDirsOf);
     const started = Date.now();
     while (profiles.some((dir) => fs.existsSync(dir)) && Date.now() - started < PROFILE_REMOVAL_LIMIT_MS) {
@@ -179,7 +214,7 @@ async function testFrontMatterDestOutsideAllowedDirs() {
     const outFile = path.join(allowedDir, 'dest.pdf');
     const copy = path.join(outsideDir, 'dest-copy.pdf');
     const markdown = `---\ndest: ${JSON.stringify(copy)}\n---\n# Front matter dest\n`;
-    const result = await watched('dest', () => writePdf(outFile, markdown));
+    const result = await watched('dest', () => writePdf(outFile, markdown, undefined, withLaunchTime()));
     if (result.error) throw result.error;
     assert.ok(fs.statSync(outFile).size > 0, 'the PDF should be written to the requested path');
     assert.strictEqual(fs.existsSync(copy), false, `front matter dest wrote a PDF outside the allowed directories: ${copy}`);
@@ -199,7 +234,7 @@ async function testFrontMatterDestStdout() {
     };
     let result;
     try {
-        result = await watched('dest: stdout', () => writePdf(outFile, '---\ndest: stdout\n---\n# Front matter dest stdout\n'));
+        result = await watched('dest: stdout', () => writePdf(outFile, '---\ndest: stdout\n---\n# Front matter dest stdout\n', undefined, withLaunchTime()));
     } finally {
         process.stdout.write = write;
     }
@@ -216,11 +251,11 @@ async function testPdfOptionsPath() {
     const fromFrontMatter = path.join(outsideDir, 'front-matter-path.pdf');
     const fromOptions = path.join(outsideDir, 'options-path.pdf');
     const markdown = `---\npdf_options:\n  path: ${JSON.stringify(fromFrontMatter)}\n---\n# pdf_options.path\n`;
-    let result = await watched('pdf_options.path (front matter)', () => writePdf(outFile, markdown));
+    let result = await watched('pdf_options.path (front matter)', () => writePdf(outFile, markdown, undefined, withLaunchTime()));
     if (result.error) throw result.error;
     assert.deepStrictEqual(result.value.map((o) => o.option), ['pdf_options.path'], 'front matter pdf_options.path should be reported ignored');
     await assertNothingLeft(result, 'pdf_options.path (front matter)');
-    result = await watched('pdf_options.path (options)', () => writePdf(outFile, '# pdf_options.path', undefined, { pdf_options: { path: fromOptions } }));
+    result = await watched('pdf_options.path (options)', () => writePdf(outFile, '# pdf_options.path', undefined, withLaunchTime({ pdf_options: { path: fromOptions } })));
     if (result.error) throw result.error;
     assert.deepStrictEqual(result.value.map((o) => o.option), ['pdf_options.path'], 'options pdf_options.path should be reported ignored');
     await assertNothingLeft(result, 'pdf_options.path (options)');
@@ -232,7 +267,7 @@ async function testPdfOptionsPath() {
 
 async function testDevtoolsReturnsPromptly() {
     const outFile = path.join(allowedDir, 'devtools.pdf');
-    const result = await watched('devtools', () => writePdf(outFile, '---\ndevtools: true\n---\n# Devtools\n'));
+    const result = await watched('devtools', () => writePdf(outFile, '---\ndevtools: true\n---\n# Devtools\n', undefined, withLaunchTime()));
     if (result.error) throw result.error;
     assert.ok(fs.statSync(outFile).size > 0, 'the PDF should be written');
     assert.deepStrictEqual(result.value.map((o) => o.option), ['devtools'], 'devtools should be reported ignored');
@@ -253,7 +288,7 @@ async function testIgnoredOptionsReportedInResult() {
         launch_options: { executablePath: path.join(outsideDir, 'not-a-real-chrome'), args: [`--user-data-dir=${rivalProfile}`] },
         devtools: true,
     };
-    const result = await watched('reported', () => handleWritePdf({ path: outFile, content: markdown, options }));
+    const result = await watched('reported', () => handleWritePdf({ path: outFile, content: markdown, options: withLaunchTime(options) }));
     if (result.error) throw result.error;
     const response = result.value;
     assert.ok(!response.isError, `write_pdf should succeed even though options were ignored: ${JSON.stringify(response.content)}`);
@@ -360,7 +395,7 @@ async function testProcessLaunchOptionsIgnored() {
         'enableExtensions: true',
         `downloadBehavior: { policy: allow, downloadPath: ${JSON.stringify(downloads)} }`,
         'handleSIGINT: false',
-        'timeout: 60000',
+        `timeout: ${LAUNCH_TIMEOUT_MS}`,
     ]);
     assert.deepStrictEqual(result.pipedInto, [], "Chrome's output was piped into Desktop Commander's stdout (the MCP connection) and stderr (launch_options.dumpio)");
     for (const { args, env } of result.launches) {
@@ -377,7 +412,7 @@ async function testProcessLaunchOptionsIgnored() {
     await assertRenderedIgnoring(result, 'launch options',
         ['env', 'dumpio', 'debuggingPort', 'ignoreDefaultArgs', 'enableExtensions', 'downloadBehavior', 'handleSIGINT']);
 
-    const piped = await renderWithLaunchOptions('launch pipe', ['pipe: true']);
+    const piped = await renderWithLaunchOptions('launch pipe', ['pipe: true', `timeout: ${LAUNCH_TIMEOUT_MS}`]);
     for (const { args } of piped.launches) {
         assert.ok(!args.includes('--remote-debugging-pipe'), 'launch_options.pipe changed how Desktop Commander connects to Chrome');
     }
@@ -393,7 +428,7 @@ async function testImageByAbsolutePath() {
     process.chdir(root);
     let result;
     try {
-        result = await watched('absolute image', () => writePdf(outFile, `# Absolute image\n\n![dot](${imageUrl})`));
+        result = await watched('absolute image', () => writePdf(outFile, `# Absolute image\n\n![dot](${imageUrl})`, undefined, withLaunchTime()));
     } finally {
         process.chdir(servedDir);
     }

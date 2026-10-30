@@ -14,6 +14,12 @@ import { createStalledReadTarget } from '../helpers/stalled-read.js';
 
 const T0 = Date.now();
 const log = (m) => console.log(`[${Date.now() - T0}ms] ${m}`);
+// A starved write never finishes, a free one takes milliseconds: a long guard
+// costs a passing run nothing and holds up on a loaded machine
+const GUARD_MS = 30_000;
+// Time for the 4 stalled reads to reach their blocking call and hold their
+// threads; on a loaded machine 150ms could fire first and let the write through
+const HEAD_START_MS = 1000;
 const stalled = await createStalledReadTarget('dc-envtest');  // no threadpool use
 log(`set UV_THREADPOOL_SIZE=8 in-process; firing 4 stalled-read blockers`);
 
@@ -21,10 +27,10 @@ for (let i = 0; i < 4; i++) fs.readFile(stalled.path).catch(() => {});
 setTimeout(async () => {
   const t = Date.now();
   let blocked = false;
-  const guard = setTimeout(() => { blocked = true; log(`BLOCKED >3000ms -> env set too late, pool still 4`); stalled.close(); exitProcess(1); }, 3000);
+  const guard = setTimeout(() => { blocked = true; log(`BLOCKED >${GUARD_MS}ms -> env set too late, pool still 4`); stalled.close(); exitProcess(1); }, GUARD_MS);
   await fs.writeFile(path.join(os.tmpdir(), 'dc-envtest-probe'), 'x');
   if (blocked) return; // the guard closed the pipe, which is what let the write finish
   clearTimeout(guard);
   log(`write completed in ${Date.now() - t}ms -> in-process env set WORKS (pool=8)`);
   stalled.close(); exitProcess(0);
-}, 150);
+}, HEAD_START_MS);

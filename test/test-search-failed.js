@@ -18,15 +18,15 @@
 
 import assert from 'assert';
 import fs from 'fs';
-import os from 'os';
 import path from 'path';
 import { searchManager } from '../dist/search-manager.js';
 import { configManager } from '../dist/config-manager.js';
 import { searchUntilDone } from './helpers/search.js';
 import { runIfMain } from './helpers/run-if-main.js';
+import { createTempDir } from './helpers/test-env.js';
 
 export default async function runTests() {
-  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'dc-search-failed-')));
+  const dir = createTempDir('dc-search-failed-');
   fs.writeFileSync(path.join(dir, 'a.txt'), 'hello\n');
   const missing = path.join(dir, 'nope');
   const originalConfig = await configManager.getConfig();

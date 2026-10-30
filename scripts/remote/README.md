@@ -50,4 +50,4 @@ Subsequent runs reuse the installed runtime. The launcher makes it available to 
 
 Automatic installation supports Intel/Apple Silicon Macs and x64/ARM64 Windows and glibc Linux supported by Node 24. Other systems need compatible Node.js and npm installed first. Internet access is required; Unix also needs `curl`, `shasum` (macOS) or `tar` and `sha256sum` (Linux), plus `sudo` when installing as a non-root user.
 
-Checks: `node test/remote-launchers.test.js` and `pwsh -NoProfile -File test/remote-launcher-windows.test.ps1` (use `powershell` on Windows). Downloads, privileged installation, and device commands are stubbed; fixtures do not modify the host's Node.js installation.
+Checks: `npm test` runs both (the `.ps1` through `test/test-powershell-tests.js`); alone, `node test/remote-launchers.test.js` (after `npm run build`) and `pwsh -NoProfile -File test/remote-launcher-windows.test.ps1` (use `powershell` on Windows). Downloads, privileged installation, and device commands are stubbed; fixtures do not modify the host's Node.js installation.

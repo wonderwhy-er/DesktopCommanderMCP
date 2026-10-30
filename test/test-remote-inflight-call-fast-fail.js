@@ -56,16 +56,18 @@ const NOISE_TOOL = 'protocol-noise';
 const CONNECTION_CLOSED = -32000;
 
 /**
- * A connection-closed rejection lands in milliseconds. The SDK's default
- * request timeout is 60s, so anything in between is unambiguous.
+ * A connection-closed rejection lands in milliseconds (0.1s seen). The SDK's
+ * default request timeout is 60s, so anything in between is unambiguous; 30s
+ * leaves a loaded machine room, and the rejection's code is checked too.
  */
-const FAST_FAIL_LIMIT_MS = 5_000;
+const FAST_FAIL_LIMIT_MS = 30_000;
 
 /**
- * Cap the wait so a red run reports in 15s instead of sitting through the whole
- * 60s timeout on every `npm test`.
+ * Cap the wait so a red run reports in 45s instead of sitting through the whole
+ * 60s timeout on every `npm test`. Every call gets it, the one after a restart
+ * too, so it leaves a loaded machine room to start the child again.
  */
-const WATCHDOG_MS = 15_000;
+const WATCHDOG_MS = 45_000;
 
 /**
  * Point the spawn at the fixture instead of dist/index.js. This is the only

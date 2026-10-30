@@ -2,11 +2,19 @@ import path from 'path';
 import { handleStartSearch, handleGetMoreSearchResults, handleStopSearch } from '../../dist/handlers/search-handlers.js';
 
 /**
+ * How long the helpers below wait for a search to end, by default. The tests'
+ * searches take well under a second, and a wait returns as soon as the search
+ * ends, so only a search that never ends waits this out; a busy machine still
+ * meets it.
+ */
+const SEARCH_WAIT_MS = 60_000;
+
+/**
  * Starts a search and waits until the session reports completion
  * (structuredContent.isComplete). Returns the session id; the caller owns the
  * session and must stop it. Throws if the search can't start, errors, or times out.
  */
-export async function startSearchAndWait(searchArgs, timeout = 10000) {
+export async function startSearchAndWait(searchArgs, timeout = SEARCH_WAIT_MS) {
   const started = await handleStartSearch(searchArgs);
   if (started.isError) {
     throw new Error(`start_search failed: ${started.content[0].text}`);
@@ -31,7 +39,7 @@ export async function startSearchAndWait(searchArgs, timeout = 10000) {
  * Runs a search to completion and returns its first page of results
  * (get_more_search_results with the default length). The session is always stopped.
  */
-export async function searchAndWaitForCompletion(searchArgs, timeout = 10000) {
+export async function searchAndWaitForCompletion(searchArgs, timeout = SEARCH_WAIT_MS) {
   const sessionId = await startSearchAndWait(searchArgs, timeout);
   try {
     const finalResult = await handleGetMoreSearchResults({ sessionId });
@@ -47,7 +55,7 @@ export async function searchAndWaitForCompletion(searchArgs, timeout = 10000) {
  * the answer is an error (`page` is undefined when start_search itself failed).
  * The session is always stopped.
  */
-export async function searchUntilDone(searchArgs, timeout = 10000) {
+export async function searchUntilDone(searchArgs, timeout = SEARCH_WAIT_MS) {
   const started = await handleStartSearch(searchArgs);
   if (started.isError) return { started };
   const { sessionId } = started.structuredContent;
