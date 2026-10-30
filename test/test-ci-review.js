@@ -650,7 +650,14 @@ export default async function run() {
     assert.ok(['git log', 'git show', 'git rev-parse', 'git merge-base', 'gh pr view', 'gh run view']
       .every((command) => gitSeen.settings.tools.core.includes(`run_shell_command(${command})`)), `Gemini CLI's allowlist: ${gitSeen.settings.tools.core}`);
     assert.strictEqual(gitSeen.env.GH_REPO, 'o/r', 'gh reads this repository only');
-    assert.strictEqual(gitSeen.env.GH_TOKEN, null, 'and the model still gets no token');
+    assert.strictEqual(gitSeen.env.GH_TOKEN, null, 'and the model still gets no token: on a machine gh uses its own login');
+    // On GitHub (GITHUB_ACTIONS), where gh has no login, a text check's gh gets the job's read-only token; a review none
+    result = await runText(['--text', textFile], { FAKE_GIT_SHA: head, FAKE_GIT_CLAIM: base, GITHUB_ACTIONS: 'true' });
+    assert.strictEqual(result.code, 0, result.stderr);
+    assert.strictEqual(JSON.parse(fs.readFileSync(record, 'utf8')).env.GH_TOKEN, 'token', 'on GitHub: the job\'s read-only token, for gh');
+    result = await runReview({ DC_GEMINI_API_KEY: 'local-key', GITHUB_ACTIONS: 'true' });
+    assert.strictEqual(result.code, 0, result.stderr);
+    assert.strictEqual(JSON.parse(fs.readFileSync(record, 'utf8')).env.GH_TOKEN, null, 'a code review on GitHub: still no token');
     assert.ok(fs.readFileSync(path.join(ROOT, '.github', 'text-check-prompt.md'), 'utf8').includes('`git log`'), 'its rules name the commands');
     // Nothing to check: one plain line, before the model
     fs.rmSync(record, { force: true });
@@ -773,7 +780,8 @@ export default async function run() {
   assert.ok(requestJob.some((line) => line.trim() === 'run: node test/ci-review.js request'), 'the request job decides with our script');
   assert.ok(requestJob.some((line) => line.trim() === 'CALLED_SHA: ${{ inputs.sha }}'), 'called: the head tests.yml gives it');
   const reviewJob = jobLines(workflow, 'review');
-  assert.deepStrictEqual(blockUnder(reviewJob, 'permissions'), ['contents: read', 'pull-requests: read'], 'the job with the key can\'t write');
+  assert.deepStrictEqual(blockUnder(reviewJob, 'permissions'), ['contents: read', 'pull-requests: read', 'actions: read'],
+    'the job with the key can\'t write; it reads runs, for a text check\'s gh run view');
   assert.deepStrictEqual([...new Set(reviewJob.join('\n').match(/secrets\.\w+/g))], ['secrets.GEMINI_API_KEY'], 'and holds no other secret');
   const steps = reviewJob.map((line) => line.trim());
   const prCheckout = steps.indexOf('path: pr');
