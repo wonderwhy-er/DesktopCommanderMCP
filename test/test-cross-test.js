@@ -13,7 +13,7 @@ import fs from 'fs';
 import path from 'path';
 import { crossTest, readCrossArgs } from './helpers/cross-test.js';
 import { runIfMain } from './helpers/run-if-main.js';
-import { createTempDir } from './helpers/test-env.js';
+import { createTempDir, withEnv } from './helpers/test-env.js';
 
 const git = (cwd, ...args) => {
   const result = spawnSync('git', args, { cwd, encoding: 'utf8' });
@@ -29,6 +29,16 @@ const commit = (root, message) => {
   git(root, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '-m', message);
   return git(root, 'rev-parse', 'HEAD');
 };
+/**
+ * A temp folder under its 8.3 short name, where Windows makes one, as GitHub's runner's TEMP is
+ * (C:\Users\RUNNER~1\…); its long path elsewhere
+ */
+function shortTemp(base) {
+  const long = path.join(base, 'cross-test-long-folder-name');
+  fs.mkdirSync(long);
+  if (process.platform !== 'win32') return long;
+  return spawnSync('cmd', ['/d', '/c', `for %I in ("${long}") do @echo %~sI`], { encoding: 'utf8', windowsVerbatimArguments: true }).stdout.trim();
+}
 const PACKAGE = JSON.stringify({ name: 'x', scripts: { 'test:coverage': 'node test/run-coverage.js' }, devDependencies: { c8: '^12.0.0' } });
 
 /** A: the framework, src/a.js "A", A's tests. B: other tests and src. C: B without run-coverage.js. D: A without c8. */
@@ -60,25 +70,31 @@ export default async function run() {
     fs.mkdirSync(root);
     const { a, b, c, d } = makeRepository(root);
 
-    // A's code with B's tests: the run sees exactly that, and its results come back naming both
+    // A's code with B's tests: the run sees exactly that, and its results come back naming both.
+    // The worktree is its own long real path, as the runner names files (realpathSync.native), even
+    // under a TEMP with an 8.3 short name, as GitHub's Windows runner's is (C:\Users\RUNNER~1\…)
     const outDir = path.join(base, 'out');
     const seen = [];
     let worktree;
-    const exit = await crossTest({
+    // A file's text whatever line ends git checks it out with (CRLF on Windows)
+    const textOf = (file) => fs.readFileSync(file, 'utf8').replace(/\r\n/g, '\n');
+    const temp = shortTemp(base);
+    const exit = await withEnv({ TEMP: temp, TMP: temp, TMPDIR: temp }, () => crossTest({
       root, code: a, testsFrom: b, outDir, log: () => {},
       run: async (command, cwd) => {
         worktree = cwd;
         seen.push(command);
         if (command === 'npm run test:coverage') {
-          assert.strictEqual(fs.readFileSync(path.join(cwd, 'src/a.js'), 'utf8'), 'A\n', 'the code commit\'s code');
-          assert.strictEqual(fs.readFileSync(path.join(cwd, 'test/test-x.js'), 'utf8'), 'x at B\n', 'the tests commit\'s tests');
+          assert.strictEqual(cwd, fs.realpathSync.native(cwd), `the worktree is its long real path, not ${cwd}`);
+          assert.strictEqual(textOf(path.join(cwd, 'src/a.js')), 'A\n', 'the code commit\'s code');
+          assert.strictEqual(textOf(path.join(cwd, 'test/test-x.js')), 'x at B\n', 'the tests commit\'s tests');
           assert.ok(fs.existsSync(path.join(cwd, 'test/only-b.js')) && !fs.existsSync(path.join(cwd, 'test/only-a.js')), 'test/ exactly as the tests commit has it');
           write(cwd, 'test-results/suite/results.json', '{"files":[]}');
           write(cwd, 'coverage/coverage-summary.json', '{"total":{}}');
         }
         return 0;
       },
-    });
+    }));
     assert.strictEqual(exit, 0);
     assert.deepStrictEqual(seen, ['npm ci', 'npm run test:coverage'], 'installs the code commit\'s packages, then runs the tests with coverage');
     assert.ok(fs.existsSync(path.join(outDir, 'test-results/suite/results.json')) && fs.existsSync(path.join(outDir, 'coverage/coverage-summary.json')),
