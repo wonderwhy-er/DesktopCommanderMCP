@@ -62,10 +62,26 @@ export default async function run() {
   assert.ok(typeOnly.includes('src/types.ts'), 'src/types.ts is types only');
   const excluded = c8rc.exclude.filter((pattern) => pattern.startsWith('src/') && !pattern.includes('*'));
   assert.deepStrictEqual([...excluded].sort(), [...typeOnly].sort(), '.c8rc.json excludes exactly the type-only files');
-  for (const file of typeOnly) {
-    assert.ok(!isCounted(file) && !counted.includes(file), `${file} isn't counted`);
-  }
+  for (const file of typeOnly) assert.ok(!counted.includes(file), `${file} isn't among the counted files`);
   console.log('✓ a type-only file isn\'t counted, and .c8rc.json excludes exactly those');
+
+  // The review calls isCounted in a sparse checkout: package.json and the scripts it imports, no src/ and no
+  // node_modules. It decides by path there; the type-only files are the report check's, in a full checkout
+  const sparse = createTempDir('dc-sparse-review-');
+  try {
+    for (const file of ['package.json', 'test/check-coverage-report.js', 'test/helpers/node-test-runner.js']) {
+      fs.mkdirSync(path.dirname(path.join(sparse, file)), { recursive: true });
+      fs.copyFileSync(path.join(ROOT, file), path.join(sparse, file));
+    }
+    const probe = 'const { isCounted } = await import(\'./test/check-coverage-report.js\');\n'
+      + 'console.log(JSON.stringify([\'src/tools/edit.ts\', \'src/types.ts\', \'test/run-ci.js\'].map((file) => isCounted(file))));';
+    const result = spawnSync(process.execPath, ['--input-type=module', '-e', probe], { cwd: sparse, encoding: 'utf8' });
+    assert.strictEqual(result.status, 0, `isCounted in a checkout without src/ or node_modules:\n${result.stderr}`);
+    assert.deepStrictEqual(JSON.parse(result.stdout), [true, true, false], 'by path: src/ counts, test/ doesn\'t');
+  } finally {
+    fs.rmSync(sparse, { recursive: true, force: true });
+  }
+  console.log('✓ isCounted decides by path, in the review\'s sparse checkout too');
 
   // The check itself, on reports made in another checkout ("/elsewhere")
   const dir = createTempDir('dc-check-coverage-report-');
