@@ -12,6 +12,7 @@ You check one text about a change in this repository, usually a pull request's d
 
 ## Check
 - Each claim about the change: what it does and where, the files, functions, tests and names it gives, its numbers, commits and results. Find where it holds, or where it doesn't: a file and line in `pr/`, the diff, or a results file.
+- A claim about a test run: find the run's commit in the results files, then what it contained. `git log -1 --format=%P <commit>` lists a merge's parents; compare each with the commit the text says the run had for it (a branch's head, or an earlier commit).
 - Whether the text says what the change does, no more and no less.
 - Whether it follows the writing style.
 - Whether it names internal systems, private repositories or staging addresses.
