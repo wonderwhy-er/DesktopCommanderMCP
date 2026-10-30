@@ -1,23 +1,31 @@
-# The AI review of a maintainer's PR, run like the tests: a push to a PR with the
-# label `review`, adding that label, a maintainer's `/review` comment on a PR, or
-# on demand (gh workflow run review.yml -f commit=<sha> -f base=<sha or branch>).
-# Gemini CLI reads the PR's code with read-only tools and answers with findings,
-# by the rules in .github/review-prompt.md, through test/ci-review.js run: the
-# same script as `npm run review -- A..B` on a machine, and the same headless
-# call as Google's run-gemini-cli action. A last job posts the findings as one
-# review with event COMMENT (a comment on each changed line with a finding, the
-# rest in the summary), and the job summary has them all. See test/README.md.
+# The AI review of a maintainer's PR, after its tests: tests.yml calls this workflow
+# (workflow_call) once its test jobs are done, for a push to a PR with the label
+# `review`, adding that label, or a maintainer's `/review` comment, with the run's
+# results and coverage. On demand it runs alone, with no tests (gh workflow run
+# review.yml -f commit=<sha> -f base=<sha or branch>). Gemini CLI reads the PR's
+# code with read-only tools and answers with findings, by the rules in
+# .github/review-prompt.md, through test/ci-review.js run: the same script as
+# `npm run review -- A..B` on a machine. A last job posts the findings as one review
+# with event COMMENT, and the job summary has them all. See test/README.md.
 ---
 name: Review
 
 on:
-  pull_request:
-    types: [opened, synchronize, reopened, labeled]
-  # A maintainer's "/review" on a PR. GitHub runs this event from the default
-  # branch's workflow file, with the repository's token and secrets, so the jobs
-  # below read the PR's code by SHA and never run it.
-  issue_comment:
-    types: [created]
+  # From tests.yml, after its tests: it decided, and passes the PR, its head and base
+  workflow_call:
+    inputs:
+      pr:
+        type: string
+        default: ''
+      sha:
+        type: string
+        required: true
+      base:
+        type: string
+        required: true
+    secrets:
+      GEMINI_API_KEY:
+        required: false
   # On demand, for anyone with write access; the maintainer check still applies.
   # The open PR whose head the commit is gets the review; with none, the job summary.
   workflow_dispatch:
@@ -33,21 +41,11 @@ on:
 permissions:
   contents: read
 
-# A push cancels the PR's older push review, and so does adding the label.
-# Another label, each comment and each on-demand run get a group per run and
-# cancel nothing.
-concurrency:
-  group: review-${{ github.event.pull_request.number || github.event.issue.number || 'dispatch' }}-${{ github.event_name == 'pull_request' && (github.event.action != 'labeled' || github.event.label.name == 'review') && 'push' || github.run_id }}
-  cancel-in-progress: true
-
 jobs:
   request:
     name: request
-    # Starts only for an event that may review: a /review comment on a PR, the
-    # review label added, a push to a PR that has it, or on demand. Whether the
-    # one who started it is a maintainer, and the rest, is test/ci-review.js's
-    # (MAINTAINERS in test/helpers/ci-platforms.js, as for the tests).
-    if: github.event_name == 'workflow_dispatch' || github.event_name == 'issue_comment' && github.event.issue.pull_request && contains(github.event.comment.body, '/review') || github.event_name == 'pull_request' && (github.event.action == 'labeled' && github.event.label.name == 'review' || github.event.action != 'labeled' && contains(github.event.pull_request.labels.*.name, 'review'))
+    # Called by tests.yml: it passes the PR, head and base. On demand: who started it
+    # is a maintainer, and the commit and base as SHAs (test/ci-review.js request)
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -81,6 +79,9 @@ jobs:
         id: request
         env:
           GH_TOKEN: ${{ github.token }}
+          CALLED_PR: ${{ inputs.pr }}
+          CALLED_SHA: ${{ inputs.sha }}
+          CALLED_BASE: ${{ inputs.base }}
         run: node test/ci-review.js request
 
   review:
@@ -128,6 +129,21 @@ jobs:
         uses: actions/setup-node@v7
         with:
           node-version: 22
+      # The run's tests, as data: each platform's results and coverage, when tests.yml ran
+      # them before calling this. With none (no platform label, or on demand), the review
+      # says it had no test results
+      - name: The run's results
+        continue-on-error: true
+        uses: actions/download-artifact@v8
+        with:
+          pattern: results-*
+          path: ci
+      - name: The run's coverage
+        continue-on-error: true
+        uses: actions/download-artifact@v8
+        with:
+          pattern: coverage-*
+          path: ci
       # Without the secret it stops at once and fails, so the review never passes unseen
       - name: Review with Gemini
         env:
@@ -138,7 +154,7 @@ jobs:
           PR: ${{ needs.request.outputs.pr }}
           HEAD_SHA: ${{ needs.request.outputs.sha }}
           BASE_SHA: ${{ needs.request.outputs.base }}
-        run: node test/ci-review.js run "$BASE_SHA..$HEAD_SHA" --repo pr --out review
+        run: node test/ci-review.js run "$BASE_SHA..$HEAD_SHA" --repo pr --out review --tests ci
       # review.json, review.md, the diff and Gemini CLI's own JSON; also when the review
       # failed, so a stopped run's answer.json and session.jsonl show what it spent
       - name: Upload the review

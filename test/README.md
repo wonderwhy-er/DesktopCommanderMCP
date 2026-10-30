@@ -139,15 +139,16 @@ A change to a shared module reaches most tests, because many tests start the who
 
 The review is given the run's tests: the files that failed, and the changed lines no test ran, from `lcov.info` with every platform together. Each uncovered range becomes a `not covered` finding unless the PR says why. On your machine it uses `coverage/` and `test-results/` from the last `npm run test:coverage` only if that ran at B on a clean tree (its stamp, `coverage/run.json`); `--tests <folder>` names another run. Without results it says "with no test results".
 
-`.github/workflows/review.yml` runs the same script in CI, with the `GEMINI_API_KEY` secret. The same maintainers start it, in the same ways as the tests:
-- **Add the `review` label** to review the PR at once. A push to a PR with the label reviews it again.
-- **From a PR comment:** a line `/review`. It only works once this workflow is on main, as for `/test`.
-- **On demand:** `gh workflow run review.yml -f commit=<sha> -f base=<sha or branch>`, also once it's on main.
+In CI the review comes after the tests: `.github/workflows/tests.yml` runs the PR's labelled platforms, then calls `.github/workflows/review.yml` (the same script, with the `GEMINI_API_KEY` secret), passed or failed, with the run's results and coverage. The same maintainers start it, in the same ways as the tests:
+- **Add the `review` label** to test the labelled platforms and review the PR at once. A push to a PR with the label tests and reviews it again.
+- **From a PR comment:** a line `/review`, with the same labelled platforms first. It only works once the workflows are on main, as for `/test`.
+- **With no platform label,** the review runs alone and says it had no test results.
+- **On demand:** `gh workflow run review.yml -f commit=<sha> -f base=<sha or branch>`, a review alone, also once it's on main.
 
 What CI posts: one review with event COMMENT, never an approval. Its body is one line with the result and the summary, then the table of every finding; a finding on a line the diff changes is also a one-line comment on that line. The run's job summary and its `review` artifact always have every finding, so a commit no PR has as its head still gets them there. Without the secret, the review job fails.
 
 How it stays safe (`test/ci-review.js`, `test/helpers/ci-review.js`):
-- `request` decides with `reviewFor` (`test/helpers/ci-platforms.js`) and reads the PR's head and base.
+- `tests.yml`'s first job decides with `reviewFor` (`test/helpers/ci-platforms.js`, through `test/ci-review.js request`) and reads the PR's head and base; `review.yml`'s `request` job takes them as given, or decides itself on demand.
 - `review` holds the only secret, `GEMINI_API_KEY`, with a read-only token. Gemini CLI (`@google/gemini-cli`, a fixed version) runs headless in a folder of its own: our settings, its own Gemini home, B's files written by git (a link as a plain file), and the diff. It can only read files (`read_file`, `list_directory`, `glob`, `grep_search`): no shell, no web, no GitHub tools, no GitHub token. An answer that holds the key writes no review.
 - `post` has the write token and no secret. It reads `review.json` as data. If GitHub refuses a line comment, every finding goes in the summary. @-mentions in the model's text are broken, so a review notifies no one.
 - **Whose script runs:** on a comment's or on-demand run, main's (GitHub starts those from main), and the PR's head is only read, by SHA. On a push or a label, the PR's own, as for the tests: a fork PR gets no secret, and a branch in the repo could change the workflow itself anyway.

@@ -47,6 +47,8 @@ function startedBy(eventName, event) {
 }
 
 const inOrder = (names) => PLATFORMS.map(({ name }) => name).filter((name) => names.includes(name));
+// The platforms whose label a PR (an event's pull_request, or a comment's issue) has
+const labelledOn = (pullOrIssue) => inOrder((pullOrIssue?.labels ?? []).map(({ name }) => name));
 
 /** The platforms a comment asks for: every line that starts with /test, e.g. `/test windows macos` */
 export function commandPlatforms(body) {
@@ -63,7 +65,10 @@ export function platformsFor(eventName, event) {
   // A PR or a comment by anyone but the maintainers runs nothing; on demand, GitHub's write access decides
   if (eventName !== 'workflow_dispatch' && !isMaintainer(startedBy(eventName, event))) return [];
   if (eventName === 'issue_comment') {
-    return event.action === 'created' && event.issue?.pull_request ? commandPlatforms(event.comment?.body) : [];
+    if (event.action !== 'created' || !event.issue?.pull_request) return [];
+    // A /review line runs the PR's labelled platforms too, so the review comes after their tests
+    const forReview = commandReview(event.comment?.body) ? labelledOn(event.issue) : [];
+    return inOrder([...commandPlatforms(event.comment?.body), ...forReview]);
   }
   if (eventName === 'workflow_dispatch') {
     // An on-demand run: the platforms it names, Linux when none; Docker's tests run on Linux only
@@ -72,10 +77,11 @@ export function platformsFor(eventName, event) {
     return names.length > 0 ? names : ['linux'];
   }
   if (eventName !== 'pull_request') return [];
-  if (event.action === 'labeled') return inOrder([event.label?.name]);
+  // Adding review runs every labelled platform, then the review; another label runs just its own
+  if (event.action === 'labeled') return event.label?.name === REVIEW_LABEL ? labelledOn(event.pull_request) : inOrder([event.label?.name]);
   // Not opened: a new PR's labels come as labeled events, each running its platform
   if (!['synchronize', 'reopened'].includes(event.action)) return [];
-  return inOrder((event.pull_request?.labels ?? []).map(({ name }) => name));
+  return labelledOn(event.pull_request);
 }
 
 /** Whether a comment asks for a review: a line that is just `/review` */

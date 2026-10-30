@@ -52,15 +52,17 @@ jobs:
     # On demand: anyone GitHub lets start it (write access). Otherwise it starts for
     # a /test comment on a PR, an added platform label, or a push to a PR with one.
     # Whether a maintainer opened the PR or wrote the comment is test/ci-platforms.js's:
-    # MAINTAINERS in test/helpers/ci-platforms.js. For anyone else it picks no
-    # platform.
-    if: github.event_name == 'workflow_dispatch' || github.event_name == 'issue_comment' && github.event.issue.pull_request && contains(github.event.comment.body, '/test') || github.event.action == 'labeled' && contains(fromJSON('["linux","windows","macos"]'), github.event.label.name) || github.event_name == 'pull_request' && github.event.action != 'labeled' && (contains(github.event.pull_request.labels.*.name, 'linux') || contains(github.event.pull_request.labels.*.name, 'windows') || contains(github.event.pull_request.labels.*.name, 'macos'))
+    # MAINTAINERS in test/helpers/ci-platforms.js, the one list the review workflow
+    # checks too. For anyone else it picks no platform.
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'issue_comment' && github.event.issue.pull_request && (contains(github.event.comment.body, '/test') || contains(github.event.comment.body, '/review')) || github.event.action == 'labeled' && (contains(fromJSON('["linux","windows","macos"]'), github.event.label.name) || github.event.label.name == 'review') || github.event_name == 'pull_request' && github.event.action != 'labeled' && (contains(github.event.pull_request.labels.*.name, 'linux') || contains(github.event.pull_request.labels.*.name, 'windows') || contains(github.event.pull_request.labels.*.name, 'macos') || contains(github.event.pull_request.labels.*.name, 'review'))
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
       contents: read
       pull-requests: read
     outputs:
+      review: ${{ steps.review.outputs.review }}
+      base: ${{ steps.review.outputs.base }}
       os: ${{ steps.platforms.outputs.os }}
       matrix: ${{ steps.platforms.outputs.matrix }}
       sha: ${{ steps.head.outputs.sha }}
@@ -75,6 +77,9 @@ jobs:
             /package.json
             /test/ci-platforms.js
             /test/helpers/ci-platforms.js
+            /test/ci-review.js
+            /test/helpers/ci-review.js
+            /test/helpers/github-api.js
           sparse-checkout-cone-mode: false
       # The commit the run tests and reports, and its PR, read once here for every job.
       # A push or a label: the PR's head. A comment: the PR's head, from the API (its
@@ -121,6 +126,14 @@ jobs:
           if [[ "$TESTS" == timed ]]; then
             gh api "repos/$GITHUB_REPOSITORY/contents/test/timed.txt?ref=$SHA" --jq .content | base64 -d > "$RUNNER_TEMP/timed.txt"
           fi
+      # Whether this event reviews (a maintainer's review label or /review), and the PR's
+      # base for the review job below; not for an on-demand tests run
+      - name: Whether it reviews
+        id: review
+        if: github.event_name != 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node test/ci-review.js request
       # A push: every labelled platform. An added label: just its platform. A comment:
       # the platforms its /test lines name. On demand: the platforms it names, and with
       # tests=timed a job per timed test on each. A PR or comment by anyone but the
@@ -220,6 +233,23 @@ jobs:
           path: coverage/
           retention-days: 14
           overwrite: true
+
+  # The AI review, after the test jobs, passed or failed: review.yml, given this run's
+  # results and coverage. With no platform label it runs alone, with no test results.
+  review:
+    name: review
+    needs: [platforms, unit]
+    if: ${{ !cancelled() && needs.platforms.outputs.review == 'true' }}
+    permissions:
+      contents: read
+      pull-requests: write
+    uses: ./.github/workflows/review.yml
+    with:
+      pr: ${{ needs.platforms.outputs.pr }}
+      sha: ${{ needs.platforms.outputs.sha }}
+      base: ${{ needs.platforms.outputs.base }}
+    secrets:
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
 
   comment:
     name: comment

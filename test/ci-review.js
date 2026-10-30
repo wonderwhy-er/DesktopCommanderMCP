@@ -95,6 +95,13 @@ async function targetOf(eventName, event) {
 }
 
 async function request() {
+  // Called by tests.yml after its tests: it decided already, and passes the PR, head and base
+  if (process.env.CALLED_SHA) {
+    const pr = process.env.CALLED_PR ?? '';
+    if (!/^\d*$/.test(pr)) throw new Error(`CALLED_PR is no PR number: ${JSON.stringify(pr)}`);
+    output([`review=true`, `pr=${pr}`, `sha=${sha(process.env.CALLED_SHA, 'CALLED_SHA')}`, `base=${sha(process.env.CALLED_BASE, 'CALLED_BASE')}`].join('\n'));
+    return;
+  }
   const eventName = process.env.GITHUB_EVENT_NAME;
   const event = JSON.parse(fs.readFileSync(process.env.GITHUB_EVENT_PATH, 'utf8'));
   const review = reviewFor(eventName, event);
