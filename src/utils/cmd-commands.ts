@@ -11,7 +11,9 @@ import type { CommandReading, FoundCommand } from './command-reading.js';
  * - ; , = and @ before a command are skipped, as spaces are (@echo off runs
  *   echo, ;sc and @ sc run sc);
  * - a word with %VAR% in it is known only at run time;
- * - if and for run the command after their condition or after "do".
+ * - if and for run the command after their condition or after "do";
+ * - call runs the command after it (call :label runs a label of a batch file,
+ *   which no blockedCommands entry names).
  * cmd has no functions, so none are listed.
  */
 
@@ -20,6 +22,8 @@ interface Token {
   kind: 'word' | 'op' | 'open' | 'close' | 'redirect';
   /** The word as cmd reads it: quotes and ^ removed */
   value: string;
+  /** The word as written, quotes and ^ included */
+  text: string;
   start: number;
   /** True when the word has %VAR% in it, so its value is known only at run time */
   atRunTime: boolean;
@@ -35,14 +39,14 @@ function tokenize(text: string): Token[] {
     if (char === ' ' || char === '\t') {
       i++;
     } else if (char === '\r' || char === '\n') {
-      tokens.push({ kind: 'op', value: '\n', start: i, atRunTime: false });
+      tokens.push({ kind: 'op', value: '\n', text: char, start: i, atRunTime: false });
       i++;
     } else if (char === '&' || char === '|') {
       const value = text[i + 1] === char ? char + char : char;
-      tokens.push({ kind: 'op', value, start: i, atRunTime: false });
+      tokens.push({ kind: 'op', value, text: value, start: i, atRunTime: false });
       i += value.length;
     } else if (char === '(' || char === ')') {
-      tokens.push({ kind: char === '(' ? 'open' : 'close', value: char, start: i, atRunTime: false });
+      tokens.push({ kind: char === '(' ? 'open' : 'close', value: char, text: char, start: i, atRunTime: false });
       i++;
     } else if (char === '>' || char === '<' || (/[0-9]/.test(char) && /[<>]/.test(text[i + 1] ?? ''))) {
       // A redirection: an optional handle number, > >> or <, and &N when it points at another handle
@@ -50,7 +54,7 @@ function tokenize(text: string): Token[] {
       if (/[0-9]/.test(char)) i++;
       i += text[i] === '>' && text[i + 1] === '>' ? 2 : 1;
       if (text[i] === '&' && /[0-9]/.test(text[i + 1] ?? '')) i += 2;
-      tokens.push({ kind: 'redirect', value: text.slice(start, i), start, atRunTime: false });
+      tokens.push({ kind: 'redirect', value: text.slice(start, i), text: text.slice(start, i), start, atRunTime: false });
     } else {
       const start = i;
       let value = '';
@@ -76,7 +80,7 @@ function tokenize(text: string): Token[] {
         }
       }
       const written = text.slice(start, i);
-      tokens.push({ kind: 'word', value, start, atRunTime: /%[^%\s]+%/.test(written), lead: /^[;,=@]*/.exec(written)![0].length });
+      tokens.push({ kind: 'word', value, text: written, start, atRunTime: /%[^%\s]+%/.test(written), lead: /^[;,=@]*/.exec(written)![0].length });
     }
   }
   return tokens;
@@ -168,12 +172,12 @@ class CmdReader {
 
   /**
    * Whether the words so far are a whole if condition, a for clause up to its
-   * "do", or an "else", so the next token starts the command that runs.
+   * "do", an "else" or a "call", so the next token starts the command that runs.
    * parens: how many of the words' ( are not closed yet.
    */
   private startsCommandAfter(words: Token[], parens: number): boolean {
     const first = commandName(words[0]).toLowerCase();
-    if (first === 'else') return words.length === 1;
+    if (first === 'else' || first === 'call') return words.length === 1;
     if (first === 'for') {
       return words.length > 1 && parens === 0 && words[words.length - 1].value.toLowerCase() === 'do';
     }
@@ -198,6 +202,7 @@ class CmdReader {
     this.commands.push({
       name,
       words: words.map((word, index) => (word.atRunTime ? null : index === 0 ? name : word.value)),
+      written: words.map((word) => word.text),
       start: first.start,
       nameAtRunTime: first.atRunTime,
     });

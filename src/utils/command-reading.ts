@@ -21,6 +21,19 @@ export interface FoundCommand {
    * time, such as "$CMD" or "$(date)", is null.
    */
   words: (string | null)[];
+  /**
+   * The same words as they are written in the text, quotes included. The
+   * wrapper rules use them: cmd's start takes a first word in quotes as the
+   * window title, and a program known only at run time is named as written.
+   */
+  written: string[];
+  /**
+   * PowerShell's Start-Process only: the programs it may start, as this
+   * PowerShell binds its FilePath, each with its value (null when known only
+   * at run time) and its text as written. A splatted @params may hold
+   * FilePath, so it counts as a program known only at run time.
+   */
+  filePaths?: { word: string | null; written: string }[];
   /** Where the command starts: an index into the command's text */
   start: number;
   /** True when the name is known only at run time: a variable, or the output of another command */
