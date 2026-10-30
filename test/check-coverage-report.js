@@ -6,7 +6,7 @@
  *   (bin `setup`), uninstall-claude-server.js (bin `remove`) and
  *   track-installation.js (postinstall);
  * - the vendored vendor/telemetry-contract/, without its own tests;
- * - the test tooling: the runners, coverage and CI scripts in TEST_TOOLING
+ * - the test tooling: the runners and coverage scripts in TEST_TOOLING
  *   (.c8rc.json includes the same files), not the tests themselves.
  * It fails on:
  * - any other key: dist/ (a file shown as built, not as its source; also what a

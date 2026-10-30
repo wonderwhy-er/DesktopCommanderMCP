@@ -56,7 +56,7 @@ function rebuildParts({ passed, uncovered }) {
 
 /**
  * Docker's tests (test/docker/), on Linux, with `args`; on another platform the
- * runner only records why they didn't run, which the PR comment shows. They run
+ * runner only records why they didn't run, in its reports. They run
  * outside coverage: one checks the shell installers (install-docker.sh and .ps1),
  * which coverage can't count, and the other runs the same server code inside the
  * image, where c8 doesn't reach.
