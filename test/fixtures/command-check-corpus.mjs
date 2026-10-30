@@ -16,6 +16,10 @@
  * Groups: case = support cases; issue = GitHub issues; table = a PowerShell
  * @{ } table: its keys and text values are data, but a value, or a key in ( ),
  * is a command that runs; bypass = blocked programs that slip through today;
+ * block = a blocked program inside a { } group, a function body or a PowerShell
+ * script block;
+ * expansion = a command name that bash and zsh build by brace expansion
+ * ({sudo,ls} runs sudo);
  * name = a blocked program's name written another way (in quotes, with an
  * escape, a path, capitals or .exe); meaning = a PowerShell name whose meaning
  * there (an alias, or a program) decides what runs; fish = fish's own syntax
@@ -127,10 +131,48 @@ export const CORPUS = [
   { id: 'tbl_value_subexpr', group: 'table', shell: 'powershell', expect: 'net', command: '@{ Note = "users: $(net user)" }', note: "#834's reporter's case: $( ) inside a double-quoted value runs net" },
 
   // ---- Bypasses: a blocked program main's check lets run ----
+  { id: 'byp_brace', group: 'bypass', shell: 'bash', expect: 'sudo', command: '{ sudo ls; }', note: 'brace group; sudo is the first command' },
   { id: 'byp_quote', group: 'bypass', shell: 'bash', expect: 'sudo', command: '"sudo" id', note: 'quoted name' },
   { id: 'byp_newline', group: 'bypass', shell: 'bash', expect: 'sudo', command: 'echo hi' + nl + 'sudo ls', note: 'sudo on a second line' },
   { id: 'byp_if', group: 'bypass', shell: 'bash', expect: 'sudo', command: 'if sudo true; then :; fi', note: 'sudo after if' },
   { id: 'byp_scexe', group: 'bypass', shell: 'powershell', expect: 'sc', command: 'sc.exe stop Spooler', note: 'sc.exe runs the sc program; main reads sc.exe as another name than sc' },
+
+  // ---- Blocks: a blocked program inside a { } group, a function body or a PowerShell script block ----
+  { id: 'blk_fn_body', group: 'block', shell: 'bash', expect: 'sudo', command: 'f() { sudo ls; }; f', note: 'calling f runs sudo from its body' },
+  { id: 'blk_if_group', group: 'block', shell: 'bash', expect: 'reboot', command: 'if true; then { reboot; }; fi', note: 'a { } group inside an if body' },
+  { id: 'blk_ps_amp', group: 'block', shell: 'powershell', expect: 'sudo', command: '& { sudo }', note: '& runs the script block, and the block runs sudo' },
+  { id: 'blk_ps_foreach', group: 'block', shell: 'powershell', expect: 'net', command: '1..3 | ForEach-Object { net user }', note: 'ForEach-Object runs its script block once per item' },
+  { id: 'blk_group_ok', group: 'block', shell: 'bash', expect: null, command: '{ echo hi; }', note: 'a { } group whose program is allowed' },
+  { id: 'blk_fn_ok', group: 'block', shell: 'bash', expect: null, command: 'f() { echo hi; }; f', note: 'a function whose body is allowed' },
+  { id: 'blk_ps_amp_ok', group: 'block', shell: 'powershell', expect: null, command: '& { Get-Date }', note: 'a script block written in the command is read' },
+  { id: 'blk_ps_dot_ok', group: 'block', shell: 'powershell', expect: null, command: '. { Get-Date }', note: 'the same with the dot operator' },
+  { id: 'blk_ps_foreach_ok', group: 'block', shell: 'powershell', expect: null, command: '1..3 | ForEach-Object { Get-Date }', note: 'ForEach-Object with an allowed block' },
+
+  // ---- Brace expansion: bash and zsh turn {a,b} in a command name into words, and the first one runs ----
+  { id: 'exp_brace', group: 'expansion', shell: 'bash', expect: 'sudo', command: '{sudo,ls}', note: 'expands to "sudo ls"' },
+  { id: 'exp_brace_zsh', group: 'expansion', shell: 'zsh', expect: 'sudo', command: '{sudo,ls}', note: 'zsh expands it the same way' },
+  { id: 'exp_brace_sh', group: 'expansion', shell: 'sh', expect: 'sudo', command: '{sudo,ls}', note: 'read as bash; dash has no brace expansion, but there {sudo,ls} names no program, so refusing it stops nothing that would run' },
+  { id: 'exp_brace_empty', group: 'expansion', shell: 'bash', expect: 'sudo', command: '{,sudo} ls', note: 'bash drops the empty word, so this is "sudo ls"' },
+  { id: 'exp_brace_none', group: 'expansion', shell: 'bash', expect: 'sudo', command: '{,} sudo ls', note: '{,} expands to no word at all, so sudo is the name' },
+  { id: 'exp_brace_inner', group: 'expansion', shell: 'bash', expect: 'sudo', command: 's{u,}do ls', note: 'braces inside the name: "sudo sdo ls"' },
+  { id: 'exp_brace_seq', group: 'expansion', shell: 'bash', expect: 'sudo', command: 'su{d..d}o ls', note: 'a one-letter sequence: "sudo ls"' },
+  { id: 'exp_brace_seq_plus', group: 'expansion', shell: 'bash', expect: 'sudo', command: 'su{d..d..+1}o ls', note: 'a sequence with a + step, which bash 4 and later read: "sudo ls"' },
+  { id: 'exp_brace_nested', group: 'expansion', shell: 'bash', expect: 'sudo', command: '{s{u,x}do,ls}', note: 'nested braces: "sudo sxdo ls"' },
+  { id: 'exp_brace_dq_piece', group: 'expansion', shell: 'bash', expect: 'sudo', command: '{"su"do,ls}', note: 'a quoted piece inside the braces is still part of the word: "sudo ls"' },
+  { id: 'exp_brace_sq_piece', group: 'expansion', shell: 'bash', expect: 'sudo', command: "{'sudo',ls}", note: 'the same with single quotes' },
+  { id: 'exp_brace_later', group: 'expansion', shell: 'bash', expect: 'reboot', command: 'echo hi; {reboot,now}', note: 'the second command\'s name: "reboot now"' },
+  { id: 'exp_brace_var_empty', group: 'expansion', shell: 'bash', expect: 'sudo', command: '{$X,sudo} id', note: '"$X sudo id": when $X is empty, bash drops that word and runs "sudo id"' },
+  { id: 'exp_brace_var_outside', group: 'expansion', shell: 'bash', expect: 'sudo', command: '$X{,} sudo', note: '"$X $X sudo": when $X is empty, both words go and sudo is the name' },
+  { id: 'exp_brace_var_joined', group: 'expansion', shell: 'bash', expect: 'sudo', command: '{$X,su}do id', note: '"$Xdo sudo id": bash reads the letters after $X into its name, and $Xdo may be empty' },
+  { id: 'exp_brace_args', group: 'expansion', shell: 'bash', expect: null, command: 'cp file{,.bak} /tmp', note: 'braces in an argument: cp runs' },
+  { id: 'exp_brace_echo', group: 'expansion', shell: 'bash', expect: null, command: 'echo {sudo,ls}', note: 'braces in an argument: echo runs' },
+  { id: 'exp_brace_esc_comma', group: 'expansion', shell: 'bash', expect: null, command: '{su\\,do,ls}', note: 'an escaped comma is text: "su,do ls"' },
+  { id: 'exp_brace_quoted', group: 'expansion', shell: 'bash', expect: null, command: '"{sudo,ls}"', note: 'quoted braces are text: the program is named {sudo,ls}' },
+  { id: 'exp_brace_escaped', group: 'expansion', shell: 'bash', expect: null, command: '\\{sudo,ls}', note: 'an escaped brace is text' },
+  { id: 'exp_brace_q_comma', group: 'expansion', shell: 'bash', expect: null, command: '{"sudo,ls"}', note: 'a quoted comma is text, so there is no list' },
+  { id: 'exp_brace_var', group: 'expansion', shell: 'bash', expect: null, command: '{$X,ls}', note: 'the name is $X\'s value, known only at run time, or ls when $X is empty' },
+  { id: 'exp_brace_var_quoted', group: 'expansion', shell: 'bash', expect: null, command: '{"$X",sudo} id', note: 'a quoted "$X" stays a word even when it is empty, so sudo is an argument' },
+  { id: 'exp_brace_var_text', group: 'expansion', shell: 'bash', expect: null, command: '{x$X,sudo} id', note: 'x$X is never empty, so sudo is an argument' },
 
   // ---- A blocked name written another way: the shell still runs the same program ----
   { id: 'name_amp_quote', group: 'name', shell: 'powershell', expect: 'sudo', command: "& 'sudo' whoami", note: 'the call operator runs the quoted name' },
