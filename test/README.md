@@ -97,6 +97,7 @@ A change to a shared module reaches most tests, because many tests start the who
 - **Platforms: add the `linux` label to run the tests on Linux.** The same goes for `windows` and `macos`. With none of them, nothing runs.
   - A push runs every labelled platform. A new push cancels the older push's run.
   - Adding a label runs its platform at once. Another label, or removing one, runs nothing and cancels nothing.
+  - A PR opened with its labels runs each platform once: GitHub sends a label event for each, and opening the PR starts nothing itself.
   - A first job, `platforms`, picks them (`test/ci-platforms.js`, `test/helpers/ci-platforms.js`).
 - **From a PR comment:** a maintainer writes `/test linux`, `/test windows` or `/test macos`, or several at once (`/test windows macos`), and CI runs those platforms on the PR's head.
   - Only comments from the logins in `MAINTAINERS` count. Other comments are ignored.

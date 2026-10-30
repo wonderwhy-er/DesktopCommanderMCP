@@ -6,7 +6,8 @@
  *   lets start it (write access);
  * - only the platforms whose label the PR has run: `linux`, `windows`, `macos`;
  *   with none of them, nothing runs;
- * - a push (a PR opened, pushed to or reopened) runs every labelled platform;
+ * - a push (a PR pushed to or reopened) runs every labelled platform; a new PR's
+ *   labels each run their platform through their labeled event, once;
  * - adding one of those labels runs just its platform, at once; another label,
  *   or removing one, runs nothing;
  * - a new comment on the PR with a line `/test <platforms>` runs those: `linux`,
@@ -67,7 +68,8 @@ export function platformsFor(eventName, event) {
   }
   if (eventName !== 'pull_request') return [];
   if (event.action === 'labeled') return inOrder([event.label?.name]);
-  if (!['opened', 'synchronize', 'reopened'].includes(event.action)) return [];
+  // Not opened: a new PR's labels come as labeled events, each running its platform
+  if (!['synchronize', 'reopened'].includes(event.action)) return [];
   return inOrder((event.pull_request?.labels ?? []).map(({ name }) => name));
 }
 

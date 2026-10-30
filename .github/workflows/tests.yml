@@ -9,8 +9,10 @@
 name: Tests
 
 on:
+  # No opened: GitHub sends a labeled event for each label a new PR has, and each runs
+  # its platform, so opened would run every platform a second time
   pull_request:
-    types: [opened, synchronize, reopened, labeled]
+    types: [synchronize, reopened, labeled]
   # A maintainer's "/test <platforms>" on a PR. GitHub runs this event from the
   # default branch's workflow file, with the repository's token, so a comment's run
   # tests the PR's code the way the jobs below say: by SHA, read-only, no secret.
