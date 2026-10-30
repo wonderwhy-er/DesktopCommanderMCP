@@ -47,6 +47,8 @@ const MODEL = 'gemini-3.8-flash';
 // refuses the rest, so the model answers. MAX_TURNS is only a last stop: Gemini CLI ends the
 // session there with no answer (exit 53)
 const TOOL_CALLS = 8;
+// A text check's git and gh commands are small reads, so it gets more of them
+const TEXT_TOOL_CALLS = 16;
 const MAX_TURNS = 20;
 // Every request carries the whole prompt, so it may take at most MAX_PROMPT_TOKENS of the model's
 // 1,048,576, leaving room for its reads and its answer (REVIEW_MAX_PROMPT_TOKENS for tests). Counted
@@ -239,7 +241,7 @@ async function run(range, ...options) {
     commits,
     diff,
     files: filesOf(diff),
-    calls: TOOL_CALLS,
+    calls: TEXT_TOOL_CALLS,
     tests,
     results: resultsOf(every('--results')),
   }) : promptOf({
@@ -299,7 +301,7 @@ async function askGemini({ prompt, head, git, key, out, diff, shell }) {
     // Its own Gemini home: a user's settings and servers don't apply. The budget hook goes in
     // its user settings, where Gemini CLI runs hooks it was given (project hooks are untrusted)
     fs.mkdirSync(path.join(folder, 'home', '.gemini'), { recursive: true });
-    const budget = `node "${path.join(ROOT, 'test', 'ci-review-budget.js').replace(/\\/g, '/')}" "${path.join(folder, 'home', 'requests').replace(/\\/g, '/')}" ${TOOL_CALLS}`;
+    const budget = `node "${path.join(ROOT, 'test', 'ci-review-budget.js').replace(/\\/g, '/')}" "${path.join(folder, 'home', 'requests').replace(/\\/g, '/')}" ${shell ? TEXT_TOOL_CALLS : TOOL_CALLS}`;
     fs.writeFileSync(path.join(folder, 'home', '.gemini', 'settings.json'), JSON.stringify({
       hooks: { BeforeTool: [{ hooks: [{ type: 'command', name: 'review-budget', command: budget }] }] },
     }, null, 2));
