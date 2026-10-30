@@ -10,7 +10,10 @@
  *   SHA, with a read-only token, no secret and no npm cache, and the comment job
  *   runs main's script.
  * - Only the maintainers start a run: PRs they opened, comments they wrote. One
- *   list, MAINTAINERS; the workflow names no login.
+ *   list, MAINTAINERS, for both workflows (tests.yml, review.yml); no workflow
+ *   names a login.
+ * - The AI review (review.yml): the label `review` on a push, adding it, a
+ *   `/review` line, or an on-demand run.
  * - The PR comment has no prose: a heading with the commit, a results table with
  *   a row per platform, the coverage tables and the links. A run replaces its own
  *   platforms' rows and keeps the others' last results, and the workflow's
@@ -22,8 +25,8 @@ import { spawnSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import {
-  commandPlatforms, dataOf, isMaintainer, MAINTAINERS, MARKER, matrixFor, mergeComment, minutesOf, osOf, platformMinutes, platformsFor, plain,
-  renderComment, timedNamesIn,
+  commandPlatforms, commandReview, dataOf, isMaintainer, MAINTAINERS, MARKER, matrixFor, mergeComment, minutesOf, osOf, platformMinutes, platformsFor, plain,
+  renderComment, reviewFor, timedNamesIn,
 } from './helpers/ci-platforms.js';
 import { ROOT } from './helpers/node-test-runner.js';
 import { runIfMain } from './helpers/run-if-main.js';
@@ -38,7 +41,9 @@ const labeled = (name, labels = [name], login = 'mihailt') => ({
 const comment = (body, onPullRequest = true, login = 'mihailt') => ({
   action: 'created', issue: onPullRequest ? { pull_request: {}, user: { login: 'mihailt' } } : {}, comment: { body, user: { login } },
 });
-const WORKFLOWS = ['tests.yml'];
+// review.yml's on-demand run
+const reviewDispatch = (login = 'mihailt') => ({ inputs: { commit: 'a'.repeat(40), base: 'main' }, sender: { login } });
+const WORKFLOWS = ['tests.yml', 'review.yml'];
 
 const SHA_A = 'a'.repeat(40);
 const SHA_B = 'b'.repeat(40);
@@ -111,7 +116,7 @@ export default async function run() {
   assert.deepStrictEqual(platformsFor('workflow_dispatch', {}), ['linux'], 'no inputs at all: Linux');
   console.log('✓ an on-demand run: the platforms it names, Linux by default, docker on Linux only');
 
-  // Who starts a run: the maintainers, one list
+  // Who starts a run: the maintainers, one list for both workflows
   assert.deepStrictEqual(MAINTAINERS, ['wonderwhy-er', 'mihailt', 'ds-dcmpc', 'edgarsskore', 'Rkrizanovskis', 'serg33v']);
   assert.ok(isMaintainer('MihailT') && isMaintainer('serg33v'), 'logins in any case, as GitHub\'s contains() compares them');
   for (const login of ['someone', '', undefined, 'mihailt2', 'github-actions[bot]']) {
@@ -126,6 +131,28 @@ export default async function run() {
     for (const login of MAINTAINERS) assert.ok(!text.includes(login), `${file} names no login (${login}): the list is MAINTAINERS`);
   }
   console.log('✓ only the maintainers start a run, from one list');
+
+  // The AI review: the label review on a push, adding it, a /review line, or an on-demand run
+  for (const action of ['opened', 'synchronize', 'reopened']) {
+    assert.strictEqual(reviewFor('pull_request', push(action, ['linux', 'review'])), true, `${action}, labelled review: reviewed`);
+    assert.strictEqual(reviewFor('pull_request', push(action, ['linux'])), false, `${action}, no review label: not reviewed`);
+  }
+  assert.strictEqual(reviewFor('pull_request', labeled('review')), true, 'adding the label reviews at once');
+  assert.strictEqual(reviewFor('pull_request', labeled('linux', ['linux', 'review'])), false, 'another label added: no second review');
+  assert.strictEqual(reviewFor('pull_request', { ...push('unlabeled', ['linux']), label: { name: 'review' } }), false, 'removing it: nothing');
+  assert.strictEqual(reviewFor('pull_request', push('synchronize', ['review'], 'someone')), false, 'a PR someone else opened: not reviewed');
+  assert.strictEqual(reviewFor('issue_comment', comment('/review')), true);
+  assert.strictEqual(reviewFor('issue_comment', comment('Thanks.\r\n  /REVIEW  \n')), true, 'any line, any case');
+  for (const body of ['/reviewer', 'please /review', '/review now', '/test linux', '', undefined]) {
+    assert.strictEqual(commandReview(body), false, `no review for ${JSON.stringify(body)}`);
+  }
+  assert.strictEqual(reviewFor('issue_comment', comment('/review', false)), false, 'a comment on an issue, not a PR');
+  assert.strictEqual(reviewFor('issue_comment', { ...comment('/review'), action: 'edited' }), false, 'an edited comment: nothing');
+  assert.strictEqual(reviewFor('issue_comment', comment('/review', true, 'someone')), false, 'someone else\'s /review: nothing');
+  assert.strictEqual(reviewFor('workflow_dispatch', reviewDispatch()), true, 'an on-demand run by a maintainer');
+  assert.strictEqual(reviewFor('workflow_dispatch', reviewDispatch('someone')), false, 'an on-demand run by anyone else: nothing');
+  assert.strictEqual(reviewFor('push', {}), false);
+  console.log('✓ the review: its label on a push or added, a /review line, an on-demand run; maintainers only');
 
   assert.deepStrictEqual(osOf(['macos', 'linux']), ['ubuntu-latest', 'macos-latest'], 'runner images, in order');
   assert.deepStrictEqual(osOf([]), []);

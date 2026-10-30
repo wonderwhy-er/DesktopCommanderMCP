@@ -1,0 +1,189 @@
+# The AI review of a maintainer's PR, run like the tests: a push to a PR with the
+# label `review`, adding that label, a maintainer's `/review` comment on a PR, or
+# on demand (gh workflow run review.yml -f commit=<sha> -f base=<sha or branch>).
+# Gemini CLI reads the PR's code with read-only tools and answers with findings,
+# by the rules in .github/review-prompt.md, through test/ci-review.js run: the
+# same script as `npm run review -- A..B` on a machine, and the same headless
+# call as Google's run-gemini-cli action. A last job posts the findings as one
+# review with event COMMENT (a comment on each changed line with a finding, the
+# rest in the summary), and the job summary has them all. See test/README.md.
+---
+name: Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled]
+  # A maintainer's "/review" on a PR. GitHub runs this event from the default
+  # branch's workflow file, with the repository's token and secrets, so the jobs
+  # below read the PR's code by SHA and never run it.
+  issue_comment:
+    types: [created]
+  # On demand, for anyone with write access; the maintainer check still applies.
+  # The open PR whose head the commit is gets the review; with none, the job summary.
+  workflow_dispatch:
+    inputs:
+      commit:
+        description: The commit to review (a SHA)
+        required: true
+      base:
+        description: What it's compared with (a SHA or a branch)
+        required: true
+        default: main
+
+permissions:
+  contents: read
+
+# A push cancels the PR's older push review, and so does adding the label.
+# Another label, each comment and each on-demand run get a group per run and
+# cancel nothing.
+concurrency:
+  group: review-${{ github.event.pull_request.number || github.event.issue.number || 'dispatch' }}-${{ github.event_name == 'pull_request' && (github.event.action != 'labeled' || github.event.label.name == 'review') && 'push' || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  request:
+    name: request
+    # Starts only for an event that may review: a /review comment on a PR, the
+    # review label added, a push to a PR that has it, or on demand. Whether the
+    # one who started it is a maintainer, and the rest, is test/ci-review.js's
+    # (MAINTAINERS in test/helpers/ci-platforms.js, as for the tests).
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'issue_comment' && github.event.issue.pull_request && contains(github.event.comment.body, '/review') || github.event_name == 'pull_request' && (github.event.action == 'labeled' && github.event.label.name == 'review' || github.event.action != 'labeled' && contains(github.event.pull_request.labels.*.name, 'review'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      review: ${{ steps.request.outputs.review }}
+      pr: ${{ steps.request.outputs.pr }}
+      sha: ${{ steps.request.outputs.sha }}
+      base: ${{ steps.request.outputs.base }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            /package.json
+            /test/ci-review.js
+            /test/helpers/ci-platforms.js
+            /test/helpers/ci-review.js
+            /test/helpers/github-api.js
+          sparse-checkout-cone-mode: false
+      - name: Node.js 22
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      # Whether this reviews, and the PR, its head and its base. A comment's event
+      # has no head, so it comes from the API, read once here for every job.
+      - name: Which PR, head and base
+        id: request
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node test/ci-review.js request
+
+  review:
+    name: review
+    needs: request
+    if: needs.request.outputs.review == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # The Gemini key is used here, on the PR's code: so the token only reads, no
+    # other secret is named, and the model has read-only file tools, no shell, no
+    # web and no GitHub tools (test/ci-review.js run). Our script and prompt are
+    # main's on a comment's or on-demand run; on a push or a label they're the PR's
+    # own, as for the tests (a fork PR gets no secret). Writing is the post job's.
+    # The script stops Gemini CLI after 12 minutes, inside this job's 15.
+    permissions:
+      contents: read
+      pull-requests: read
+
+    steps:
+      # Our script and prompt (on a comment's run, main's: GitHub starts it from main)
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            /package.json
+            /.github/review-prompt.md
+            /.github/writing-style.md
+            /test/ci-review.js
+            /test/ci-review-budget.js
+            /test/helpers/ci-platforms.js
+            /test/helpers/ci-review.js
+            /test/helpers/github-api.js
+          sparse-checkout-cone-mode: false
+      # The PR's head, by the SHA the request job read, with the history back to its
+      # base. The script reads it with git only: B's files and the diff
+      - name: Checkout the PR's head
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          ref: ${{ needs.request.outputs.sha }}
+          fetch-depth: 0
+          path: pr
+      - name: Node.js 22
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      # Without the secret it stops at once and fails, so the review never passes unseen
+      - name: Review with Gemini
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_MODEL: ${{ vars.GEMINI_MODEL }}
+          # For the PR's title and description; the model never gets it
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ needs.request.outputs.pr }}
+          HEAD_SHA: ${{ needs.request.outputs.sha }}
+          BASE_SHA: ${{ needs.request.outputs.base }}
+        run: node test/ci-review.js run "$BASE_SHA..$HEAD_SHA" --repo pr --out review
+      # review.json, review.md, the diff and Gemini CLI's own JSON
+      - name: Upload the review
+        uses: actions/upload-artifact@v7
+        with:
+          name: review
+          path: review/
+          retention-days: 14
+          overwrite: true
+
+  post:
+    name: post
+    needs: [request, review]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # Writes the review: our script (main's on a comment's or on-demand run, the
+    # PR's own on a push or a label, as for the tests) reads review.json as data.
+    # No secret. Without a PR (an on-demand run on a
+    # commit no PR has as its head), the job summary and the review artifact only.
+    permissions:
+      contents: read
+      pull-requests: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            /package.json
+            /test/ci-review.js
+            /test/helpers/ci-platforms.js
+            /test/helpers/ci-review.js
+            /test/helpers/github-api.js
+          sparse-checkout-cone-mode: false
+      - name: Node.js 22
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - name: Download the review
+        uses: actions/download-artifact@v8
+        with:
+          name: review
+          path: review
+      - name: The review on the PR, and in the job summary
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ needs.request.outputs.pr }}
+        run: node test/ci-review.js post review >> "$GITHUB_STEP_SUMMARY"
