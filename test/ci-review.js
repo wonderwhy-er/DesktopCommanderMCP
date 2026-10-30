@@ -30,7 +30,7 @@ import os from 'os';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { reviewFor } from './helpers/ci-platforms.js';
-import { answerOf, filesOf, findingsOf, promptOf, reviewOf, usageOf } from './helpers/ci-review.js';
+import { answerOf, filesOf, findingsOf, localTestsOf, promptOf, reviewOf, testsOf, uncoveredOf, usageOf, withUncovered } from './helpers/ci-review.js';
 import { githubApi } from './helpers/github-api.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -174,6 +174,9 @@ async function run(range, ...options) {
   const diff = git(['diff', '--no-color', '--no-ext-diff', '--no-textconv', `${base}...${head}`]);
   const commits = git(['log', '--reverse', '--format=%h %s', `${base}..${head}`]).split(/\r?\n/).filter(Boolean);
   const pull = process.env.PR ? await github('GET', `/repos/${repo}/pulls/${Number(process.env.PR)}`) : {};
+  // The run's tests (CI: its artifacts, --tests) or this machine's last coverage run at B
+  const ran = option('--tests') ? testsOf(path.resolve(option('--tests'))) : localTestsOf({ root: ROOT, head });
+  const tests = ran && { platforms: ran.platforms, failed: ran.failed, uncovered: uncoveredOf({ diff, lcovs: ran.lcovs }) };
   const prompt = promptOf({
     template: fs.readFileSync(path.join(ROOT, '.github', 'review-prompt.md'), 'utf8'),
     style: fs.readFileSync(path.join(ROOT, '.github', 'writing-style.md'), 'utf8'),
@@ -185,6 +188,7 @@ async function run(range, ...options) {
     commits,
     diff,
     calls: TOOL_CALLS,
+    tests,
   });
 
   // The model's folder: nothing in it but what we put there. By its real path, as
@@ -237,8 +241,9 @@ async function run(range, ...options) {
     if (gemini.status !== 0) throw new Error(`Gemini CLI stopped (exit ${gemini.status}): ${result.error?.message ?? gemini.stderr.slice(-2000)}`);
     const answer = answerOf(result.response);
     const usage = usageOf(result.stats);
-    const review = { head, base, summary: answer.summary, findings: findingsOf(answer, diff), usage };
-    const markdown = reviewOf({ answer: review, diff, headSha: head, baseSha: base, usage, inline: false }).body;
+    const findings = withUncovered(findingsOf(answer, diff), tests?.uncovered ?? []);
+    const review = { head, base, summary: answer.summary, findings, usage, tests };
+    const markdown = reviewOf({ answer: review, diff, headSha: head, baseSha: base, usage, inline: false, tests }).body;
 
     fs.writeFileSync(path.join(out, 'diff.patch'), diff);
     fs.writeFileSync(path.join(out, 'review.json'), `${JSON.stringify(review, null, 2)}\n`);
@@ -255,9 +260,9 @@ async function run(range, ...options) {
 }
 
 async function post(folder) {
-  const { head, base, summary, findings, usage } = JSON.parse(fs.readFileSync(path.join(folder, 'review.json'), 'utf8'));
+  const { head, base, summary, findings, usage, tests } = JSON.parse(fs.readFileSync(path.join(folder, 'review.json'), 'utf8'));
   const diff = fs.readFileSync(path.join(folder, 'diff.patch'), 'utf8');
-  const shown = { answer: { summary, findings }, diff, headSha: sha(head, 'head'), baseSha: sha(base, 'base'), usage };
+  const shown = { answer: { summary, findings }, diff, headSha: sha(head, 'head'), baseSha: sha(base, 'base'), usage, tests };
   if (process.env.PR) {
     const url = `/repos/${repo}/pulls/${Number(process.env.PR)}/reviews`;
     try {
