@@ -11,12 +11,14 @@
  *
  * Raising the pool size gives enough headroom that a burst of slow reads no
  * longer starves the rest. libuv reads UV_THREADPOOL_SIZE only when the pool is
- * first initialized (on first submitted work), so this assignment has to happen
- * before ANY threadpool work — hence "first import". A user-provided value is
- * always respected.
+ * first initialized (on first submitted work), so this has to happen before
+ * ANY threadpool work — hence "first import". On Windows with Node 22, libuv
+ * doesn't see a value set inside the process at all, so setThreadpoolSize()
+ * starts the server again with it (src/utils/threadpool-size.ts). A
+ * user-provided value is always respected.
  */
+import { setThreadpoolSize } from './utils/threadpool-size.js';
+
 const DEFAULT_THREADPOOL_SIZE = 16;
 
-if (!process.env.UV_THREADPOOL_SIZE) {
-  process.env.UV_THREADPOOL_SIZE = String(DEFAULT_THREADPOOL_SIZE);
-}
+setThreadpoolSize(process.env.UV_THREADPOOL_SIZE || String(DEFAULT_THREADPOOL_SIZE));
