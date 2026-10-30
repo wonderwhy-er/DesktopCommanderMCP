@@ -438,8 +438,12 @@ function posixPrograms({ words, written }: Started, rules: PosixWrapper): Starte
   const remote = (i: number): boolean => words.slice(1, i + 1).some((word) => rules.remote?.some((start) => word?.startsWith(start)));
   const at = new Set<number>();
   for (let i of operands) {
-    // After the options: the NAME=VALUE settings, then the words before the program, which chrt may leave out
-    while (rules.assignments && i < words.length && (words[i] ?? written[i]).includes('=')) i++;
+    // After the options: the NAME=VALUE settings, then the words before the program, which chrt may leave out. A word
+    // known only at run time whose = is only in an expansion may be no setting but the program (env "${TOOL:=sudo}")
+    while (rules.assignments && i < words.length && (words[i] ?? written[i]).includes('=')) {
+      if (words[i] === null && !hasWrittenEquals(written[i]) && !remote(i)) at.add(i);
+      i++;
+    }
     if (rules.beforeOptional && i < words.length) at.add(i);
     i += rules.before ?? 0;
     if (i < words.length && !remote(i)) at.add(i);
@@ -457,6 +461,39 @@ function posixPrograms({ words, written }: Started, rules: PosixWrapper): Starte
       written: [written[0], ...split.written, ...written.slice(after)],
     }, rules);
   })];
+}
+
+/**
+ * Whether a word as written has an = outside its expansions ($X, ${…}, $(…), `…`, cmd's %X%), so that its value
+ * has one whatever they give: env "FOO=$BAR" sets FOO
+ */
+function hasWrittenEquals(written: string): boolean {
+  let depth = 0;
+  for (let i = 0; i < written.length; i++) {
+    const char = written[i];
+    if (char === '\\') {
+      i++;
+      if (depth === 0 && written[i] === '=') return true;
+    } else if (char === "'" && depth === 0) {
+      const close = written.indexOf("'", i + 1);
+      if (close === -1) return false;
+      if (written.slice(i + 1, close).includes('=')) return true;
+      i = close;
+    } else if (char === '`' || (char === '%' && depth === 0)) {
+      const close = written.indexOf(char, i + 1);
+      if (close !== -1) i = close;
+    } else if (char === '$' && (written[i + 1] === '{' || written[i + 1] === '(')) {
+      depth++;
+      i++;
+    } else if (depth > 0 && (char === '{' || char === '(')) {
+      depth++;
+    } else if (depth > 0 && (char === '}' || char === ')')) {
+      depth--;
+    } else if (char === '=' && depth === 0) {
+      return true;
+    }
+  }
+  return false;
 }
 
 /** Where a program's options end, in each way they can be read, and the command texts and programs they give */
