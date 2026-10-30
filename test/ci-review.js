@@ -30,6 +30,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { isCounted } from './check-coverage-report.js';
 import { reviewFor } from './helpers/ci-platforms.js';
 import {
   answerOf, filesOf, findingsOf, localTestsOf, promptOf, reviewOf, testsOf, textAnswerOf, textCheckOf, textPromptOf,
@@ -306,7 +307,10 @@ async function run(range, ...options) {
     ? testsOf(path.resolve(option('--tests')))
     : localTestsOf({ root: ROOT, head: change.head });
   const tests = ran && {
-    platforms: ran.platforms, failed: ran.failed, uncovered: uncoveredOf({ diff: change.diff, lcovs: ran.lcovs }),
+    platforms: ran.platforms,
+    failed: ran.failed,
+    // Only files the coverage counts: the rules the coverage check holds the report to (.c8rc.json's files)
+    uncovered: uncoveredOf({ diff: change.diff, lcovs: ran.lcovs, counted: isCounted }),
   };
   // A text check (--text): each claim in a text against the change, with the results files it cites
   const text = option('--text') && textToCheck(option('--text'), pull);
