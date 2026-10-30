@@ -621,6 +621,11 @@ export default async function run() {
     assert.ok(textSeen.stdin.startsWith(fs.readFileSync(path.join(ROOT, '.github', 'text-check-prompt.md'), 'utf8').trimEnd()), 'the text check\'s rules');
     assert.ok(textSeen.stdin.includes('2: All 206 tests pass on Linux.') && textSeen.stdin.includes('### linux-results.md\n'), 'the text, and the results file');
     assert.ok(textSeen.entries.includes('pr') && textSeen.entries.includes('review'), 'the code at the head and the diff, as for a review');
+    // Its git and gh commands are small reads: 16 calls, where a review has 8
+    assert.ok(/ 16$/.test(textSeen.userSettings.hooks.BeforeTool[0].hooks[0].command) && textSeen.stdin.includes('You have 16 tool calls'), 'a text check\'s budget');
+    // The line-35 claim got by as trivia: the rules say how to check a run's claim, by its commit's parents
+    const textRules = fs.readFileSync(path.join(ROOT, '.github', 'text-check-prompt.md'), 'utf8');
+    assert.ok(textRules.includes('A claim about a test run') && textRules.includes('git log -1 --format=%P'), 'how to check what a run contained');
     const textWritten = fs.readFileSync(path.join(out, 'text-check.md'), 'utf8');
     assert.ok(textWritten.startsWith(`## Text check of \`pr-text.md\` at \`${head.slice(0, 7)}\`\n**Result:** 1 wrong claim.\nOne claim is wrong.\n`), textWritten);
     assert.ok(textWritten.includes('- **Wrong claim** `pr-text.md:2`: 205 of 206 passed.\n### Checked\n- Adds b (`pr-text.md:1`): src/b.ts:1'), textWritten);
