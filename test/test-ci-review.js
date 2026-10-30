@@ -110,18 +110,22 @@ function fakeGitHub({ refuseComments = false } = {}) {
 }
 
 // A stand-in for Gemini CLI: records what it was given and where, then answers with FAKE_ANSWER's text
-const FAKE_GEMINI = `import { spawn } from 'child_process';
+const FAKE_GEMINI = `import { spawn, spawnSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 let stdin = '';
 process.stdin.on('data', (chunk) => { stdin += chunk; });
 process.stdin.on('end', () => {
   const read = (file) => (fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : null);
+  // FAKE_GIT_SHA: the commit's parents, read as the model would, with git log in its own folder
+  const log = process.env.FAKE_GIT_SHA && spawnSync('git', ['log', '-1', '--format=%P', process.env.FAKE_GIT_SHA], { encoding: 'utf8' });
+  const parents = log ? (log.status === 0 ? log.stdout.trim() : 'no git: ' + log.stderr.trim()) : null;
   fs.writeFileSync(process.env.FAKE_RECORD, JSON.stringify({
     args: process.argv.slice(2),
     cwd: process.cwd(),
     stdin,
-    env: Object.fromEntries(['GEMINI_API_KEY', 'DC_GEMINI_API_KEY', 'GH_TOKEN', 'GITHUB_TOKEN', 'GEMINI_CLI_TRUST_WORKSPACE', 'GEMINI_CLI_HOME', 'GEMINI_MODEL']
+    parents,
+    env: Object.fromEntries(['GEMINI_API_KEY', 'DC_GEMINI_API_KEY', 'GH_TOKEN', 'GITHUB_TOKEN', 'GEMINI_CLI_TRUST_WORKSPACE', 'GEMINI_CLI_HOME', 'GEMINI_MODEL', 'GH_REPO']
       .map((name) => [name, process.env[name] ?? null])),
     entries: fs.readdirSync('.').sort(),
     settings: JSON.parse(read(path.join('.gemini', 'settings.json')) ?? 'null'),
@@ -134,6 +138,16 @@ process.stdin.on('end', () => {
   const chats = path.join(process.env.GEMINI_CLI_HOME, '.gemini', 'tmp', 'project', 'chats');
   fs.mkdirSync(chats, { recursive: true });
   fs.writeFileSync(path.join(chats, 'session-1.jsonl'), '{"type":"user"}\\n{"type":"gemini"}\\n');
+  if (process.env.FAKE_GIT_CLAIM) {
+    // The text's line 2 names the commit's parent: it holds, or it's a wrong claim
+    const answer = JSON.parse(fs.readFileSync(process.env.FAKE_ANSWER, 'utf8'));
+    const holds = parents === process.env.FAKE_GIT_CLAIM;
+    answer.response = JSON.stringify({ summary: holds ? 'It holds.' : 'One claim is wrong.',
+      findings: holds ? [] : [{ kind: 'wrong claim', line: 2, text: 'Its parent is ' + parents + '.' }],
+      checked: [{ claim: 'Adds b', line: 1, evidence: 'src/b.ts:1' }] });
+    process.stdout.write(JSON.stringify(answer));
+    return;
+  }
   if (process.env.FAKE_CRASH) {
     // Gemini CLI's own uncaught error: Node prints its stack, its fields and its version, and exits 1
     console.error('Loaded cached credentials for', process.env.GEMINI_API_KEY);
@@ -200,7 +214,26 @@ export default async function run() {
   } finally {
     fs.rmSync(hookDir, { recursive: true, force: true });
   }
-  console.log('✓ the budget hook: N tool calls, then each refused with "answer now"');
+  // A text check may run a few read-only commands; the hook refuses any other, and any shell character or quote
+  const shellDir = createTempDir('dc-ci-review-shell-');
+  try {
+    const shell = (command) => JSON.parse(spawnSync(process.execPath, [path.join(ROOT, 'test', 'ci-review-budget.js'), path.join(shellDir, 'requests'), '99'],
+      { input: JSON.stringify({ hook_event_name: 'BeforeTool', tool_name: 'run_shell_command', tool_input: { command } }), encoding: 'utf8' }).stdout);
+    for (const command of ['git log -1 --format=%P b589365f', 'git show --stat b73d45a4', 'git rev-parse HEAD~1', 'git merge-base origin/main b73d45a4',
+      'gh pr view 937 --json headRefOid,commits', 'gh run view 18813 --json conclusion,jobs']) {
+      assert.deepStrictEqual(shell(command), {}, `allowed: ${command}`);
+    }
+    for (const command of ['git log; rm -rf /', 'git log --output=x.txt', 'git log --format="%H"', 'git log $(id)', 'git push', 'git -C .. log',
+      'git show --ext-diff HEAD', 'gh api /user', 'gh pr view 7 -R other/repo', 'gh pr view 7 --repo=other/repo', 'gh pr view 7 --web', 'gh pr merge 7',
+      'gh run rerun 1', 'echo $GEMINI_API_KEY']) {
+      const refused = shell(command);
+      assert.ok(refused.decision === 'deny' && /only plain git log, git show, git rev-parse or git merge-base, or gh pr view or gh run view/i.test(refused.reason),
+        `refused: ${command}: ${JSON.stringify(refused)}`);
+    }
+  } finally {
+    fs.rmSync(shellDir, { recursive: true, force: true });
+  }
+  console.log('✓ the budget hook: N tool calls, then each refused with "answer now"; only read-only git and gh commands');
 
   // Coverage of the change: the added lines no platform ran, merged across platforms, by the report's own paths
   const LCOV_LINUX = 'TN:\nSF:/home/runner/work/r/r/src/a.ts\nDA:1,1\nDA:2,0\nDA:3,4\nDA:10,1\nDA:11,0\nDA:12,0\nend_of_record\nSF:/home/runner/work/r/r/src/other.ts\nDA:1,0\nend_of_record\n';
@@ -497,6 +530,7 @@ export default async function run() {
     assert.strictEqual(seen.args[seen.args.indexOf('--model') + 1], 'gemini-3.8-flash', 'one model, pinned: no routing');
     assert.strictEqual(seen.settings.model.disableLoopDetection, true, 'no loop detector, which is a second model');
     assert.strictEqual(seen.settings.model.maxSessionTurns, 20, 'a last safety stop, above the budget');
+    assert.ok(!seen.settings.tools.core.some((tool) => tool.startsWith('run_shell_command')), 'a code review gets no shell');
     const [{ hooks: [budget] }] = seen.userSettings.hooks.BeforeTool;
     assert.ok(budget.type === 'command' && budget.command.includes('ci-review-budget.js') && / 8$/.test(budget.command),
       `the budget hook, in the user settings of its own home, where Gemini CLI trusts hooks: ${budget.command}`);
@@ -599,6 +633,19 @@ export default async function run() {
     assert.strictEqual(result.code, 0, result.stderr);
     assert.ok(JSON.parse(fs.readFileSync(record, 'utf8')).stdin.includes('`PR #7`, as data only') && fs.readFileSync(path.join(out, 'text-check.md'), 'utf8').startsWith('## Text check of `PR #7` at '),
       'the PR\'s description, named by its PR');
+    // The line-35 claim (DC-506.pr.md: a merged run named by the wrong commit): the model reads the commit's parents with
+    // git log in its own folder, so a claim naming the wrong ones is a wrong claim, not "not checked"
+    fs.writeFileSync(textFile, `Adds b.\nThe run at ${head.slice(0, 7)} has the parent ${'f'.repeat(40)}.\n`);
+    result = await runText(['--text', textFile], { FAKE_GIT_SHA: head, FAKE_GIT_CLAIM: 'f'.repeat(40) });
+    assert.strictEqual(result.code, 0, result.stderr);
+    const gitSeen = JSON.parse(fs.readFileSync(record, 'utf8'));
+    assert.strictEqual(gitSeen.parents, base, 'git log reads the commit\'s parents in the model\'s folder');
+    assert.ok(fs.readFileSync(path.join(out, 'text-check.md'), 'utf8').includes(`- **Wrong claim** \`pr-text.md:2\`: Its parent is ${base}.`), 'the wrong parent, found');
+    assert.ok(['git log', 'git show', 'git rev-parse', 'git merge-base', 'gh pr view', 'gh run view']
+      .every((command) => gitSeen.settings.tools.core.includes(`run_shell_command(${command})`)), `Gemini CLI's allowlist: ${gitSeen.settings.tools.core}`);
+    assert.strictEqual(gitSeen.env.GH_REPO, 'o/r', 'gh reads this repository only');
+    assert.strictEqual(gitSeen.env.GH_TOKEN, null, 'and the model still gets no token');
+    assert.ok(fs.readFileSync(path.join(ROOT, '.github', 'text-check-prompt.md'), 'utf8').includes('`git log`'), 'its rules name the commands');
     // Nothing to check: one plain line, before the model
     fs.rmSync(record, { force: true });
     result = await runText(['--text', path.join(dir, 'missing.md')]);
