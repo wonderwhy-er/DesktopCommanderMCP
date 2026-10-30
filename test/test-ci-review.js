@@ -506,6 +506,9 @@ export default async function run() {
   assert.ok(steps.includes('run: node test/ci-review.js run "$BASE_SHA..$HEAD_SHA" --repo pr --out review'), 'the same script as on a machine');
   assert.ok(steps.includes('GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}'));
   assert.ok(steps.includes('name: review') && steps.includes('path: review/'), 'the review artifact');
+  const upload = steps.indexOf('- name: Upload the review');
+  assert.ok(upload > 0 && steps.slice(upload, steps.findIndex((line, i) => i > upload && line.startsWith('- '))).includes('if: always()'),
+    'the review artifact is uploaded when the review fails too: the answer.json and session.jsonl of a failed run show its tokens');
   const postJob = jobLines(workflow, 'post');
   assert.deepStrictEqual(blockUnder(postJob, 'permissions'), ['contents: read', 'pull-requests: write'], 'the job that writes');
   assert.ok(!postJob.some((line) => line.includes('secrets.')), 'holds no secret');
