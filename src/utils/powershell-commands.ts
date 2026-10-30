@@ -4,7 +4,7 @@ import type { Socket } from 'net';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { getShellEnvironment, resolveProgramPath } from './shell.js';
-import type { CommandReading } from './command-reading.js';
+import type { CommandReading, FoundCommand } from './command-reading.js';
 
 /**
  * The command check's reader for PowerShell. No JavaScript parser reads
@@ -215,6 +215,53 @@ function helperArgs(program: string): string[] {
   return [...login, '-EncodedCommand', Buffer.from(HELPER_SCRIPT, 'utf16le').toString('base64')];
 }
 
+/**
+ * A command's words after --%, PowerShell's stop-parsing token. Its parser
+ * gives the rest of the line as one word, as written; PowerShell passes it to
+ * the program so, with %NAME% filled in at run time, and the program splits
+ * it into its words: so env --% sudo ls runs sudo.
+ */
+function withStopParsing(command: FoundCommand): FoundCommand {
+  const at = command.written.indexOf('--%');
+  if (at < 1) return command;
+  const split = commandLineWords(command.written[at + 1] ?? '');
+  return { ...command, words: [...command.words.slice(0, at), ...split.words], written: [...command.written.slice(0, at), ...split.written] };
+}
+
+/**
+ * The words a Windows program makes of its command line, as the C runtime
+ * splits it: at spaces and tabs outside "…"; backslashes before a " are
+ * halved, and an odd one left makes the " a character. A word with %NAME% in
+ * it is known only at run time.
+ */
+function commandLineWords(text: string): Pick<FoundCommand, 'words' | 'written'> {
+  const split: Pick<FoundCommand, 'words' | 'written'> = { words: [], written: [] };
+  let i = 0;
+  for (;;) {
+    while (text[i] === ' ' || text[i] === '\t') i++;
+    if (i >= text.length) return split;
+    const start = i;
+    let word = '';
+    let quoted = false;
+    while (i < text.length && (quoted || (text[i] !== ' ' && text[i] !== '\t'))) {
+      let backslashes = 0;
+      while (text[i + backslashes] === '\\') backslashes++;
+      if (text[i + backslashes] === '"') {
+        word += '\\'.repeat(backslashes >> 1);
+        if (backslashes % 2 === 1) word += '"';
+        else quoted = !quoted;
+        i += backslashes + 1;
+      } else {
+        word += text.slice(i, i + Math.max(backslashes, 1));
+        i += Math.max(backslashes, 1);
+      }
+    }
+    const written = text.slice(start, i);
+    split.words.push(/%[^%\s]+%/.test(written) ? null : word);
+    split.written.push(written);
+  }
+}
+
 interface PendingRequest {
   resolve: (reading: CommandReading) => void;
   reject: (error: Error) => void;
@@ -323,7 +370,7 @@ export class PowerShellHelper {
     } else if (typeof answer.parseError === 'string') {
       request.resolve({ commands: [], functions: [], parseError: answer.parseError });
     } else {
-      request.resolve({ commands: answer.commands, functions: answer.functions });
+      request.resolve({ commands: answer.commands.map(withStopParsing), functions: answer.functions });
     }
   }
 
