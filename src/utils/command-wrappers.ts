@@ -82,10 +82,10 @@ interface PosixWrapper {
    */
   programOptions?: { letters?: string; long: string[]; default?: string };
   /**
-   * The words after which a program runs, anywhere among its words, and the words that end it (find -exec sudo rm
-   * {} ;). Its other words are no program.
+   * The words after which a program runs, anywhere among its words, the words that end it (find -exec sudo rm {} ;),
+   * and the words that take the next one as their value (find -name sudo). Its other words are no program.
    */
-  programAfter?: { words: string[]; ends: string[] };
+  programAfter?: { words: string[]; ends: string[]; values: string[] };
   /** Its own commands that start a program, each with its rules: tmux new-session -d sudo ls */
   subcommands?: Map<string, PosixWrapper>;
   /** How the words that name other computers start: psexec \\server runs its program there, not here */
@@ -103,6 +103,14 @@ const TMUX_COMMANDS = new Map<string, PosixWrapper>([
   ['split-window', TMUX_SPLIT_WINDOW], ['splitw', TMUX_SPLIT_WINDOW],
   ['respawn-pane', TMUX_RESPAWN], ['respawnp', TMUX_RESPAWN], ['respawn-window', TMUX_RESPAWN], ['respawnw', TMUX_RESPAWN],
 ]);
+
+/** find's words that take the next one as their value, GNU's and BSD's: -newerXY is each of -newerat … -newertt */
+const FIND_VALUES = [
+  'amin', 'anewer', 'atime', 'Bmin', 'Bnewer', 'Btime', 'cmin', 'cnewer', 'context', 'ctime', 'D', 'f', 'files0-from', 'flags', 'fls',
+  'fprint', 'fprint0', 'fprintf', 'fstype', 'gid', 'group', 'ilname', 'iname', 'inum', 'ipath', 'iregex', 'iwholename', 'links', 'lname',
+  'maxdepth', 'mindepth', 'mmin', 'mtime', 'name', 'newer', 'path', 'perm', 'printf', 'regex', 'regextype', 'samefile', 'size', 'type', 'uid',
+  'used', 'user', 'wholename', 'xattrname', 'xtype', ...[...'aBcmt'].flatMap((x) => [...'aBcmt'].map((y) => `newer${x}${y}`)),
+].map((name) => `-${name}`);
 
 /**
  * The wrappers that are programs, with their options from each one's manual
@@ -293,7 +301,7 @@ const PROGRAMS = new Map<string, PosixWrapper>([
   ['caffeinate', { letters: 'tw', flags: 'dimsu' }],
   ['arch', { wordOptions: true, long: ['arch', 'd', 'e'], longFlags: ['32', '64', 'i386', 'x86_64', 'x86_64h', 'arm64', 'arm64e', 'c', 'h'] }],
   ['sandbox-exec', { letters: 'fnpD' }],
-  ['find', { programAfter: { words: ['-exec', '-execdir', '-ok', '-okdir'], ends: [';', '+'] } }],
+  ['find', { programAfter: { words: ['-exec', '-execdir', '-ok', '-okdir'], ends: [';', '+'], values: FIND_VALUES } }],
   ['parallel', {
     letters: 'aCdEIjJnNPsLS', attachedLetters: 'eil', flags: '0kmqrtuvXx',
     long: [
@@ -394,13 +402,25 @@ function posixPrograms({ words, written }: Started, rules: PosixWrapper): Starte
   const from = (i: number, end = words.length): Started => ({ words: words.slice(i, end), written: written.slice(i, end) });
   const after = rules.programAfter;
   if (after) {
-    // find -exec sudo rm {} ;: each program runs from the word after -exec up to ;
-    return words.flatMap((word, i) => {
-      if (word === null || !after.words.includes(word)) return [];
+    // find -exec sudo rm {} ;: each program runs from the word after -exec up to ;. A word known only at run time
+    // where -exec could be may be -exec (find . $ACT sudo {} ;), or -exec and its program, known only at run time;
+    // a value (find -name "$NAME") and a word in an -exec's command (-exec grep "$PATTERN" {} ;) are neither
+    const programs: Started[] = [];
+    let commandEnd = 0;
+    for (let i = 1; i < words.length; i++) {
+      const word = words[i];
+      if (word !== null && !after.words.includes(word)) {
+        if (i >= commandEnd && after.values.includes(word)) i++;
+        continue;
+      }
+      if (word === null && i < commandEnd) continue;
       const end = words.findIndex((next, j) => j > i && next !== null && after.ends.includes(next));
       const stop = end === -1 ? words.length : end;
-      return stop > i + 1 ? [from(i + 1, stop)] : [];
-    });
+      if (word === null) programs.push(from(i, stop));
+      else commandEnd = Math.max(commandEnd, stop);
+      if (stop > i + 1) programs.push(from(i + 1, stop));
+    }
+    return programs;
   }
   const { operands, texts, programs: named } = readOptions(words, rules);
   if (rules.programOptions) {
