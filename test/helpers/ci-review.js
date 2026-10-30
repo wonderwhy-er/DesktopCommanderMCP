@@ -7,6 +7,8 @@
  * - the review GitHub gets: event COMMENT, a finding on a line the diff shows as
  *   a comment on that line, every other one in the summary with its file and line.
  */
+import fs from 'fs';
+import path from 'path';
 import { plain } from './ci-platforms.js';
 
 // The review's first line, so it can be told from people's reviews
@@ -29,8 +31,11 @@ const oneLine = (text) => String(text ?? '').trim().replace(/\s*\r?\n\s*/g, ' ')
 /** The model's text with every @mention broken, so a review notifies no one */
 export const quiet = (text) => String(text ?? '').replace(/@(?=[A-Za-z0-9])/g, '@​');
 
-/** Each file's lines on the new side of a diff that a review comment can sit on: added lines and the context around them */
-export function changedLines(diff) {
+/**
+ * Each file's lines on the new side of a diff that a review comment can sit on: added
+ * lines and the context around them; with addedOnly, the added lines alone
+ */
+export function changedLines(diff, { addedOnly = false } = {}) {
   const files = new Map();
   let lines = null;
   let line = 0;
@@ -45,7 +50,8 @@ export function changedLines(diff) {
       } else if (text.startsWith('-')) {
         oldLeft--;
       } else if (!text.startsWith('\\')) {
-        lines?.add(line++);
+        if (!addedOnly) lines?.add(line);
+        line++;
         oldLeft--;
         newLeft--;
       }
@@ -72,6 +78,108 @@ export function changedLines(diff) {
 
 /** The files a diff changes, deleted ones too, by their new name */
 export const filesOf = (diff) => [...String(diff ?? '').matchAll(/^diff --git a\/.+ b\/(.+?)\r?$/gm)].map(([, file]) => file);
+
+/** Line numbers as ranges, e.g. [2, 3, 4, 9] as [[2, 4], [9, 9]] */
+const rangesOf = (lines) => [...lines].sort((a, b) => a - b).reduce((ranges, line) => {
+  const last = ranges.at(-1);
+  if (last && line === last[1] + 1) last[1] = line;
+  else ranges.push([line, line]);
+  return ranges;
+}, []);
+const rangesText = (ranges) => ranges.map(([from, to]) => (from === to ? `${from}` : `${from}-${to}`)).join(', ');
+
+/** An lcov.info report as its files (paths with forward slashes) and each line's hits */
+function lcovHits(text) {
+  const files = new Map();
+  let hits = null;
+  for (const row of String(text).split(/\r?\n/)) {
+    if (row.startsWith('SF:')) {
+      hits = new Map();
+      files.set(row.slice('SF:'.length).replace(/\\/g, '/'), hits);
+    } else if (row.startsWith('DA:') && hits) {
+      const [line, count] = row.slice('DA:'.length).split(',').map(Number);
+      hits.set(line, (hits.get(line) ?? 0) + count);
+    } else if (row === 'end_of_record') {
+      hits = null;
+    }
+  }
+  return files;
+}
+
+/**
+ * The added lines of a diff that no platform's lcov.info ran: [{ file, ranges }]. A file
+ * the reports don't count, and a line they don't list (not code), is left out
+ */
+export function uncoveredOf({ diff, lcovs }) {
+  const reports = lcovs.map(lcovHits);
+  const uncovered = [];
+  for (const [file, added] of changedLines(diff, { addedOnly: true })) {
+    // The report's paths are the runner's own: one ends with the file's path from the repo's root
+    const records = reports.flatMap((report) => [...report].filter(([source]) => source === file || source.endsWith(`/${file}`)).map(([, hits]) => hits));
+    const missed = [...added].filter((line) => records.some((hits) => hits.has(line)) && !records.some((hits) => (hits.get(line) ?? 0) > 0));
+    if (missed.length > 0) uncovered.push({ file, ranges: rangesOf(missed) });
+  }
+  return uncovered;
+}
+
+/** The results.json files under a folder, a part each (suite, repro, …); one that can't be read is left out */
+function resultsUnder(dir) {
+  return (fs.existsSync(dir) ? fs.readdirSync(dir) : []).flatMap((part) => {
+    const file = path.join(dir, part, 'results.json');
+    if (!fs.existsSync(file)) return [];
+    try {
+      return [JSON.parse(fs.readFileSync(file, 'utf8'))];
+    } catch {
+      // A part that stopped while writing: ci-comment.js reports it; the review just has its other parts
+      return [];
+    }
+  });
+}
+
+/**
+ * A run's tests: { platforms, failed: [{ platform, file }], lcovs }, or null with none. From CI's
+ * artifacts (results-<os>, coverage-<os>/lcov.info), or a local run's test-results/ and coverage/
+ */
+export function testsOf(folder) {
+  if (!fs.existsSync(folder)) return null;
+  const local = fs.existsSync(path.join(folder, 'test-results')) || fs.existsSync(path.join(folder, 'coverage'));
+  const runs = local
+    ? [{ platform: 'this machine', results: resultsUnder(path.join(folder, 'test-results')), lcov: path.join(folder, 'coverage', 'lcov.info') }]
+    : [...new Set(fs.readdirSync(folder).filter((name) => /^(results|coverage)-/.test(name)).map((name) => name.replace(/^(results|coverage)-/, '').replace(/-timed-.*$/, '')))]
+      .sort()
+      .map((platform) => ({
+        platform,
+        results: fs.readdirSync(folder).filter((name) => name === `results-${platform}` || name.startsWith(`results-${platform}-timed-`)).flatMap((name) => resultsUnder(path.join(folder, name))),
+        lcov: path.join(folder, `coverage-${platform}`, 'lcov.info'),
+      }));
+  const ran = runs.filter(({ results, lcov }) => results.length > 0 || fs.existsSync(lcov));
+  if (ran.length === 0) return null;
+  return {
+    platforms: ran.map(({ platform }) => platform),
+    failed: ran.flatMap(({ platform, results }) => results.flatMap((part) => (part.files ?? []).filter((file) => !file.success).map((file) => ({ platform, file: file.path })))),
+    lcovs: ran.filter(({ lcov }) => fs.existsSync(lcov)).map(({ lcov }) => fs.readFileSync(lcov, 'utf8')),
+  };
+}
+
+/** This machine's last npm run test:coverage, if its stamp (coverage/run.json) says it ran at head on a clean tree; else null */
+export function localTestsOf({ root, head }) {
+  let stamp;
+  try {
+    stamp = JSON.parse(fs.readFileSync(path.join(root, 'coverage', 'run.json'), 'utf8'));
+  } catch {
+    // No stamp: no coverage run here, or one from before stamps
+    return null;
+  }
+  return stamp?.head === head && stamp.clean === true ? testsOf(root) : null;
+}
+
+/** The findings, and a not covered one for each uncovered range no finding speaks to (the same file, a line in the range) */
+export function withUncovered(findings, uncovered) {
+  const added = uncovered.flatMap(({ file, ranges }) => ranges
+    .filter(([from, to]) => !findings.some((finding) => finding.file === file && Number(finding.line) >= from && Number(finding.line) <= to))
+    .map(([from, to]) => ({ kind: 'not covered', file, line: from, text: `not covered: ${file}:${rangesText([[from, to]])}` })));
+  return [...findings, ...added];
+}
 
 /** The model's answer: { summary, findings }, also inside a code fence or after some words; throws if there is none */
 export function answerOf(text) {
@@ -128,7 +236,7 @@ export function usageOf(stats) {
  * on the commit it reviewed. With `inline` off, every finding goes in the summary:
  * for review.md, the job summary, and when GitHub refuses a line comment.
  */
-export function reviewOf({ answer, diff, headSha, baseSha, usage = null, inline = true }) {
+export function reviewOf({ answer, diff, headSha, baseSha, usage = null, inline = true, tests }) {
   const lines = changedLines(diff);
   const comments = [];
   const counts = new Map();
@@ -146,13 +254,25 @@ export function reviewOf({ answer, diff, headSha, baseSha, usage = null, inline 
     .map(([, label, plural]) => `${counts.get(label)} ${counts.get(label) === 1 ? label.toLowerCase() : plural}`);
   // The writing style: the result first, on one line with the summary; then a table, one line per finding
   const summary = oneLine(quiet(answer.summary));
-  const body = [REVIEW_MARKER, `**AI review of ${commit(headSha)} against ${commit(baseSha)}:** ${result.length > 0 ? result.join(', ') : 'clean'}.${summary ? ` ${summary}` : ''}`];
+  const untested = tests === null ? ', with no test results' : '';
+  const body = [REVIEW_MARKER, `**AI review of ${commit(headSha)} against ${commit(baseSha)}:** ${result.length > 0 ? result.join(', ') : 'clean'}${untested}.${summary ? ` ${summary}` : ''}`];
   if (rows.length > 0) body.push('', '| Kind | Where | What |', '|---|---|---|', ...rows);
   if (usage) {
     body.push('', `<sub>${usage.models.map(plain).join(', ')} · ${usage.requests} requests · ${usage.total} tokens`
       + ` (${usage.prompt} input, ${usage.output} output, ${usage.thoughts ?? 0} thinking) · ${usage.seconds} s in the API</sub>`);
   }
   return { commit_id: headSha, event: 'COMMENT', body: body.join('\n'), comments };
+}
+
+/** The prompt's part on the run's tests: where they ran, what failed, the changed lines no test ran, and what to ask */
+function testsPart(tests) {
+  if (!tests) return ['No test results came with this review: no platform\'s tests ran. Say so in the summary, and write `not checked` for what only a test run could show.'];
+  const failed = tests.failed.length > 0 ? `Failed: ${tests.failed.map(({ platform, file }) => `${file} (${platform})`).join(', ')}.` : 'None failed.';
+  const uncovered = tests.uncovered.length > 0
+    ? ['The changed lines no test ran (the coverage report, every platform together):', ...tests.uncovered.map(({ file, ranges }) => `- ${file}: ${rangesText(ranges)}`)]
+    : ['Every changed line the coverage report counts was run by a test.'];
+  return [`They ran on ${tests.platforms.join(', ')}. ${failed}`, '', ...uncovered, '',
+    'Is each new or changed behaviour tested, and does a failing test exist for each fix? Report each range above as a `not covered` finding (its file, its first line, "not covered: <file>:<lines>"), unless the PR says why; then say why, as `handled elsewhere`.'];
 }
 
 /** A code fence longer than any run of backticks in the text, so the text can't close it */
@@ -163,7 +283,7 @@ export const fenceFor = (text) => '`'.repeat([...String(text).matchAll(/`+/g)].r
  * files, the reading budget, the diff inline (no turns spent reading it), and the
  * PR's own words as data
  */
-export function promptOf({ template, headSha, baseSha, files, title, description, commits = [], diff = '', calls, style = '' }) {
+export function promptOf({ template, headSha, baseSha, files, title, description, commits = [], diff = '', calls, style = '', tests = null }) {
   // Quoted line by line, so the PR's text can't close a block and pass for the rules
   const quote = (text) => String(text || '(none)').slice(0, 20000).split(/\r?\n/).map((line) => `> ${line}`).join('\n');
   return [
@@ -184,6 +304,10 @@ export function promptOf({ template, headSha, baseSha, files, title, description
     ...files.map((file) => `- ${file}`),
     '',
     `Read the diff's files first, then others where a finding needs them. You have ${calls} tool calls: read several files in one turn, and never a file twice. Later calls are refused, and you answer.`,
+    '',
+    '## The tests at the head',
+    '',
+    ...testsPart(tests),
     '',
     'The diff:',
     '',
