@@ -1,7 +1,7 @@
 /**
- * GitHub's REST API with a token, for CI's scripts (test/ci-comment.js): JSON in
- * and out. Any other answer than 2xx throws, with the status on the error
- * (`error.status`).
+ * GitHub's REST API with a token, for CI's scripts (test/ci-comment.js,
+ * test/ci-review.js): JSON in and out. Any other answer than 2xx throws, with
+ * the status on the error (`error.status`).
  */
 export function githubApi({ api = 'https://api.github.com', token }) {
   return async function github(method, url, body) {

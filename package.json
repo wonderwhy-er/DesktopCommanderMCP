@@ -53,6 +53,7 @@
     "test:integration": "npm run build && node test/integration/run-all-integration-tests.js",
     "test:transport:telemetry": "npm run build && node test/test-transport-telemetry.js",
     "test:debug": "node --inspect test/run-all-tests.js",
+    "review": "node test/ci-review.js run",
     "validate:tools": "npm run build && node scripts/validate-tools-sync.js",
     "link:local": "npm run build && npm link",
     "unlink:local": "npm unlink",
