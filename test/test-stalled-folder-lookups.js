@@ -17,6 +17,9 @@
  *   - while that lookup still waits, the folder itself, or a path in or below
  *     it, fails at once with the same error, without a lookup on the disk
  *   - a path in another folder still works
+ *   - a lookup's 10 seconds start when it gets its turn, not while it waits
+ *     in line: in a slow folder whose lookups each answer well within 10
+ *     seconds, every lookup answers, also the last ones in line
  *   - once the waiting lookups answer, the folder works again
  *   - a root is its own folder: when its lookups stop answering, the lookups
  *     of the root itself that wait in line fail at once with the others, so
@@ -64,6 +67,14 @@ const { capture, runWithToolCallPaths } = await import('../dist/utils/capture.js
 const LOOKUPS_STARTED = 6;
 // How long the test waits for telemetry, and for the folder to work again once its lookups answer
 const DEADLINE_MS = 5_000;
+// validatePath's time limit for one lookup (FILE_OPERATION_TIMEOUTS.PATH_VALIDATION in src/tools/filesystem.ts)
+const LOOKUP_TIME_LIMIT_MS = 10_000;
+// In the slow folder, each lookup answers after a bit more than a quarter of
+// that limit. Four turns of LOOKUPS_PER_FOLDER lookups then take longer than
+// the limit, so the last ones in line get their turn 7.8 seconds after they
+// were made, while each lookup's own time on the disk stays far below 10 seconds
+const SLOW_LOOKUP_MS = LOOKUP_TIME_LIMIT_MS / 4 + 100;
+const SLOW_LOOKUPS = LOOKUPS_PER_FOLDER * 4;
 
 /** Whether `p` is inside `folder`, at any depth, compared as the platform compares paths */
 function isInside(p, folder) {
@@ -103,6 +114,26 @@ function stallLookups(stalls) {
   };
 }
 
+/**
+ * Makes fs.promises.realpath answer `ms` later for every path `slows(path)` is
+ * true for, as a slow network share does. restore() puts back the
+ * fs.promises.realpath it replaced.
+ */
+function slowLookups(slows, ms) {
+  const realpath = fsPromises.realpath;
+  fsPromises.realpath = function (p, ...rest) {
+    if (!slows(path.resolve(String(p)))) {
+      return realpath.call(this, p, ...rest);
+    }
+    return new Promise((resolve) => setTimeout(resolve, ms)).then(() => realpath.call(fsPromises, p, ...rest));
+  };
+  return {
+    restore: () => {
+      fsPromises.realpath = realpath;
+    },
+  };
+}
+
 /** validatePath's answer as { value } or { error }: it never rejects */
 const settle = (p) => validatePath(p).then((value) => ({ value }), (error) => ({ error }));
 
@@ -135,6 +166,10 @@ async function runTests() {
   for (const file of stalledFiles) fs.writeFileSync(file, 'stalled');
   const otherFile = path.join(other, 'other.md');
   fs.writeFileSync(otherFile, 'other');
+  const slow = path.join(root, 'slow');
+  fs.mkdirSync(slow);
+  const slowFiles = Array.from({ length: SLOW_LOOKUPS }, (_, i) => path.join(slow, `file-${i}.md`));
+  for (const file of slowFiles) fs.writeFileSync(file, 'slow');
   // A folder reached through a link, so a lookup there resolves to a path its
   // tool call doesn't know until the lookup tells it; the names have spaces,
   // which only a known path is replaced whole across
@@ -163,6 +198,8 @@ async function runTests() {
     }
   }
 
+  // Installed first, so the stand-ins installed after it call it, and it is put back last
+  const slowFolder = slowLookups((p) => isInside(p, slow), SLOW_LOOKUP_MS);
   const lookups = stallLookups((p) => samePath(p, stalled) || isInside(p, stalled));
   let rootLookups;
   try {
@@ -176,8 +213,13 @@ async function runTests() {
       afterLookupErrors().length === LOOKUPS_STARTED && afterLookupErrors().every((error) => error === 'Failed to read [PATH]'),
       afterLookupErrors().join(' | '));
 
-    console.log(`\n--- ${LOOKUPS_STARTED} lookups in ${stalled}, whose lookups don't answer ---`);
-    const answers = await Promise.all(stalledFiles.map(settle));
+    console.log(`\n--- ${LOOKUPS_STARTED} lookups in ${stalled}, whose lookups don't answer; beside them, ${SLOW_LOOKUPS} in ${slow}, whose lookups answer after ${SLOW_LOOKUP_MS} ms ---`);
+    // Side by side, so the slow folder's lookups add no time to the test
+    const [answers, slowAnswers] = await Promise.all([Promise.all(stalledFiles.map(settle)), Promise.all(slowFiles.map(settle))]);
+    const slowFailures = slowAnswers.filter((answer) => answer.error !== undefined);
+    check(`every lookup in the slow folder answers, also the last ${LOOKUPS_PER_FOLDER}, which wait in line for ${3 * SLOW_LOOKUP_MS} ms`,
+      slowAnswers.every((answer, i) => answer.value === slowFiles[i]),
+      `${slowFailures.length} of ${SLOW_LOOKUPS} failed: ${slowFailures.map(errorText).join(' | ')}`);
     // Every lookup that reaches the disk has by now: the ones still in line failed with the others
     check(`only ${LOOKUPS_PER_FOLDER} of them reach the disk; the others wait in line`, lookups.calls.length === LOOKUPS_PER_FOLDER,
       `${lookups.calls.length} reached fs.promises.realpath`);
@@ -230,6 +272,7 @@ async function runTests() {
     rootLookups?.restore();
     lookups.answer();
     lookups.restore();
+    slowFolder.restore();
     fs.rmSync(root, { recursive: true, force: true });
   }
 
