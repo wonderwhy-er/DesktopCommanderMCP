@@ -7,8 +7,10 @@
  * Each command is checked with the shell it is written for. A PowerShell
  * command is checked with every PowerShell installed here (Windows PowerShell
  * and PowerShell 7), and skipped where neither is; a case's `expectPerShell`
- * gives the answer for one of them where the two differ. The other readers
- * need no shell installed.
+ * gives the answer for one of them where the two differ. A case in another
+ * shell that starts a PowerShell with a command text (its `needs`) is
+ * skipped where that PowerShell isn't installed. The other readers need no
+ * shell installed.
  *
  * Nothing is run: every command goes to commandManager.checkCommand, which only parses it.
  */
@@ -30,10 +32,17 @@ export default async function runTests() {
   if (powershells.length < 2) {
     skip(`PowerShell cases are checked with the PowerShells installed here: ${powershells.join(' and ') || 'none'}`);
   }
+  // A case that starts a PowerShell from another shell needs that PowerShell to read its command text
+  const unread = CORPUS.filter((c) => c.needs && !powershells.includes(c.needs));
+  for (const needs of new Set(unread.map((c) => c.needs))) {
+    const ids = unread.filter((c) => c.needs === needs).map((c) => c.id);
+    skip(`the cases that start ${needs} (${ids.join(', ')}) need ${needs}: it isn't installed here`);
+  }
 
   const failures = [];
   let checked = 0;
   for (const c of CORPUS) {
+    if (unread.includes(c)) continue;
     const shells = c.shell === 'powershell' ? powershells : [c.shell];
     for (const shell of shells) {
       checked++;

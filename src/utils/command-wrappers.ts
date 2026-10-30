@@ -1,4 +1,4 @@
-import { programName, type ShellType } from './shell.js';
+import { getShellType, programName } from './shell.js';
 import type { FoundCommand } from './command-reading.js';
 
 /**
@@ -17,6 +17,14 @@ import type { FoundCommand } from './command-reading.js';
  *   \\server sudo ls runs sudo on another computer, which the check leaves
  *   out, as it leaves out ssh's;
  * - exec and command are commands of the POSIX shells;
+ * - and, or and not are fish's: fish runs the command after them (false; or
+ *   sudo ls runs sudo). fish is read with bash's grammar, where and is a
+ *   program like any other, so they are wrappers only when the shell is fish;
+ * - su, runuser, sg, script, flock, watch, runas, wsl, tmux and parallel run
+ *   one command text in a shell, as bash -c does (su -c 'sudo ls', watch
+ *   'sudo ls'): their rules are TEXT_PROGRAMS, and shellRuns() gives their
+ *   texts to the check. gsudo runs its text in the shell it was started from,
+ *   as eval does: see SAME_SHELL_PROGRAMS and sameShellTexts();
  * - Start-Process (also written start or saps) is PowerShell's: the PowerShell
  *   reader gives the programs it starts, as PowerShell itself binds its
  *   FilePath (FoundCommand's filePaths);
@@ -33,11 +41,11 @@ import type { FoundCommand } from './command-reading.js';
  */
 
 /**
- * A wrapper's options. The programs read them with getopt, and the shells
- * read exec's and command's the same way: -abc is -a -b -c, a value follows
- * its option in the same word (-uroot, --user=root) or in the next one (-u
- * root, --user root), a long option may be shortened while it stays
- * unambiguous (--us), and -- ends the options.
+ * A wrapper's options, or a POSIX shell's own. The programs read them with
+ * getopt, and the shells read exec's and command's the same way: -abc is -a
+ * -b -c, a value follows its option in the same word (-uroot, --user=root) or
+ * in the next one (-u root, --user root), a long option may be shortened while
+ * it stays unambiguous (--us), and -- ends the options.
  */
 interface PosixWrapper {
   /** The one-letter options that take a value */
@@ -56,7 +64,7 @@ interface PosixWrapper {
   equalsOnly?: boolean;
   /** Whether its options are whole words after one dash, not letters, read as long options (xterm -title, arch -x86_64) */
   wordOptions?: boolean;
-  /** Whether an option can also start with +, which turns it off (xterm +sb) */
+  /** Whether an option can also start with +, which turns it off (xterm +sb, bash +o pipefail) */
   plus?: boolean;
   /** The options with which no program runs: command -v sudo only says what sudo is */
   noProgram?: string;
@@ -90,7 +98,48 @@ interface PosixWrapper {
   subcommands?: Map<string, PosixWrapper>;
   /** How the words that name other computers start: psexec \\server runs its program there, not here */
   remote?: string[];
+  /** Whether the reading of options goes on after an option's command text (fish -C : -c 'sudo ls'); env's -S ends it */
+  optionsAfterTexts?: boolean;
+  /**
+   * How a group of letters takes its values: as getopt does when unset (the letter takes the rest of the word, or
+   * the next word), or 'words' as bash does: each letter that takes a value takes one of the words after the group,
+   * in order (bash -eoo pipefail nounset, and bash -oe pipefail, where o takes pipefail)
+   */
+  groupValues?: 'words';
+  /**
+   * For a shell, the options that decide what the words after the options are: 'text' when the first of them is
+   * the command text (bash -c 'sudo ls'), 'arguments' when they are the command's $1, $2 and so on, not a script
+   * file (bash -s, fish -c)
+   */
+  operandRoles?: Record<string, OperandRole>;
+  /** Whether options can also come after the words that aren't options, as GNU getopt allows (su root -c 'sudo ls') */
+  permute?: boolean;
+  /**
+   * For a program that runs one command text in a shell: which of the words after its options starts the text,
+   * which is that word and the ones after it, joined with spaces (watch's 0, sg's 1, after its group)
+   */
+  textOperands?: number;
+  /** The words that end that text, and the words after them are no part of it: parallel's ::: before its arguments */
+  textEnds?: string[];
+  /**
+   * The words after which each word is a command text of its own, when the program is given no text before
+   * them: parallel ::: 'sudo ls' 'echo hi' runs both
+   */
+  commandArguments?: string[];
+  /**
+   * The words after which each word is a file of command texts, when the program is given no text before them
+   * (parallel :::: jobs.txt); and with none of the words in textEnds, its command texts come from its input. The
+   * check can't see those, so the command is noted
+   */
+  commandFiles?: string[];
+  /** The word that ends one of the program's own commands, and the next one starts after it: tmux's ; */
+  separator?: string;
+  /** Whether the options are switches that start with / and keep a value after a colon (runas /user:admin) */
+  slash?: boolean;
 }
+
+/** What the words after a shell's options are, by its options: see PosixWrapper's operandRoles */
+type OperandRole = 'text' | 'arguments';
 
 /** tmux's commands that start the program after their options (tmux new-session -d sudo ls), by name and alias */
 const TMUX_NEW_SESSION: PosixWrapper = { letters: 'cefFnstxy', flags: 'AdDEPX' };
@@ -111,6 +160,16 @@ const FIND_VALUES = [
   'maxdepth', 'mindepth', 'mmin', 'mtime', 'name', 'newer', 'path', 'perm', 'printf', 'regex', 'regextype', 'samefile', 'size', 'type', 'uid',
   'used', 'user', 'wholename', 'xattrname', 'xtype', ...[...'aBcmt'].flatMap((x) => [...'aBcmt'].map((y) => `newer${x}${y}`)),
 ].map((name) => `-${name}`);
+
+/**
+ * tmux's commands that run a shell-command, read for its text (see
+ * TEXT_PROGRAMS): those in TMUX_COMMANDS, and display-popup (popup)
+ */
+const TMUX_POPUP: PosixWrapper = { letters: 'bcdehsStTwxy', flags: 'BCEkN' };
+const TMUX_TEXT_COMMANDS = new Map<string, PosixWrapper>(
+  ([...TMUX_COMMANDS, ['display-popup', TMUX_POPUP], ['popup', TMUX_POPUP]] as [string, PosixWrapper][])
+    .map(([name, rules]) => [name, { ...rules, textOperands: 0, textEnds: [';'] }]),
+);
 
 /**
  * The wrappers that are programs, with their options from each one's manual
@@ -353,24 +412,122 @@ const POSIX_SHELL_COMMANDS = new Map<string, PosixWrapper>([
   ['command', { flags: 'p', noProgram: 'vV' }],
 ]);
 
+/** fish's commands that start the command after them */
+const FISH_COMMANDS = new Map<string, PosixWrapper>([
+  ['and', {}],
+  ['or', {}],
+  ['not', {}],
+]);
+
+/**
+ * How a POSIX shell reads its own options, for shellRuns(): bash's, from bash
+ * 5.3's --help and bash(1), for every shell but fish (sh, dash, zsh and ksh
+ * have the same -c, -s, -o and +o), and fish's, from fish(1). bash's -c makes
+ * the first word after the options the command text, and its other words are
+ * the command's $0, $1 and so on; fish's -c and -C (--init-command) take the
+ * command text as their value, and fish runs -C's before the rest.
+ */
+const BASH_OPTIONS: PosixWrapper = {
+  letters: 'oO', flags: 'abcefhiklmnprstuvxBCDEHPT', long: ['init-file', 'rcfile'],
+  longFlags: [
+    'debug', 'debugger', 'dump-po-strings', 'dump-strings', 'help', 'login', 'noediting', 'noprofile', 'norc', 'posix',
+    'pretty-print', 'protected', 'restricted', 'verbose', 'version', 'wordexp',
+  ],
+  plus: true, groupValues: 'words', operandRoles: { c: 'text', s: 'arguments' },
+};
+const FISH_OPTIONS: PosixWrapper = {
+  letters: 'dfop', flags: 'hilnNPv', long: ['debug', 'debug-output', 'features', 'profile', 'profile-startup'],
+  longFlags: ['help', 'interactive', 'login', 'no-config', 'no-execute', 'print-debug-categories', 'print-rusage-self', 'private', 'version'],
+  texts: { letters: 'cC', long: ['command', 'init-command'] }, optionsAfterTexts: true,
+  operandRoles: { c: 'arguments', command: 'arguments' },
+};
+
+/**
+ * The programs that run one command text in a shell, as bash -c does, with
+ * the shell that reads it: shellRuns() gives their texts to the check. Their
+ * options are from their --help on Debian 12 (util-linux's su, runuser,
+ * script and flock, procps' watch, sg from login) and on this PC (runas);
+ * wsl's, tmux's and parallel's are their rows in PROGRAMS, and display-popup's
+ * are from OpenBSD's tmux(1).
+ * - su, runuser and script run the text of -c (--command) in the user's
+ *   shell, and -c can come after the user or the file too; runuser -u runs
+ *   the program after the user itself, which is read the same way;
+ * - sg runs its command with sh -c, given with -c or not, after its group;
+ * - flock runs -c's text with sh -c, or the program after the lock file;
+ * - watch runs its words with sh -c;
+ * - runas runs its quoted command line, which is read as cmd reads one;
+ * - wsl without --exec gives its words to the Linux shell as one command line;
+ * - tmux runs -c's text in the user's shell, and the shell-command of new,
+ *   split-window, respawn-pane, display-popup and the like with sh -c when it
+ *   is one word (tmux new 'sudo ls'), the program after their options otherwise;
+ * - parallel runs its command line with a shell, once for each argument after
+ *   :::, and without a command each of those arguments is a command.
+ */
+const TEXT_PROGRAMS = new Map<string, { rules: PosixWrapper; shell: string }>([
+  ['su', { shell: 'sh', rules: {
+    letters: 'gGsw', flags: 'flmpP', long: ['group', 'supp-group', 'shell', 'whitelist-environment'],
+    longFlags: ['fast', 'login', 'preserve-environment', 'pty', 'help', 'version'],
+    texts: { letters: 'c', long: ['command', 'session-command'] }, optionsAfterTexts: true, permute: true,
+  } }],
+  ['runuser', { shell: 'sh', rules: {
+    letters: 'gGswu', flags: 'flmpP', long: ['group', 'supp-group', 'shell', 'whitelist-environment', 'user'],
+    longFlags: ['fast', 'login', 'preserve-environment', 'pty', 'help', 'version'],
+    texts: { letters: 'c', long: ['command', 'session-command'] }, optionsAfterTexts: true, permute: true,
+    operandRoles: { u: 'text', user: 'text' },
+  } }],
+  ['sg', { shell: 'sh', rules: { texts: { letters: 'c', long: [] }, optionsAfterTexts: true, permute: true, textOperands: 1 } }],
+  ['script', { shell: 'sh', rules: {
+    letters: 'IOBTmEo', attachedLetters: 't', flags: 'aefq',
+    long: ['log-in', 'log-out', 'log-io', 'log-timing', 'logging-format', 'echo', 'output-limit'],
+    longFlags: ['timing', 'append', 'return', 'flush', 'force', 'quiet', 'help', 'version'],
+    texts: { letters: 'c', long: ['command'] }, optionsAfterTexts: true, permute: true,
+  } }],
+  ['flock', { shell: 'sh', rules: {
+    letters: 'wE', flags: 'sxunoF', long: ['timeout', 'conflict-exit-code'],
+    longFlags: ['shared', 'exclusive', 'unlock', 'nonblock', 'close', 'no-fork', 'verbose', 'help', 'version'],
+    texts: { letters: 'c', long: ['command'] }, optionsAfterTexts: true, permute: true, textOperands: 1,
+  } }],
+  ['watch', { shell: 'sh', rules: {
+    letters: 'qn', attachedLetters: 'd', flags: 'bcegptwx', long: ['equexit', 'interval'],
+    longFlags: ['beep', 'color', 'differences', 'errexit', 'chgexit', 'precise', 'no-title', 'no-wrap', 'exec', 'help', 'version'],
+    textOperands: 0,
+  } }],
+  ['runas', { shell: 'cmd', rules: { slash: true, textOperands: 0 } }],
+  ['wsl', { shell: 'sh', rules: { ...PROGRAMS.get('wsl'), textOperands: 0, operandRoles: { e: 'arguments', exec: 'arguments' } } }],
+  ['tmux', { shell: 'sh', rules: { ...PROGRAMS.get('tmux'), texts: { letters: 'c', long: [] }, subcommands: TMUX_TEXT_COMMANDS, separator: ';' } }],
+  ['parallel', { shell: 'sh', rules: {
+    ...PROGRAMS.get('parallel'), textOperands: 0, textEnds: [':::', ':::+', '::::', '::::+'], commandArguments: [':::', ':::+'],
+    commandFiles: ['::::', '::::+'],
+  } }],
+]);
+
+/**
+ * The programs that run one command text in the shell they were started
+ * from, as eval does: gsudo 'net user' runs net there (gsudo's README).
+ * sameShellTexts() gives their texts to the check.
+ */
+const SAME_SHELL_PROGRAMS = new Map<string, PosixWrapper>([
+  ['gsudo', { ...PROGRAMS.get('gsudo'), textOperands: 0 }],
+]);
+
 /** cmd's start switches that take the next word as their value (/D also takes it in the same word: /Dpath) */
 const CMD_START_VALUE_SWITCHES = ['/d', '/node', '/affinity', '/machine'];
 
-/** A program a wrapper starts: its words as the shell reads them and as written, the name first */
-type Started = Pick<FoundCommand, 'words' | 'written'>;
+/** A program a wrapper starts: its words as the shell reads them, as written and as texts, the name first */
+type Started = Pick<FoundCommand, 'words' | 'written' | 'wordTexts'>;
 
 /**
- * The commands that run: each of `commands`, followed by the programs that
- * the wrappers among them start (for env sudo ls: env, then sudo). A started
- * program has its wrapper's start.
+ * The commands that run in `shell`: each of `commands`, followed by the
+ * programs that the wrappers among them start (for env sudo ls: env, then
+ * sudo). A started program has its wrapper's start.
  */
-export function withStartedPrograms(commands: FoundCommand[], shellType: ShellType): FoundCommand[] {
+export function withStartedPrograms(commands: FoundCommand[], shell: string): FoundCommand[] {
   const running: FoundCommand[] = [];
   const add = (command: FoundCommand): void => {
     running.push(command);
     if (command.nameAtRunTime) return;
-    for (const { words, written } of startedPrograms(command, shellType)) {
-      add({ name: words[0] ?? written[0], words, written, start: command.start, nameAtRunTime: words[0] === null });
+    for (const { words, written, wordTexts } of startedPrograms(command, shell)) {
+      add({ name: words[0] ?? written[0], words, written, wordTexts, start: command.start, nameAtRunTime: words[0] === null });
     }
   };
   commands.forEach(add);
@@ -378,14 +535,17 @@ export function withStartedPrograms(commands: FoundCommand[], shellType: ShellTy
 }
 
 /** The programs a command starts when it is a wrapper: none for any other command */
-function startedPrograms(command: FoundCommand, shellType: ShellType): Started[] {
+function startedPrograms(command: FoundCommand, shell: string): Started[] {
+  const shellType = getShellType(shell);
   const name = programName(command.name);
-  const { words, written } = command;
-  const from = (at: number): Started => ({ words: words.slice(at), written: written.slice(at) });
-  const posix = PROGRAMS.get(name) ?? (shellType === 'posix' ? POSIX_SHELL_COMMANDS.get(name) : undefined);
+  const { words, written, wordTexts } = command;
+  const from = (at: number): Started => ({ words: words.slice(at), written: written.slice(at), wordTexts: wordTexts.slice(at) });
+  const posix = PROGRAMS.get(name)
+    ?? (shellType === 'posix' ? POSIX_SHELL_COMMANDS.get(name) : undefined)
+    ?? (programName(shell) === 'fish' ? FISH_COMMANDS.get(name) : undefined);
   if (posix) return posixPrograms(command, posix);
   // Its own arguments are in -ArgumentList, a text the check doesn't read, so a program Start-Process starts has only its name
-  if (shellType === 'powershell' && name === 'start-process') return (command.filePaths ?? []).map(({ word, written }) => ({ words: [word], written: [written] }));
+  if (shellType === 'powershell' && name === 'start-process') return (command.filePaths ?? []).map(({ word, written }) => ({ words: [word], written: [written], wordTexts: [word ?? written] }));
   if (shellType === 'cmd' && name === 'start') return cmdStartProgramsAt(command).map(from);
   return [];
 }
@@ -395,11 +555,11 @@ function startedPrograms(command: FoundCommand, shellType: ShellType): Started[]
  * can be. env -S puts the words of its text in its own place and reads them as
  * env's words, followed by the words after the text (env -S ls sudo runs ls).
  */
-function posixPrograms({ words, written }: Started, rules: PosixWrapper): Started[] {
+function posixPrograms({ words, written, wordTexts }: Started, rules: PosixWrapper): Started[] {
   // Windows' timeout /t 5 only waits, and GNU's timeout stops with an error at /t, which is no duration
   const first = words[1];
   if (first && rules.noProgramWords?.includes(first.toLowerCase())) return [];
-  const from = (i: number, end = words.length): Started => ({ words: words.slice(i, end), written: written.slice(i, end) });
+  const from = (i: number, end = words.length): Started => ({ words: words.slice(i, end), written: written.slice(i, end), wordTexts: wordTexts.slice(i, end) });
   const after = rules.programAfter;
   if (after) {
     // find -exec sudo rm {} ;: each program runs from the word after -exec up to ;. A word known only at run time
@@ -432,6 +592,7 @@ function posixPrograms({ words, written }: Started, rules: PosixWrapper): Starte
     return runs.map(({ program, at }) => ({
       words: [program, ...words.slice(args)],
       written: [at === undefined ? program ?? '' : written[at], ...written.slice(args)],
+      wordTexts: [at === undefined ? program ?? '' : wordTexts[at], ...wordTexts.slice(args)],
     }));
   }
   // psexec \\server sudo ls runs sudo on another computer
@@ -453,12 +614,15 @@ function posixPrograms({ words, written }: Started, rules: PosixWrapper): Starte
     const subcommand = subcommandOf(words[i], rules);
     return subcommand ? posixPrograms(from(i), subcommand) : [from(i)];
   });
-  // A wrapper's command text is more of its own words, split as env splits -S's: env is the one wrapper with one
+  // A wrapper's command text is more of its own words, split as env splits -S's: env is the one wrapper with one.
+  // One known only at run time is read on as a word known only at run time (see readOptions)
   return [...programs, ...texts.flatMap(({ text, after }) => {
+    if (text === null) return [];
     const split = envSplitWords(text);
     return posixPrograms({
       words: [words[0], ...split.words, ...words.slice(after)],
       written: [written[0], ...split.written, ...written.slice(after)],
+      wordTexts: [wordTexts[0], ...split.wordTexts, ...wordTexts.slice(after)],
     }, rules);
   })];
 }
@@ -497,64 +661,160 @@ function hasWrittenEquals(written: string): boolean {
 }
 
 /** Where a program's options end, in each way they can be read, and the command texts and programs they give */
-interface OptionReadings {
-  /** The first word after the options, in each reading */
+export interface OptionReadings {
+  /** The first word after the options, in each reading: a wrapper's program, or a shell's script file */
   operands: number[];
-  /** Each command text an option gives, and the first word after it */
-  texts: { text: string; after: number }[];
+  /**
+   * Each command text an option gives, or for a shell the first word after its options (bash -c 'sudo ls'), with
+   * the first word after it. The text is null when it is known only at run time, in whole or in part; `at` is then
+   * the word that holds it. It has no `at` when it is in the option's own word (--command='sudo ls'), and `to`
+   * when it is the words from `at` up to that one, joined with spaces (watch -n 5 sudo ls)
+   */
+  texts: { text: string | null; at?: number; to?: number; after: number }[];
   /** Each program an option names (start-stop-daemon --exec), null when known only at run time; `at` is its word, unless it is in the option's own */
   programs: { program: string | null; at?: number }[];
+  /** Whether it also runs command texts that aren't among its words, as parallel's from a :::: file (see commandFiles) */
+  hidden: boolean;
+}
+
+/** How a POSIX shell, by its name in POSIX_SHELLS, reads its own options (see BASH_OPTIONS) */
+export function shellOptionReadings(program: string, words: (string | null)[]): OptionReadings {
+  return readOptions(words, program === 'fish' ? FISH_OPTIONS : BASH_OPTIONS);
+}
+
+/**
+ * For a program that runs one command text in a shell (see TEXT_PROGRAMS): its
+ * options read in every way, and the shell that reads its texts. Undefined for
+ * any other program.
+ */
+export function textProgramReadings(program: string, words: (string | null)[]): { readings: OptionReadings; shell: string } | undefined {
+  const found = TEXT_PROGRAMS.get(program);
+  if (!found) return undefined;
+  const readings = readOptions(words, found.rules);
+  // A command of the program's own reads its words by its own rules (tmux new 'sudo ls'), and so does each one
+  // after a separator (tmux new -d \; new-window 'sudo ls')
+  const first = Math.min(words.length, ...readings.operands);
+  const separated = words.flatMap((word, j) => (j > first && word !== null && word === found.rules.separator ? [j + 1] : []));
+  for (const at of new Set([...readings.operands, ...separated])) {
+    const subcommand = subcommandOf(words[at], found.rules);
+    if (!subcommand) continue;
+    const own = readOptions(words.slice(at), subcommand);
+    readings.hidden ||= own.hidden;
+    readings.texts.push(...own.texts.map((text) => ({
+      ...text, after: text.after + at, ...(text.at === undefined ? {} : { at: text.at + at }), ...(text.to === undefined ? {} : { to: text.to + at }),
+    })));
+  }
+  return { readings, shell: found.shell };
+}
+
+/** For a program that runs one command text in the shell it was started from (see SAME_SHELL_PROGRAMS): its options read in every way */
+export function sameShellProgramReadings(program: string, words: (string | null)[]): OptionReadings | undefined {
+  const rules = SAME_SHELL_PROGRAMS.get(program);
+  return rules && readOptions(words, rules);
 }
 
 /**
  * Reads a program's options by its rules, in every way they can be read: an
  * option the rules don't list, and a word known only at run time, may take the
  * next word as its value or not, though not a word that is an option itself.
- * A command text known only at run time (env -S "$CMD") is read on as a word
- * known only at run time.
+ * A wrapper's command text known only at run time (env -S "$CMD") is read on
+ * as a word known only at run time. For a shell, each reading also knows what
+ * the words after its options are (bash -c makes the first one the text).
  */
 function readOptions(words: (string | null)[], rules: PosixWrapper): OptionReadings {
-  const readings: OptionReadings = { operands: [], texts: [], programs: [] };
-  const read = new Set<number>();
+  const readings: OptionReadings = { operands: [], texts: [], programs: [], hidden: false };
+  const read = new Set<string>();
   const isOption = (word: string | null | undefined): word is string =>
-    typeof word === 'string' && (word.startsWith('-') || (rules.plus === true && word.length > 1 && word.startsWith('+')));
-  const readFrom = (i: number): void => {
-    if (read.has(i)) return;
-    read.add(i);
+    typeof word === 'string' && (word.startsWith('-') || (rules.plus === true && word.length > 1 && word.startsWith('+'))
+      || (rules.slash === true && word.length > 1 && word.startsWith('/')));
+  // A word after the options, the `count`th of them, by what the options before it made it. True when the
+  // options can go on after it (permute)
+  const operand = (i: number, role: OperandRole | undefined, count: number): boolean => {
+    if (role === 'text') {
+      if (i < words.length) readings.texts.push({ text: words[i], at: i, after: i + 1 });
+      return false;
+    }
+    if (role === 'arguments') return false;
+    if (count === rules.textOperands) {
+      // The text goes on to the end, or to a word that ends it (parallel's :::)
+      const end = (from: number): number => {
+        const found = words.findIndex((word, j) => j >= from && word !== null && rules.textEnds?.includes(word));
+        return found === -1 ? words.length : found;
+      };
+      const to = end(i);
+      if (to > i) {
+        const text = words.slice(i, to);
+        readings.texts.push({ text: text.includes(null) ? null : text.join(' '), at: i, to, after: to });
+        return false;
+      }
+      // With no text before them, each argument after parallel's ::: is a command of its own, and those in a ::::
+      // file or in its input, when it is given no arguments, can't be seen
+      words.forEach((word, j) => {
+        if (j < i || word === null || !rules.commandArguments?.includes(word)) return;
+        for (let k = j + 1; k < end(j + 1); k++) readings.texts.push({ text: words[k], at: k, after: k + 1 });
+      });
+      const after = words.slice(i).filter((word): word is string => word !== null);
+      if (rules.commandFiles && (after.some((word) => rules.commandFiles?.includes(word)) || !after.some((word) => rules.textEnds?.includes(word)))) {
+        readings.hidden = true;
+      }
+      return false;
+    }
+    readings.operands.push(i);
+    return rules.permute === true;
+  };
+  const readFrom = (i: number, role?: OperandRole, count = 0): void => {
+    const key = `${i} ${role ?? ''} ${count}`;
+    if (read.has(key)) return;
+    read.add(key);
     const word = words[i];
     if (word === null) {
       // An option with or without a value, or the first word after them
-      readings.operands.push(i);
-      readFrom(i + 1);
-      if (!isOption(words[i + 1])) readFrom(i + 2);
+      if (operand(i, role, count)) readFrom(i + 1, role, count + 1);
+      readFrom(i + 1, role, count);
+      const next = words[i + 1];
+      if (isOption(next)) return;
+      readFrom(i + 2, role, count);
+      // Or an option that gives the command text: its value (fish $X 'sudo ls', su $OPTS 'sudo ls'), or the first
+      // word after the options (bash $X 'sudo ls')
+      if (next !== undefined && rules.texts) {
+        readings.texts.push({ text: next, at: i + 1, after: i + 2 });
+        if (rules.optionsAfterTexts) readFrom(i + 2, role, count);
+      }
+      if (Object.values(rules.operandRoles ?? {}).includes('text')) readFrom(i + 1, 'text', count);
       return;
     }
     if (!isOption(word)) {
-      readings.operands.push(i);
+      if (word !== undefined && operand(i, role, count)) readFrom(i + 1, role, count + 1);
+      else if (word === undefined) operand(i, role, count);
       return;
     }
     if (word === '--') {
-      readings.operands.push(i + 1);
+      // Every word after -- is one after the options
+      for (let j = i + 1, n = count; operand(j, role, n) && j < words.length; j++, n++);
       return;
     }
     for (const reading of optionReadings(word, rules)) {
       if (reading === null) continue;
       // A value the rules don't know of isn't a word that is an option itself
       if (reading.uncertain && reading.next > 0 && isOption(words[i + reading.next])) continue;
+      const next = reading.role === 'text' || role === 'text' ? 'text' : reading.role ?? role;
       if (reading.program !== undefined) {
         const at = reading.next === 1 ? i + 1 : undefined;
         const program = at === undefined ? reading.program : words[at];
         if (program !== undefined) readings.programs.push({ program, at });
-        readFrom(i + 1 + reading.next);
+        readFrom(i + 1 + reading.next, next, count);
         continue;
       }
       if (reading.text === undefined) {
-        readFrom(i + 1 + reading.next);
+        readFrom(i + 1 + reading.next, next, count);
         continue;
       }
-      const text = reading.next === 1 ? words[i + 1] : reading.text;
-      if (text === null) readFrom(i + 1);
-      else if (text !== undefined) readings.texts.push({ text, after: i + 1 + reading.next });
+      const at = reading.next === 1 ? i + 1 : undefined;
+      const text = at === undefined ? reading.text : words[at];
+      if (text === undefined) continue;
+      readings.texts.push({ text, at, after: i + 1 + reading.next });
+      if (rules.optionsAfterTexts) readFrom(i + 1 + reading.next, next, count);
+      else if (text === null) readFrom(i + 1, role, count);
     }
   };
   readFrom(1);
@@ -571,6 +831,8 @@ interface OptionReading {
   text?: string;
   /** For an option whose value is the program: the program in the same word, or '' when it is the next word */
   program?: string;
+  /** For a shell, what the words after its options are with this option (see PosixWrapper's operandRoles) */
+  role?: OperandRole;
 }
 
 /**
@@ -581,6 +843,8 @@ interface OptionReading {
  * option too: env's -i.
  */
 function optionReadings(option: string, rules: PosixWrapper): (OptionReading | null)[] {
+  // A switch keeps its value in its own word (runas /user:admin)
+  if (rules.slash && option.startsWith('/')) return [{ next: 0 }];
   const long = option.startsWith('--') ? option.slice(2) : rules.wordOptions ? option.slice(1) : undefined;
   if (long !== undefined) {
     const equals = long.indexOf('=');
@@ -588,27 +852,51 @@ function optionReadings(option: string, rules: PosixWrapper): (OptionReading | n
     if (name !== undefined && rules.noProgramLong?.includes(name)) return [null];
     const isText = name !== undefined && rules.texts?.long.includes(name);
     const isProgram = name !== undefined && rules.programOptions?.long.includes(name);
+    const role = name === undefined ? undefined : rules.operandRoles?.[name];
     const value = long.slice(equals + 1);
-    if (equals !== -1) return [isText ? { next: 0, text: value } : isProgram ? { next: 0, program: value } : { next: 0 }];
-    if (rules.equalsOnly) return [{ next: 0 }];
+    if (equals !== -1) return [isText ? { next: 0, text: value, role } : isProgram ? { next: 0, program: value } : { next: 0, role }];
+    if (rules.equalsOnly) return [{ next: 0, role }];
     if (name === undefined) return [{ next: 0 }, { next: 1, uncertain: true }];
-    if (isText) return [{ next: 1, text: '' }];
+    if (isText) return [{ next: 1, text: '', role }];
     if (isProgram) return [{ next: 1, program: '' }];
-    return [{ next: rules.longPairs?.includes(name) ? 2 : rules.long?.includes(name) ? 1 : 0 }];
+    return [{ next: rules.longPairs?.includes(name) ? 2 : rules.long?.includes(name) ? 1 : 0, role }];
   }
+  if (rules.groupValues === 'words') return groupWordReadings(option, rules);
   const readings: (OptionReading | null)[] = [];
+  let role: OperandRole | undefined;
   for (let i = 1; i < option.length; i++) {
     const letter = option[i];
-    const value: OptionReading = i === option.length - 1 ? { next: 1 } : { next: 0 };
+    role = role === 'text' ? role : rules.operandRoles?.[letter] ?? role;
+    const value: OptionReading = i === option.length - 1 ? { next: 1, role } : { next: 0, role };
     if (rules.noProgram?.includes(letter)) return [...readings, null];
     if (rules.texts?.letters.includes(letter)) return [...readings, { ...value, text: option.slice(i + 1) }];
     if (rules.programOptions?.letters?.includes(letter)) return [...readings, { ...value, program: option.slice(i + 1) }];
-    if (rules.attachedLetters?.includes(letter)) return [...readings, { next: 0 }];
+    if (rules.attachedLetters?.includes(letter)) return [...readings, { next: 0, role }];
     if (rules.letters?.includes(letter)) return [...readings, value];
     // An option the rules don't list may take a value, and the next letters read on as if it takes none
     if (!rules.flags?.includes(letter)) readings.push({ ...value, uncertain: true });
   }
-  return [...readings, { next: 0 }];
+  return [...readings, { next: 0, role }];
+}
+
+/**
+ * The ways to read a group of letters as bash reads it: each letter that
+ * takes a value takes one of the words after the group, in order (bash -euo
+ * pipefail deploy.sh), and one the rules don't list may take one too.
+ */
+function groupWordReadings(option: string, rules: PosixWrapper): (OptionReading | null)[] {
+  let values = 0;
+  let unlisted = 0;
+  let role: OperandRole | undefined;
+  for (const letter of option.slice(1)) {
+    if (rules.noProgram?.includes(letter)) return [null];
+    role = role === 'text' ? role : rules.operandRoles?.[letter] ?? role;
+    if (rules.letters?.includes(letter)) values++;
+    else if (!rules.flags?.includes(letter)) unlisted++;
+  }
+  return Array.from({ length: unlisted + 1 }, (_, taken): OptionReading => ({
+    next: values + taken, role, ...(taken > 0 ? { uncertain: true } : {}),
+  }));
 }
 
 /** The long option a name means: the one it names, or the only one it shortens */
@@ -646,22 +934,27 @@ const ENV_ESCAPES: Record<string, string> = { f: '\f', n: '\n', r: '\r', t: '\t'
  * read as well as it can be.
  */
 function envSplitWords(text: string): Started {
-  const split: Started = { words: [], written: [] };
+  const split: Started = { words: [], written: [], wordTexts: [] };
   // The word being read: undefined between words, null when known only at run time
   let word: string | null | undefined;
+  // Its text, with ${NAME} as written
+  let wordText = '';
   let start = 0;
   let quote = '';
-  const add = (chars: string | null, at: number): void => {
+  const add = (chars: string | null, at: number, asText = chars ?? ''): void => {
     if (word === undefined) {
       word = '';
+      wordText = '';
       start = at;
     }
     word = word === null || chars === null ? null : word + chars;
+    wordText += asText;
   };
   const end = (at: number): void => {
     if (word === undefined) return;
     split.words.push(word);
     split.written.push(text.slice(start, at));
+    split.wordTexts.push(wordText);
     word = undefined;
   };
   for (let i = 0; i < text.length; i++) {
@@ -693,7 +986,7 @@ function envSplitWords(text: string): Started {
     }
     const close = char === '$' && text[i + 1] === '{' ? text.indexOf('}', i) : -1;
     if (close !== -1) {
-      add(null, i);
+      add(null, i, text.slice(i, close + 1));
       i = close;
       continue;
     }
