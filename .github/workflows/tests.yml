@@ -79,6 +79,8 @@ jobs:
             /test/helpers/ci-platforms.js
             /test/ci-review.js
             /test/helpers/ci-review.js
+            /test/check-coverage-report.js
+            /test/helpers/node-test-runner.js
             /test/helpers/github-api.js
           sparse-checkout-cone-mode: false
       # The commit the run tests and reports, and its PR, read once here for every job.
