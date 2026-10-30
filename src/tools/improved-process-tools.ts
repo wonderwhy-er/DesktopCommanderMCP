@@ -1,5 +1,5 @@
 import { terminalManager, MAX_BUFFERED_OUTPUT_CHARS, getProcessWaitLimit } from '../terminal-manager.js';
-import { commandManager } from '../command-manager.js';
+import { commandManager, type UnseenProgram } from '../command-manager.js';
 import { StartProcessArgsSchema, ReadProcessOutputArgsSchema, InteractWithProcessArgsSchema, ForceTerminateArgsSchema, ListSessionsArgsSchema } from './schemas.js';
 import { capture } from "../utils/capture.js";
 import { ServerResult } from '../types.js';
@@ -171,10 +171,13 @@ export async function startProcess(args: unknown, maxWaitMs: number = MAX_PROCES
   const config = await configManager.getConfig();
   const shellUsed = getCommandShell(parsed.data.shell, config.defaultShell);
 
-  const isAllowed = await commandManager.validateCommand(parsed.data.command, shellUsed);
-  if (!isAllowed) {
+  const check = await commandManager.checkCommand(parsed.data.command, shellUsed);
+  if (commandManager.isRefused(check)) {
+    const text = check.verdict === 'blocked'
+      ? `Error: Command not allowed: "${check.name}" is in the blockedCommands setting.`
+      : `Error: Command not allowed: the check for blocked commands failed (${check.reason}), so nothing was run.`;
     return {
-      content: [{ type: "text", text: `Error: Command not allowed: ${parsed.data.command}` }],
+      content: [{ type: "text", text }],
       isError: true,
       structuredContent: { blocked: true, command: parsed.data.command },
     };
@@ -239,10 +242,15 @@ export async function startProcess(args: unknown, maxWaitMs: number = MAX_PROCES
     timingMessage = formatTimingInfo(result.timingInfo);
   }
 
+  let unseenMessage = '';
+  if (check.verdict === 'unseen') {
+    unseenMessage = unseenNotes(check.unseen);
+  }
+
   return {
     content: [{
       type: "text",
-      text: `Process started with PID ${result.pid} (shell: ${shellUsed})\nInitial output:\n${result.output}${statusMessage}${timingMessage}`
+      text: `Process started with PID ${result.pid} (shell: ${shellUsed})\nInitial output:\n${result.output}${statusMessage}${timingMessage}${unseenMessage}`
     }],
     structuredContent: {
       pid: result.pid,
@@ -251,6 +259,18 @@ export async function startProcess(args: unknown, maxWaitMs: number = MAX_PROCES
       ...getWaitCapFields(result.waitCappedAtMs),
     },
   };
+}
+
+/**
+ * The notes at the end of the answer when the command ran but the check
+ * couldn't see every program it runs: one chosen only when the command runs
+ * (eval "$CMD", & $tool), or the commands in a script file (bash deploy.sh).
+ */
+function unseenNotes(unseen: UnseenProgram[]): string {
+  const notes = unseen.map(({ what, inFile }) => inFile
+    ? `Note: the blocklist could not check the commands in ${what}, because they are in that file, not in this command.`
+    : `Note: the blocklist could not check the program this command runs (${what}), because it is only known when the command runs.`);
+  return `\n\n${notes.join('\n')}`;
 }
 
 type ProcessStatus = 'waiting_for_input' | 'finished' | 'running' | 'timeout';
