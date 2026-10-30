@@ -34,7 +34,8 @@ const ownConfig = (config) => (home) => {
 };
 
 async function sources() {
-  const inDocker = fs.existsSync('/.dockerenv');
+  // /.dockerenv as told (the fs stand-in), so the machine this runs on doesn't decide
+  const outside = { dockerenv: false };
   const cases = [
     [{ env: { npm_config_user_agent: 'smithery/1.0 npm/10' } }, 'smithery'],
     [{ commands: { 'ps -p': { stdout: 'node /x/@smithery/cli/run.js' } } }, 'smithery'],
@@ -52,10 +53,10 @@ async function sources() {
     [{ env: { CI: 'true', JENKINS_URL: 'https://ci' } }, 'jenkins'],
     [{ env: { CI: 'true' } }, 'ci-cd-other'],
     [{ env: { DOCKER_CONTAINER: '1', HOSTNAME: 'abcdef123456' } }, 'docker'],
-    // No sign at all: unknown, or Docker when this runs in a container (/.dockerenv)
-    [{}, inDocker ? 'docker' : 'unknown'],
-    [{ commands: { 'ps -p': { error: 'no ps' } } }, inDocker ? 'docker' : 'unknown'],
-    [{ platform: 'win32' }, inDocker ? 'docker' : 'unknown'],
+    [{ env: { HOSTNAME: 'abcdef123456' }, fs: { dockerenv: true } }, 'docker'],
+    [{ fs: outside }, 'unknown'],
+    [{ commands: { 'ps -p': { error: 'no ps' } }, fs: outside }, 'unknown'],
+    [{ platform: 'win32', fs: outside }, 'unknown'],
   ];
   for (const [options, source] of cases) {
     const run = await track(options);
@@ -64,6 +65,10 @@ async function sources() {
   }
   const gitpod = sourceOf(await track({ env: { GITPOD_WORKSPACE_ID: 'abcdefghijkl' } }));
   assert.strictEqual(gitpod.details.workspace_id, 'abcdefgh...', 'the Gitpod workspace cut short');
+  const container = sourceOf(await track({ env: { HOSTNAME: 'abcdef123456' }, fs: { dockerenv: true } }));
+  assert.strictEqual(container.details.container_id, 'abcdef12...', 'the container cut short');
+  const smithery = { env: { npm_config_user_agent: 'smithery' }, commands: { 'ps -p': { error: 'no ps' } } };
+  assert.strictEqual(sourceOf(await track(smithery)).details.parent_process, 'unknown', 'no parent process read');
   console.log('✓ where it was installed from: npm\'s variables, the environment, the parent process');
 }
 

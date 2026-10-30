@@ -88,6 +88,14 @@ async function failures() {
   const failed = ['uninstall_config_write_error', 'uninstall_backup_restore_failed', 'uninstall_config_error'];
   assert.ok(sent(unwritable, ...failed), events(unwritable).join(', '));
   assert.ok(said(unwritable, 'backup restoration failed'), unwritable.stdout);
+  // The write fails once, as a briefly locked file does: the backup goes back, and it still exits 1
+  const locked = await uninstall({
+    prepare: homeWith({ mcpServers: SERVERS }, telemetry), fs: { failWriteOnce: 'claude_desktop_config.json' },
+  });
+  assert.strictEqual(locked.code, 1, 'a write that failed: exit 1');
+  assert.ok(sent(locked, 'uninstall_config_write_error', 'uninstall_backup_restored'), events(locked).join(', '));
+  assert.ok(said(locked, 'but backup was restored'), locked.stdout);
+  assert.deepStrictEqual(JSON.parse(locked.home[CLAUDE_CONFIG.linux]).mcpServers, SERVERS, 'the config as it was');
   console.log('✓ a config it can\'t read or write: the backup put back when it can, exit 1');
 }
 
