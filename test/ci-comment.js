@@ -9,7 +9,10 @@
  * Reads, per platform: results-<os>/<part>/results.json (each runner's JSON; DC's
  * parts are suite, repro and integration) and coverage-<os>/coverage-summary.json
  * (c8's json-summary), whose lines also go into a table per area of src/
- * (test/coverage-areas.js).
+ * (test/coverage-areas.js). With all three platforms' coverage-<os>/coverage-final.json
+ * in this run, a Combined row and column: the three together, where the 100 %
+ * target is (test/combined-coverage.js). With fewer, or one that can't be read,
+ * the row has no figure and says why.
  * Environment (GitHub Actions sets the first three): GITHUB_REPOSITORY,
  * GITHUB_SERVER_URL, GITHUB_API_URL; GH_TOKEN, RUN_ID, HEAD_SHA, PR (the number;
  * without it nothing is posted), TESTS (an on-demand run's tests value; empty,
@@ -23,6 +26,7 @@
 import fs from 'fs';
 import path from 'path';
 import { MARKER, mergeComment, PLATFORMS, platformJobs, platformMinutes, renderComment, resultsArtifactOf } from './helpers/ci-platforms.js';
+import { combineCoverage, readFinals } from './combined-coverage.js';
 import { coverageByArea } from './coverage-areas.js';
 import { githubApi } from './helpers/github-api.js';
 
@@ -112,6 +116,28 @@ function testResults(os, own) {
 }
 
 const pair = (metric) => [metric.covered, metric.total];
+/** A coverage summary as the comment keeps it: the totals, and the lines by area */
+const coverageOf = ({ total, ...files }) => ({
+  coverage: { lines: pair(total.lines), branches: pair(total.branches), functions: pair(total.functions) },
+  areas: coverageByArea({ total, ...files }).map(({ area, lines }) => [area, lines.covered, lines.total]),
+});
+
+/**
+ * The three platforms combined from this run's own reports; undefined without
+ * all three, { missing } when one can't be read
+ */
+function combinedCoverage() {
+  const files = PLATFORMS.map(({ os }) => path.join(folder, `coverage-${os}`, 'coverage-final.json'));
+  if (!files.every((file) => fs.existsSync(file))) return undefined;
+  let finals;
+  try {
+    finals = readFinals(files);
+  } catch (error) {
+    const unreadable = files.find((file) => error.message.includes(file));
+    return { missing: `${path.basename(path.dirname(unreadable ?? files[0]))} can't be read` };
+  }
+  return coverageOf(combineCoverage(finals));
+}
 
 async function main() {
   const jobs = token && runId ? await githubList(`/repos/${repo}/actions/runs/${runId}/jobs`, 'jobs') : [];
@@ -138,14 +164,14 @@ async function main() {
       tests: tests ?? null,
       // The jobs stopped before the runners wrote anything: at which step
       stoppedAt: tests ? undefined : own.flatMap((item) => item.steps ?? []).find((item) => item.conclusion === 'failure')?.name,
-      coverage: summary ? { lines: pair(summary.total.lines), branches: pair(summary.total.branches), functions: pair(summary.total.functions) } : null,
-      areas: summary ? coverageByArea(summary).map(({ area, lines }) => [area, lines.covered, lines.total]) : [],
+      ...(summary ? coverageOf(summary) : { coverage: null, areas: [] }),
       links: { run: runUrl, coverage: artifact('coverage'), results: artifact('results') },
     };
   }
+  const combined = combinedCoverage();
 
   // The job summary gets the comment once, whether or not it could be posted
-  let body = renderComment({ headSha, testsFrom, platforms: data });
+  let body = renderComment({ headSha, testsFrom, platforms: data, combined });
   try {
     if (!pr || !token) return;
     // A re-run of an older run must not replace the newest commit's results
@@ -156,7 +182,7 @@ async function main() {
     }
     const comments = await githubList(`/repos/${repo}/issues/${pr}/comments`);
     const mine = comments.find((comment) => comment.user?.login === 'github-actions[bot]' && comment.body?.startsWith(MARKER));
-    body = mergeComment({ headSha, data, earlier: mine?.body });
+    body = mergeComment({ headSha, data, earlier: mine?.body, combined });
     if (mine) await github('PATCH', `/repos/${repo}/issues/comments/${mine.id}`, { body });
     else await github('POST', `/repos/${repo}/issues/${pr}/comments`, { body });
   } catch (error) {

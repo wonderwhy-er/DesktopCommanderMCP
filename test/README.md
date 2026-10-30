@@ -69,6 +69,7 @@ Each runner writes, in `test-results/suite/`, `test-results/repro/` or `test-res
   - the install scripts the package ships at its root: `setup-claude-server.js` (bin `setup`), `uninstall-claude-server.js` (bin `remove`), `track-installation.js` (postinstall);
   - the vendored `vendor/telemetry-contract/`, without its tests.
 - **Not counted:** `dist/`, `node_modules/`, `scripts/` and `test/`, as in a usual setup. `test/` holds the tests and the runners, coverage and CI scripts. Those scripts have tests of their own (`test/test-coverage-areas.js`, `test-check-coverage-report.js`, `test-map-copied-scripts.js`, `test-run-coverage.js`, `test-run-ci.js`, `test-ci-comment.js`, `test-ci-platforms.js`, `test-ci-review.js`, `test-select-tests.js`, `test-node-test-runner.js`, `test-runner-scripts.js`), which still run.
+- **Type-only files aren't counted either:** a `.ts` file under `src/` that compiles to no JavaScript, such as `src/types.ts`, holds nothing a test could run. `.c8rc.json`'s `exclude` names each one, and the check fails when that list and the real set differ.
 - **How:** c8 follows every Node process that keeps the test's environment, the server the tests start included, and maps `dist/` back to `src/` through the source maps of the coverage build: `tsconfig.coverage.json` for the TypeScript, and `test/map-copied-scripts.js` for the plain `.js` files the build copies into `dist/` (from `src/`, and the install scripts).
 - **Files no test loads** show at 0 %.
 - **By area:** the run prints, and the PR comment shows, the numbers per folder of `src/` (`src/ui` among them), plus `install scripts` and `vendor/telemetry-contract`, then one total (`test/coverage-areas.js`).
@@ -131,7 +132,9 @@ A change to a shared module reaches most tests, because many tests start the who
   - the results: a row per platform, with its tests passed of how many, what it ran (`everything` for what a push runs), with a note for a part that didn't run and why, how many tests `test/excluded.txt` leaves out (`; 2 excluded (test/excluded.txt)`) and how many checks were skipped, its test job's minutes (`…` while it runs), its commit and its run;
   - it fails closed: a job that failed while its results show no failure, a `results.json` that can't be read, and a run where no test file ran each make the row ❌ and say which;
   - the coverage: a row per platform, with lines, branches and functions, and links to its report and results;
-  - the lines by area, collapsed, a column per platform, then one total.
+  - a **Combined** row: the three platforms together, a line, branch or function covered when any platform ran it. The 100 % target is on this figure. It comes only from one run's three `coverage-final.json` files (`test/combined-coverage.js`). With fewer, or one that can't be read, the row has no figure and says why;
+  - the lines by area, collapsed, a column per platform and the combined one, then one total.
+- **The combined figure on your machine:** `node test/combined-coverage.js <coverage-final.json>...`, for example the three downloaded `coverage-<runner>` reports, prints the table by area.
 - **A run replaces only its own platforms' rows,** so a platform that didn't run in the latest push keeps its last row, with its own commit. The comment keeps each platform's results as hidden data for that. The job summary has the same text.
 
 ## AI review

@@ -138,6 +138,47 @@ export default async function run() {
     }
     console.log('✓ tests=timed: a platform\'s row counts every timed job\'s results, and a job that stopped before its tests');
 
+    // The three platforms combined: only from this run's own three coverage-final.json files
+    const NO_COMBINED = '| **Combined** | – | – | – | needs Linux, Windows and macOS in one run | – |';
+    assert.ok(local.stdout.includes(NO_COMBINED), 'Linux alone: no combined figure');
+    const threeDir = createTempDir('dc-ci-comment-three-');
+    try {
+      const write = (file, data) => {
+        fs.mkdirSync(path.dirname(path.join(threeDir, file)), { recursive: true });
+        fs.writeFileSync(path.join(threeDir, file), JSON.stringify(data));
+      };
+      const final = (os, hits) => {
+        const file = path.join(ROOT, 'src', 'tools', 'edit.ts');
+        const loc = (line) => ({ start: { line, column: 0 }, end: { line, column: 5 } });
+        const report = { path: file, statementMap: { 0: loc(1), 1: loc(2) }, s: { 0: hits[0], 1: hits[1] } };
+        write(`coverage-${os}/coverage-final.json`, { [file]: { ...report, branchMap: {}, b: {}, fnMap: {}, f: {} } });
+        const lines = metric(hits.filter(Boolean).length, 2);
+        const entry = { lines, statements: lines, branches: metric(0, 0), functions: metric(0, 0) };
+        write(`coverage-${os}/coverage-summary.json`, { total: entry, [file]: entry });
+        write(`results-${os}/suite/results.json`, { files: [{ path: 'test/test-a.js', success: true, skipped: [] }] });
+      };
+      // Line 1 runs on Linux only, line 2 on Windows only: 50 % on each, 100 % combined
+      final('ubuntu-latest', [1, 0]);
+      final('windows-latest', [0, 1]);
+      final('macos-latest', [0, 0]);
+      const all = await comment(threeDir, { PR: '', GH_TOKEN: '', TESTS: '' });
+      assert.strictEqual(all.code, 0, all.stderr);
+      const combinedRow = '| **Combined** | 100 % | 100 % | 100 % | – | – |';
+      assert.ok(all.stdout.includes('| Linux | 50 % |'), `each platform's own figure:\n${all.stdout}`);
+      assert.ok(all.stdout.includes(combinedRow), 'and the combined one');
+      const toolsRow = '| `src/tools` | 50 % (1/2) | 50 % (1/2) | 0 % (0/2) | 100 % (2/2) |';
+      assert.ok(all.stdout.includes(toolsRow), 'and its column by area');
+      // Fail closed: one report that can't be read gives no combined figure, and the row names it
+      fs.writeFileSync(path.join(threeDir, 'coverage-windows-latest', 'coverage-final.json'), '{"cut off');
+      const broken = await comment(threeDir, { PR: '', GH_TOKEN: '', TESTS: '' });
+      assert.strictEqual(broken.code, 0, broken.stderr);
+      const unreadableRow = '| **Combined** | – | – | – | coverage-windows-latest can\'t be read | – |';
+      assert.ok(broken.stdout.includes(unreadableRow), `no combined figure, the report named:\n${broken.stdout}`);
+    } finally {
+      fs.rmSync(threeDir, { recursive: true, force: true });
+    }
+    console.log('✓ the three platforms combined, only from this run\'s three reports; one unreadable gives none');
+
     // A cross-test (tests_from): the summary names the code's commit and the tests' commit
     const cross = await comment(dir, { PR: '', GH_TOKEN: '', TESTS: '', TESTS_FROM: OLDER });
     assert.strictEqual(cross.code, 0, cross.stderr);
