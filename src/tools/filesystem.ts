@@ -334,44 +334,71 @@ async function isPathAllowed(pathToCheck: string): Promise<boolean> {
 // other folders keep the rest.
 export const LOOKUPS_PER_FOLDER = 4;
 
-/** A folder's line: how many of its lookups have their turn, and how to start each lookup waiting for one */
-type LookupLine = { running: number; waiting: Array<() => void> };
+/**
+ * A folder's line: how many of its lookups have their turn, how many of those
+ * ran out of time and haven't returned yet, and how to start each lookup
+ * waiting for one
+ */
+type LookupLine = { running: number; hung: number; waiting: Array<() => void> };
 
 /** Each folder's line, while it has lookups running or waiting */
 const folderLookups = new Map<string, LookupLine>();
 
 /**
- * Stalled folders: folders with a lookup that passed its time limit and hasn't
- * returned yet, with how many such lookups each has. The folder itself, or a
- * path in or below it, fails at once instead of waiting for a lookup that
- * won't answer.
+ * Hung paths: paths with a lookup that passed its time limit and hasn't
+ * returned yet, each with the folder it is in and how many such lookups it
+ * has. A root is never one, so a path elsewhere on it still works.
  */
-const stalledFolders = new Map<string, { folder: string; stalled: number }>();
+const hungPaths = new Map<string, { path: string; folder: string; folderKey: string; hung: number }>();
 
-/** The stalled folder, if there is one, for which `absolutePath` is the folder itself, or a path in or below it */
-function findStalledFolder(absolutePath: string): string | undefined {
-    const comparable = comparablePath(absolutePath);
-    for (const [key, { folder }] of stalledFolders) {
-        if (comparable === key || isInside(comparable, key)) {
-            // The error names it, and it can be a folder above this path's own,
-            // so telemetry replaces it whole
-            addToolCallPaths(folder);
+/** Whether `p` is a root (/, a drive such as C:\, or a share's root), which is its own folder */
+function isRoot(p: string): boolean {
+    return path.dirname(p) === p;
+}
+
+/**
+ * What fails `comparable` (as comparablePath() gives it) at once, if anything:
+ * a hung path that is `comparable` or above it, or a folder that is, once a
+ * second, different path in that folder has hung too. A root is never such a
+ * folder.
+ */
+function stalledPathOver(comparable: string): string | undefined {
+    const isOver = (key: string) => comparable === key || isInside(comparable, key);
+    const hungInFolder = new Map<string, number>();
+    for (const [key, hung] of hungPaths) {
+        if (isOver(key)) {
+            return hung.path;
+        }
+        hungInFolder.set(hung.folderKey, (hungInFolder.get(hung.folderKey) ?? 0) + 1);
+    }
+    for (const { folder, folderKey } of hungPaths.values()) {
+        if (hungInFolder.get(folderKey)! > 1 && !isRoot(folder) && isOver(folderKey)) {
             return folder;
         }
     }
     return undefined;
 }
 
-/** Marks a folder stalled for one more lookup, and starts the lookups waiting in line in it, or below it, which then fail at once */
-function markStalled(key: string, folder: string): void {
-    const mark = stalledFolders.get(key);
-    if (mark) {
-        mark.stalled++;
-    } else {
-        stalledFolders.set(key, { folder, stalled: 1 });
+/** The hung path or stalled folder that fails `absolutePath` at once, if there is one (see stalledPathOver) */
+function findStalledPath(absolutePath: string): string | undefined {
+    const stalledPath = stalledPathOver(comparablePath(absolutePath));
+    if (stalledPath !== undefined) {
+        // The error names it, and it can be a folder above this path's own,
+        // so telemetry replaces it whole
+        addToolCallPaths(stalledPath);
     }
+    return stalledPath;
+}
+
+/**
+ * Starts the lookups waiting in each line that can't give them a turn now,
+ * which then fail at once: a line whose folder a hung path or a stalled
+ * folder is over, and a line whose every turn is held by a lookup that ran out
+ * of time
+ */
+function startHeldUpLookups(): void {
     for (const [lineKey, line] of folderLookups) {
-        if (lineKey === key || isInside(lineKey, key)) {
+        if (line.hung >= LOOKUPS_PER_FOLDER || stalledPathOver(lineKey) !== undefined) {
             for (const startTurn of line.waiting.splice(0)) {
                 line.running++;
                 startTurn();
@@ -380,18 +407,36 @@ function markStalled(key: string, folder: string): void {
     }
 }
 
-/** Unmarks a folder for one stalled lookup that returned, and forgets it once none are left */
-function unmarkStalled(key: string): void {
-    const mark = stalledFolders.get(key)!;
-    mark.stalled--;
-    if (mark.stalled === 0) {
-        stalledFolders.delete(key);
+/** Marks a path hung for one more lookup, unless it is a root, and starts the lookups waiting in line that this holds up */
+function markHung(absolutePath: string, folder: string): void {
+    if (!isRoot(absolutePath)) {
+        const key = comparablePath(absolutePath);
+        const mark = hungPaths.get(key);
+        if (mark) {
+            mark.hung++;
+        } else {
+            hungPaths.set(key, { path: absolutePath, folder, folderKey: comparablePath(folder), hung: 1 });
+        }
+    }
+    startHeldUpLookups();
+}
+
+/** Unmarks a path for one hung lookup that returned, and forgets it once none are left */
+function unmarkHung(absolutePath: string): void {
+    if (isRoot(absolutePath)) {
+        return;
+    }
+    const key = comparablePath(absolutePath);
+    const mark = hungPaths.get(key)!;
+    mark.hung--;
+    if (mark.hung === 0) {
+        hungPaths.delete(key);
     }
 }
 
-/** The error for a path in a stalled folder, with that folder as its `folder` */
-function stalledFolderError(folder: string, absolutePath: string): Error {
-    return Object.assign(new Error(`${folder} isn't responding: a lookup there has waited more than ${FILE_OPERATION_TIMEOUTS.PATH_VALIDATION / 1000} seconds. Desktop Commander can't use ${absolutePath} until it answers. Other folders still work.`), { folder });
+/** The error for a path held up by `stalledPath` (a hung path, a stalled folder, or a folder whose every turn hung), with `stalledPath` as its `folder` */
+function stalledPathError(stalledPath: string, absolutePath: string): Error {
+    return Object.assign(new Error(`${stalledPath} isn't responding: a lookup there has waited more than ${FILE_OPERATION_TIMEOUTS.PATH_VALIDATION / 1000} seconds. Desktop Commander can't use ${absolutePath} until it answers. Other folders still work.`), { folder: stalledPath });
 }
 
 /** Starts the lookups waiting in a folder's line while it has room, and forgets the folder once it has none left */
@@ -413,42 +458,55 @@ function startWaitingLookups(key: string, line: LookupLine): void {
  *   wait in line in memory, not on a thread. A lookup's time limit starts when
  *   it gets its turn, so a slow folder that still answers isn't taken for one
  *   that doesn't, however long its line.
- * - a lookup that runs out of time fails with stalledFolderError and is sent
- *   to telemetry. It marks its folder stalled until it returns, and the
- *   lookups waiting in line in that folder, or below it, fail at once.
+ * - a lookup that runs out of time fails with stalledPathError, naming its own
+ *   path, and is sent to telemetry. Until it returns, that path is hung
+ *   (markHung), and the lookups waiting in line that this holds up fail at once.
+ * - while every turn in a folder's line is held by a lookup that ran out of
+ *   time, the lookups waiting there, and new ones in that folder, fail at
+ *   once: none of them would get a turn until one of those returns. This also
+ *   ends the wait in a root's line, as a root is never marked.
  */
 function lookUpInFolder(folder: string, absolutePath: string, lookup: () => Promise<string>): Promise<string> {
     const key = comparablePath(folder);
-    const line = folderLookups.get(key) ?? { running: 0, waiting: [] };
+    const line = folderLookups.get(key) ?? { running: 0, hung: 0, waiting: [] };
+    if (line.hung >= LOOKUPS_PER_FOLDER) {
+        return Promise.reject(stalledPathError(folder, absolutePath));
+    }
     folderLookups.set(key, line);
 
     return new Promise<string>((resolve, reject) => {
-        let stalled = false;
+        let hung = false;
         let timeout: ReturnType<typeof setTimeout> | undefined;
         let startTurn!: () => void;
 
         // The call that frees a turn only starts it: the lookup goes on here, in
         // the call that queued it, so its telemetry reads that call's paths
         new Promise<void>((resolveTurn) => { startTurn = resolveTurn; }).then(() => {
-            // A lookup that waited in line while its folder stalled fails at once
-            const stalledFolder = findStalledFolder(absolutePath);
-            if (stalledFolder !== undefined) {
-                throw stalledFolderError(stalledFolder, absolutePath);
+            // A lookup that waited in line while its path or folder stalled, or
+            // while every turn in its line hung, fails at once
+            const stalledPath = findStalledPath(absolutePath);
+            if (stalledPath !== undefined) {
+                throw stalledPathError(stalledPath, absolutePath);
+            }
+            if (line.hung >= LOOKUPS_PER_FOLDER) {
+                throw stalledPathError(folder, absolutePath);
             }
             timeout = setTimeout(() => {
                 capture('server_path_validation_timeout', {
                     timeoutMs: FILE_OPERATION_TIMEOUTS.PATH_VALIDATION
                 });
-                reject(stalledFolderError(folder, absolutePath));
-                stalled = true;
-                markStalled(key, folder);
+                reject(stalledPathError(absolutePath, absolutePath));
+                hung = true;
+                line.hung++;
+                markHung(absolutePath, folder);
             }, FILE_OPERATION_TIMEOUTS.PATH_VALIDATION);
             return lookup();
         }).then(resolve, reject).finally(() => {
             clearTimeout(timeout);
             line.running--;
-            if (stalled) {
-                unmarkStalled(key);
+            if (hung) {
+                line.hung--;
+                unmarkHung(absolutePath);
             }
             startWaitingLookups(key, line);
         });
@@ -539,10 +597,10 @@ export async function validatePath(requestedPath: string, { entry = false }: { e
         }
     };
 
-    // A stalled folder itself, or a path in or below it, fails at once, without a lookup on the disk
-    const stalledFolder = findStalledFolder(absoluteOriginal);
-    if (stalledFolder !== undefined) {
-        throw stalledFolderError(stalledFolder, absoluteOriginal);
+    // A hung path or a stalled folder itself, or a path below it, fails at once, without a lookup on the disk
+    const stalledPath = findStalledPath(absoluteOriginal);
+    if (stalledPath !== undefined) {
+        throw stalledPathError(stalledPath, absoluteOriginal);
     }
     return lookUpInFolder(folder, absoluteOriginal, validationOperation);
 }
