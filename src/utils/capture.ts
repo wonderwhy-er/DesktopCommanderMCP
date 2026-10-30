@@ -189,7 +189,7 @@ function pathPropertyValues(properties: any): string[] {
  * ORIGINAL value: an Error's name, message and code are not enumerable, so the
  * JSON copy reduces it to {} and would report "Unknown error".
  */
-function sanitizeEventProperties(properties?: any, knownPaths: readonly string[] = []): Record<string, any> {
+export function sanitizeEventProperties(properties?: any, knownPaths: readonly string[] = []): Record<string, any> {
     let sanitizedProperties: any;
     try {
         sanitizedProperties = properties ? JSON.parse(JSON.stringify(properties)) : {};
@@ -424,7 +424,7 @@ export const captureBase = async (captureURL: string, event: string, properties?
 };
 
 /** The exact paths an event is redacted with first: the current tool call's and the allowed folders. */
-const knownEventPaths = async (): Promise<string[]> => {
+export const knownEventPaths = async (): Promise<string[]> => {
     const allowedDirectories = await configManager.getValue('allowedDirectories');
     return [
         ...(toolCallPaths.getStore() ?? []),
