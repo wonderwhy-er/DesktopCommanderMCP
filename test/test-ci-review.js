@@ -524,6 +524,16 @@ export default async function run() {
     assert.ok(/Node\.js v\d/.test(logged) && /\n\s+at /.test(logged) && /status: 429/.test(logged), `the file has the whole crash: ${logged}`);
     assert.ok(!logged.includes('local-key') && logged.includes('<the Gemini key>'), 'never the key, in the file either');
     console.log('✓ run: Gemini CLI\'s own crash is one plain line naming its error, and its whole output is kept, without the key');
+    // Too big for the model's window (every request carries the whole prompt): it stops before the model, in one plain line
+    fs.writeFileSync(summary, '');
+    fs.rmSync(record, { force: true });
+    result = await runReview({ DC_GEMINI_API_KEY: 'local-key', REVIEW_MAX_PROMPT_TOKENS: '100', GITHUB_STEP_SUMMARY: summary });
+    assert.strictEqual(result.code, 1, 'too big: the review fails, never passes');
+    const tooBig = fs.readFileSync(summary, 'utf8');
+    assert.ok(/^\*\*AI review: not done\.\*\* Too big to review: the prompt is about [\d,]+ tokens \(\d+ diff lines\), over the 100 /.test(tooBig), `the job summary says so: ${tooBig}`);
+    assert.ok(result.stderr.includes('npm run review -- A..B') && !/\n\s+at /.test(result.stderr), `one plain line, with how to review it in parts: ${result.stderr}`);
+    assert.ok(!fs.existsSync(record), 'the model never started');
+    console.log('✓ run: a change too big for the model\'s window stops before the model, saying so');
     const hung = path.join(dir, 'hung-child');
     result = await runReview({ DC_GEMINI_API_KEY: 'local-key', FAKE_HANG: hung, REVIEW_TIMEOUT_MS: '3000' });
     assert.strictEqual(result.code, 1, 'a hung model: the review fails');
