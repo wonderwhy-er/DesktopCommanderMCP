@@ -109,6 +109,10 @@ A change to a shared module reaches most tests, because many tests start the who
   - `changed:A..B`: what a push runs, each runner with `--changed A B`;
   - `files:a.js,b.js`: exactly those, each through its folder's runner (`test/`, `repro/`, `integration/`, `docker/`).
   - The run checks out the commit, with a read-only token and no npm cache. When the commit is an open PR's head, its rows go into that PR's comment, with the `tests` value (`Ran`) and the commit. Otherwise only the job summary has them: a run of an older commit leaves the comment as it is.
+- **Cross-tests: one commit's tests on another commit's code, with coverage.** They show what breaks, or loses coverage, when tests move between versions.
+  - **On demand:** `-f tests_from=<sha>` runs that commit's `test/` (its tests, helpers, fixtures and lists) on `commit`'s code. Its heading names both commits, and its rows go into the job summary only, never a PR's comment.
+  - **Locally:** `node test/cross-test.js --tests-from <commit> [--code <commit>]` does the same in a git worktree of the code commit. It brings the results and coverage back to `test-results/cross/`, with `cross-test.json` naming both commits.
+  - **Both commits need this framework** (the runner, `test/run-coverage.js`, c8). Without it, the run stops and says which commit lacks what.
 - **How a `/test` or on-demand run stays safe:** GitHub starts both from main's workflow, with the repository's token, on code no one has merged. So:
   - only a commenter in `MAINTAINERS` starts a `/test` run, and only someone with write access an on-demand one;
   - the first job reads the commit's full SHA once (an on-demand `commit` must be a SHA), and the test job checks out exactly that commit;

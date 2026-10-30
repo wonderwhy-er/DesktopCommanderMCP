@@ -12,8 +12,10 @@
  * (test/coverage-areas.js).
  * Environment (GitHub Actions sets the first three): GITHUB_REPOSITORY,
  * GITHUB_SERVER_URL, GITHUB_API_URL; GH_TOKEN, RUN_ID, HEAD_SHA, PR (the number;
- * without it nothing is posted), and TESTS (an on-demand run's tests value; empty,
- * the default, is everything a push or label run runs, shown as "everything").
+ * without it nothing is posted), TESTS (an on-demand run's tests value; empty,
+ * the default, is everything a push or label run runs, shown as "everything"), and
+ * TESTS_FROM (a cross-test's: the commit whose tests ran on HEAD_SHA's code, named
+ * in the heading).
  * A part that didn't run says why in its results.json (notRun), and the platform's
  * Tests cell carries it; the cell also counts the tests the runners left out by
  * test/excluded.txt (results.json's excluded).
@@ -25,7 +27,7 @@ import { coverageByArea } from './coverage-areas.js';
 import { githubApi } from './helpers/github-api.js';
 
 const folder = process.argv[2] ?? 'ci';
-const { GITHUB_REPOSITORY: repo, GH_TOKEN: token, RUN_ID: runId, PR: pr, HEAD_SHA: headSha } = process.env;
+const { GITHUB_REPOSITORY: repo, GH_TOKEN: token, RUN_ID: runId, PR: pr, HEAD_SHA: headSha, TESTS_FROM: testsFrom } = process.env;
 // What the run tested: empty for everything a push or label run runs, and when the event has no tests input
 const ranTests = process.env.TESTS || 'everything';
 const server = process.env.GITHUB_SERVER_URL ?? 'https://github.com';
@@ -143,7 +145,7 @@ async function main() {
   }
 
   // The job summary gets the comment once, whether or not it could be posted
-  let body = renderComment({ headSha, platforms: data });
+  let body = renderComment({ headSha, testsFrom, platforms: data });
   try {
     if (!pr || !token) return;
     // A re-run of an older run must not replace the newest commit's results

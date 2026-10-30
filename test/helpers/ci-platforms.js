@@ -198,10 +198,14 @@ const minutesCell = ({ minutes }) => {
   return minutes === null ? '…' : String(count(minutes));
 };
 
-/** The PR comment for some platforms' results ({ linux: results, … }) */
-export function renderComment({ headSha, platforms }) {
+/**
+ * The PR comment for some platforms' results ({ linux: results, … }); a
+ * cross-test's (testsFrom, the commit whose tests ran) names both commits
+ */
+export function renderComment({ headSha, testsFrom, platforms }) {
   const ran = PLATFORMS.filter(({ name }) => platforms[name]);
-  const out = [MARKER, `## Tests and coverage for ${commit(headSha)}`];
+  const testsNamed = testsFrom ? `, tests from ${commit(testsFrom)}` : '';
+  const out = [MARKER, `## Tests and coverage for ${commit(headSha)}${testsNamed}`];
   if (ran.length > 0) {
     out.push('', '| Platform | Tests | Ran | Minutes | Commit | Run |', '|---|---|---|---|---|---|');
     for (const { name, label } of ran) {

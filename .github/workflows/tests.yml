@@ -34,6 +34,10 @@ on:
         description: Empty for everything a push runs; or test, integration, repro, docker (Linux only), timed, changed:A..B or files:a.js,b.js
         default: ''
         type: string
+      tests_from:
+        description: A cross-test, the SHA whose test/ runs on commit's code (both need the test framework); empty for commit's own tests
+        default: ''
+        type: string
 
 permissions:
   contents: read
@@ -67,6 +71,7 @@ jobs:
       matrix: ${{ steps.platforms.outputs.matrix }}
       sha: ${{ steps.head.outputs.sha }}
       pr: ${{ steps.head.outputs.pr }}
+      tests_from: ${{ steps.head.outputs.tests_from }}
 
     steps:
       - name: Checkout
@@ -95,6 +100,7 @@ jobs:
           EVENT_PR: ${{ github.event.pull_request.number }}
           EVENT_HEAD: ${{ github.event.pull_request.head.sha }}
           COMMIT: ${{ inputs.commit }}
+          TESTS_FROM: ${{ inputs.tests_from }}
         # GitHub's default bash has -e but not pipefail: without it a failed gh api
         # piped into jq would leave pr empty, as if the commit had no PR
         run: |
@@ -112,6 +118,15 @@ jobs:
               pr=$EVENT_PR ;;
           esac
           [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || { echo "Not a commit SHA: $sha"; exit 1; }
+          # A cross-test: the commit whose test/ runs on sha's code, checked like commit.
+          # Its rows go into the job summary only, never a PR's comment.
+          [[ -z "$TESTS_FROM" || "$TESTS_FROM" =~ ^[0-9a-fA-F]{7,40}$ ]] || { echo "tests_from: not a SHA: $TESTS_FROM"; exit 1; }
+          if [[ -n "$TESTS_FROM" ]]; then
+            tests_from=$(gh api "repos/$GITHUB_REPOSITORY/commits/$TESTS_FROM" --jq .sha)
+            [[ "$tests_from" =~ ^[0-9a-f]{40}$ ]] || { echo "tests_from: not a commit SHA: $tests_from"; exit 1; }
+            echo "tests_from=$tests_from" >> "$GITHUB_OUTPUT"
+            pr=""
+          fi
           [[ -z "$pr" || "$pr" =~ ^[0-9]+$ ]] || { echo "Not a PR number: $pr"; exit 1; }
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
           echo "pr=$pr" >> "$GITHUB_OUTPUT"
@@ -171,6 +186,18 @@ jobs:
           # (GitHub starts them from the default branch). A PR event: GitHub's merge of
           # the PR with its base.
           ref: ${{ github.event_name != 'pull_request' && needs.platforms.outputs.sha || '' }}
+      # A cross-test (tests_from): test/ exactly as that commit has it, on this commit's
+      # code, before anything installs or runs
+      - name: The tests from tests_from
+        shell: bash
+        env:
+          TESTS_FROM: ${{ needs.platforms.outputs.tests_from }}
+        run: |
+          if [[ -n "$TESTS_FROM" ]]; then
+            git fetch --no-tags --depth=1 origin "$TESTS_FROM"
+            git rm -r -q test
+            git checkout "$TESTS_FROM" -- test
+          fi
       - name: Node.js 22
         uses: actions/setup-node@v7
         with:
@@ -289,7 +316,7 @@ jobs:
         uses: actions/download-artifact@v8
         with:
           path: ci
-      # An on-demand run on a commit no open PR has: the job summary only
+      # An on-demand run on a commit no open PR has, or a cross-test: the job summary only
       - name: Write the PR comment and the job summary
         run: node test/ci-comment.js ci >> "$GITHUB_STEP_SUMMARY"
         env:
@@ -298,3 +325,4 @@ jobs:
           RUN_ID: ${{ github.run_id }}
           HEAD_SHA: ${{ needs.platforms.outputs.sha }}
           TESTS: ${{ inputs.tests }}
+          TESTS_FROM: ${{ needs.platforms.outputs.tests_from }}
