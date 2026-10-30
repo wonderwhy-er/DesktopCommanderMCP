@@ -73,9 +73,21 @@ export async function runInstallScript(script, {
     const ran = entries.filter((entry) => entry.command).map((entry) => entry.command);
     return { ...result, posts, commands: ran, home: snapshot(testEnv.home) };
   } finally {
-    testEnv.cleanup();
+    // A test may have made part of the home read-only: writable again, so it can go
+    writable(testEnv.home);
+    if (!hadSetupLog) fs.rmSync(setupLog, { recursive: true, force: true });
     fs.rmSync(logDir, { recursive: true, force: true });
-    if (!hadSetupLog) fs.rmSync(setupLog, { force: true });
+    testEnv.cleanup();
+  }
+}
+
+/** Makes a folder and everything in it writable by its owner */
+function writable(dir) {
+  fs.chmodSync(dir, 0o755);
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const file = path.join(dir, entry.name);
+    if (entry.isDirectory()) writable(file);
+    else fs.chmodSync(file, 0o644);
   }
 }
 
