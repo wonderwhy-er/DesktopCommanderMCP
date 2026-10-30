@@ -69,17 +69,19 @@ const originalRequest = https.request;
 const originalGetValue = configManager.getValue;
 const originalGetOrCreateClientId = configManager.getOrCreateClientId;
 const originalDisableTelemetry = process.env.DESKTOP_COMMANDER_DISABLE_TELEMETRY;
+const originalTelemetryUrl = process.env.DC_TELEMETRY_URL;
 const sent = [];
 let resolveSent;
 let sendTimeout;
 const bothSent = new Promise(resolve => { resolveSent = resolve; });
 try {
     process.env.DESKTOP_COMMANDER_DISABLE_TELEMETRY = '0';
+    process.env.DC_TELEMETRY_URL = 'https://telemetry.desktopcommander.app/mp/collect';
     configManager.getValue = async key => key === 'telemetryEnabled' ? true : undefined;
     configManager.getOrCreateClientId = async () => 'installation-1';
-    https.request = (options, onResponse) => {
-        assert.equal(options.hostname, 'telemetry.desktopcommander.app');
-        assert.equal(options.path, '/mp/collect');
+    https.request = (url, options, onResponse) => {
+        assert.equal(url.hostname, 'telemetry.desktopcommander.app');
+        assert.equal(url.pathname, '/mp/collect');
         const request = new EventEmitter();
         request.setTimeout = () => request;
         request.write = body => { sent.push(JSON.parse(body)); };
@@ -117,8 +119,17 @@ try {
     assert.equal(ordinaryBody.events[0].params.custom_field, 'kept');
     assert.equal(typeof ordinaryBody.events[0].params.platform, 'string');
     assert.throws(() => parseDeviceTransportPayload(ordinaryBody), /Invalid transport/);
+
+    // Without DC_TELEMETRY_URL a transport event makes no request
+    delete process.env.DC_TELEMETRY_URL;
+    sent.length = 0;
+    received({ ...target, call_id: 'call-no-url' });
+    await new Promise(resolve => setTimeout(resolve, 200));
+    assert.equal(sent.length, 0);
 } finally {
     clearTimeout(sendTimeout);
+    if (originalTelemetryUrl === undefined) delete process.env.DC_TELEMETRY_URL;
+    else process.env.DC_TELEMETRY_URL = originalTelemetryUrl;
     https.request = originalRequest;
     syncBuiltinESMExports();
     configManager.getValue = originalGetValue;
