@@ -59,21 +59,26 @@ export function typeOnlyFiles() {
   return typeOnly;
 }
 
-/** Whether a file (a path from the checkout's root) is one the report counts */
+/**
+ * Whether a file (a path from the checkout's root) is one the report counts, by its path alone: the review
+ * asks in a checkout with no src/ and no node_modules. A type-only file under src/ passes it, but .c8rc.json
+ * excludes it, so no report lists it; countedFiles leaves it out
+ */
 export function isCounted(file) {
   if (file.includes('node_modules/') || file.endsWith('.d.ts')) return false;
-  if (file.startsWith('src/')) return !typeOnlyFiles().includes(file);
-  return INSTALL_SCRIPTS.includes(file) || (file.startsWith(`${VENDORED}/`) && !isTest(file));
+  return file.startsWith('src/') || INSTALL_SCRIPTS.includes(file) || (file.startsWith(`${VENDORED}/`) && !isTest(file));
 }
 
-/** Every counted source file in this checkout */
+/** Every counted source file in this checkout, the type-only ones left out */
 export function countedFiles() {
   const files = [...INSTALL_SCRIPTS];
+  const source = (name) => SOURCE.test(name) && !name.endsWith('.d.ts');
+  const counts = (file, name) => source(name) && isCounted(file) && !typeOnlyFiles().includes(file);
   const walk = (dir) => {
     for (const entry of fs.readdirSync(path.join(ROOT, dir), { withFileTypes: true })) {
       const file = `${dir}/${entry.name}`;
       if (entry.isDirectory()) walk(file);
-      else if (SOURCE.test(entry.name) && !entry.name.endsWith('.d.ts') && isCounted(file)) files.push(file);
+      else if (counts(file, entry.name)) files.push(file);
     }
   };
   walk('src');

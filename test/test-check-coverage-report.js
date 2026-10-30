@@ -73,8 +73,9 @@ export default async function run() {
       fs.mkdirSync(path.dirname(path.join(sparse, file)), { recursive: true });
       fs.copyFileSync(path.join(ROOT, file), path.join(sparse, file));
     }
+    const files = JSON.stringify(['src/tools/edit.ts', 'src/types.ts', 'test/run-ci.js']);
     const probe = 'const { isCounted } = await import(\'./test/check-coverage-report.js\');\n'
-      + 'console.log(JSON.stringify([\'src/tools/edit.ts\', \'src/types.ts\', \'test/run-ci.js\'].map((file) => isCounted(file))));';
+      + `console.log(JSON.stringify(${files}.map((file) => isCounted(file))));`;
     const result = spawnSync(process.execPath, ['--input-type=module', '-e', probe], { cwd: sparse, encoding: 'utf8' });
     assert.strictEqual(result.status, 0, `isCounted in a checkout without src/ or node_modules:\n${result.stderr}`);
     assert.deepStrictEqual(JSON.parse(result.stdout), [true, true, false], 'by path: src/ counts, test/ doesn\'t');
