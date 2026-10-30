@@ -117,6 +117,7 @@ jobs:
           sparse-checkout: |
             /package.json
             /.github/review-prompt.md
+            /.github/text-check-prompt.md
             /.github/writing-style.md
             /test/ci-review.js
             /test/ci-review-budget.js

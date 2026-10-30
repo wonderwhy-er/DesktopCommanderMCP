@@ -364,19 +364,19 @@ async function post(folder) {
   const { head, base, summary, findings, usage, tests } = JSON.parse(fs.readFileSync(path.join(folder, 'review.json'), 'utf8'));
   const diff = fs.readFileSync(path.join(folder, 'diff.patch'), 'utf8');
   const shown = { answer: { summary, findings }, diff, headSha: sha(head, 'head'), baseSha: sha(base, 'base'), usage, tests };
-  if (process.env.PR) {
-    const url = `/repos/${repo}/pulls/${Number(process.env.PR)}/reviews`;
-    try {
-      await github('POST', url, reviewOf(shown));
-    } catch (error) {
-      // 422: GitHub can't place a line comment (a line outside the PR's own diff); the summary takes them all
-      if (error.status !== 422) throw error;
-      console.error(`${error.message}\nPosting every finding in the summary instead.`);
-      await github('POST', url, reviewOf({ ...shown, inline: false }));
-    }
-  }
-  // The job summary: every finding, with or without a PR
+  // The job summary first: every finding, with or without a PR, and also when GitHub refuses the review
   console.log(reviewOf({ ...shown, inline: false }).body);
+  if (!process.env.PR) return;
+  const url = `/repos/${repo}/pulls/${Number(process.env.PR)}/reviews`;
+  try {
+    await github('POST', url, reviewOf(shown));
+  } catch (error) {
+    // GitHub didn't take the line comments: 422 for a line outside the PR's own diff, and a 500 for a review with
+    // eleven of them (#970); the summary takes them all
+    if (error.status !== 422 && !(error.status >= 500)) throw error;
+    console.error(`${error.message}\nPosting every finding in the summary instead.`);
+    await github('POST', url, reviewOf({ ...shown, inline: false }));
+  }
 }
 
 const [command, ...args] = process.argv.slice(2);
