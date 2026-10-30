@@ -75,6 +75,8 @@ jobs:
             /test/ci-review.js
             /test/helpers/ci-platforms.js
             /test/helpers/ci-review.js
+            /test/check-coverage-report.js
+            /test/helpers/node-test-runner.js
             /test/helpers/github-api.js
           sparse-checkout-cone-mode: false
       - name: Node.js 22
@@ -209,6 +211,8 @@ jobs:
             /test/ci-review.js
             /test/helpers/ci-platforms.js
             /test/helpers/ci-review.js
+            /test/check-coverage-report.js
+            /test/helpers/node-test-runner.js
             /test/helpers/github-api.js
           sparse-checkout-cone-mode: false
       - name: Node.js 22
