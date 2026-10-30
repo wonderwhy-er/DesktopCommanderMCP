@@ -68,7 +68,7 @@ async function testKnownPathsRedacted() {
     operation_id: path.join(os.homedir(), 'private notes.txt'),
     schema_version: 1,
   };
-  await captureTransport('operation_start', fields);
+  await captureTransport('operation_start', fields, 'user-1');
   const [params] = await sentEvents('operation_start');
   assert.ok(params, `the transport event should be sent, sent: ${JSON.stringify(sent)}`);
   const everything = JSON.stringify(sent).toLowerCase();

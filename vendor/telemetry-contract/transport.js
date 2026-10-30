@@ -25,6 +25,7 @@ const OPTIONAL = [
     "operation_attempt",
     "result_source",
     "tool_name",
+    "IS_MQTT_EXECUTION_ENABLED",
 ];
 
 function isTimestamp(value) {
@@ -34,6 +35,8 @@ function isTimestamp(value) {
 
 function validProperty(key, value) {
     switch (key) {
+        case "IS_MQTT_EXECUTION_ENABLED":
+            return typeof value === "boolean";
         case "source_process_id":
         case "device_id":
         case "call_id":
