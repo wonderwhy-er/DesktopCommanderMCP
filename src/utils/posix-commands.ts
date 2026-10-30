@@ -1,6 +1,6 @@
 import { parse, forEachChild, type SyntaxNode, type Word, type WordPart } from 'unbash';
 import { braceWords, quotedChars, unquotedChars, MAX_BRACE_WORDS, type WordChar } from './brace-expansion.js';
-import type { CommandReading, FoundCommand } from './command-reading.js';
+import type { CommandReading, DefinedFunction, FoundCommand } from './command-reading.js';
 
 /**
  * The command check's reader for POSIX shells (bash, zsh, sh, dash, ksh,
@@ -25,6 +25,9 @@ const STATIC_PARTS = new Set(['Literal', 'SingleQuoted', 'AnsiCQuoted', 'Glob'])
 /** Word parts that bash drops when they are empty and unquoted ($X, ${X}, $(cmd)) */
 const VANISHING_PARTS = new Set(['SimpleExpansion', 'ParameterExpansion', 'CommandExpansion']);
 
+/** The commands that remove a function: unset -f, and zsh's unfunction, unhash -f and disable -f */
+const FUNCTION_REMOVERS = new Set(['unset', 'unfunction', 'unhash', 'disable']);
+
 /**
  * Stand-ins for a piece known only at run time in a brace word's characters,
  * so that braceWords keeps the words next to it ({$X,sudo} makes $X and sudo):
@@ -40,6 +43,17 @@ const KEPT_IF_EMPTY = '\0"';
  * into a $X's name ({$X,su}do makes $Xdo)
  */
 const MAY_VANISH = /^(?:\0\$\w*)+$/;
+
+/**
+ * The commands that run, in this shell, code the reader doesn't read: eval and
+ * zsh's emulate -c (their words), trap and mapfile or readarray -C (later), .
+ * and source (a file), and alias (its value, where the name is used: an alias
+ * comes before a function)
+ */
+const CODE_RUNNERS = new Set(['eval', 'emulate', 'trap', 'mapfile', 'readarray', '.', 'source', 'alias']);
+
+/** The words that run the next word as a command in this shell: builtin, command, and zsh's noglob and nocorrect */
+const COMMAND_PREFIXES = new Set(['builtin', 'command', 'noglob', 'nocorrect']);
 
 /**
  * A word's value as bash reads it (quotes and escapes removed, $'…' decoded),
@@ -111,6 +125,32 @@ function mayVanish(word: Word): boolean {
   return parts.length > 0 && parts.every((part) => VANISHING_PARTS.has(part.type));
 }
 
+/**
+ * Whether a command may remove the function `name`: one of FUNCTION_REMOVERS
+ * anywhere among the command's words (so also after builtin, command or
+ * eval), followed by the name or by a word known only at run time
+ */
+function mayRemoveFunction(command: FoundCommand, name: string): boolean {
+  const at = command.words.findIndex((word) => word !== null && FUNCTION_REMOVERS.has(word));
+  return at >= 0 && command.words.slice(at + 1).some((word) => word === null || word === name);
+}
+
+/**
+ * Whether a command may run code the reader doesn't read, which may remove any
+ * function: one of CODE_RUNNERS, also after COMMAND_PREFIXES (command -p eval),
+ * or a name known only at run time ($cmd may be unset or eval)
+ */
+function mayRunUnreadCode(command: FoundCommand): boolean {
+  const { words } = command;
+  let at = 0;
+  while (COMMAND_PREFIXES.has(words[at] ?? '')) {
+    at++;
+    while (words[at]?.startsWith('-')) at++;
+  }
+  const name = words[at];
+  return name === null || (name !== undefined && CODE_RUNNERS.has(name));
+}
+
 /** Reads a command for a POSIX shell */
 export async function readPosixCommands(command: string): Promise<CommandReading> {
   const script = parse(command);
@@ -153,6 +193,19 @@ export async function readPosixCommands(command: string): Promise<CommandReading
   };
   visit(script, undefined);
 
-  if (parseError !== undefined) return { commands: [], parseError };
-  return { commands: commands.sort((a, b) => a.start - b.start) };
+  if (parseError !== undefined) return { commands: [], functions: [], parseError };
+
+  // Only the script's own statements (see CommandReading.functions), and none the
+  // text may remove: wherever the removal is written, it may run before a call,
+  // from a function's body. Code the reader doesn't read may remove any of them.
+  const functions: DefinedFunction[] = [];
+  const statements = commands.some(mayRunUnreadCode) ? [] : script.commands;
+  for (const statement of statements) {
+    if (statement.command.type !== 'Function' || statement.background) continue;
+    const name = statement.command.name.value;
+    if (!commands.some((command) => mayRemoveFunction(command, name))) {
+      functions.push({ name, end: statement.command.end });
+    }
+  }
+  return { commands: commands.sort((a, b) => a.start - b.start), functions };
 }
