@@ -261,6 +261,36 @@ export default async function run() {
     .includes('| Linux | 99.99 % | 66.66 % | 100 % |'), 'cut, not rounded, to two decimals, as c8\'s own report shows them');
   assert.deepStrictEqual(Object.keys(dataOf(first)), ['linux', 'windows'], 'each platform\'s results are kept in the comment');
 
+  // The three platforms combined, where the 100 % target is: a row under the platforms, and a column by area
+  const three = { linux: results(SHA_A), windows: results(SHA_A), macos: results(SHA_A) };
+  const combined = {
+    coverage: { lines: [60, 100], branches: [7, 8], functions: [10, 10] },
+    areas: [['src/tools', 45, 80], ['src/ui', 15, 20]],
+  };
+  const withCombined = renderComment({ headSha: SHA_A, platforms: three, combined });
+  assert.ok(withCombined.includes('| macOS | 50 % | 75 % | 90 % |'), 'the platforms\' rows');
+  const combinedRow = '| **Combined** | 60 % | 87.5 % | 100 % | – | – |';
+  assert.ok(withCombined.includes(combinedRow), `the combined row under them:\n${withCombined}`);
+  assert.ok(withCombined.includes('| Area | Linux | Windows | macOS | Combined |'), 'a combined column by area');
+  assert.ok(withCombined.includes('| `src/ui` | 50 % (10/20) | 50 % (10/20) | 50 % (10/20) | 75 % (15/20) |'));
+  assert.ok(withCombined.includes('| **total** | 50 % (50/100) | 50 % (50/100) | 50 % (50/100) | 60 % (60/100) |'));
+  assert.deepStrictEqual(prose(withCombined), [], 'still no prose');
+  const merged = mergeComment({ headSha: SHA_A, data: three, earlier: first, combined });
+  assert.ok(merged.includes('| **Combined** | 60 % |'), 'mergeComment passes it on');
+  // Fail closed: no figure unless this one run has the three reports, and the row says why
+  const partial = renderComment({ headSha: SHA_A, platforms: { linux: results(SHA_A) } });
+  const noFigure = '| **Combined** | – | – | – | needs Linux, Windows and macOS in one run | – |';
+  assert.ok(partial.includes(noFigure), `no combined figure from one platform:\n${partial}`);
+  assert.ok(!partial.includes('| Combined |'), 'and no combined column by area');
+  const unreadable = { missing: 'coverage-windows-latest can\'t be read' };
+  const unreadableRow = '| **Combined** | – | – | – | coverage-windows-latest can\'t be read | – |';
+  assert.ok(renderComment({ headSha: SHA_A, platforms: three, combined: unreadable }).includes(unreadableRow),
+    'a report that can\'t be read: said, no figure');
+  const noCoverage = { sha: SHA_A, tests: null, stoppedAt: 'Install', coverage: null, areas: [], links: {} };
+  const bare = renderComment({ headSha: SHA_A, platforms: { windows: noCoverage } });
+  assert.ok(!bare.includes('Combined'), 'no coverage at all: no combined row');
+  console.log('✓ the three platforms combined: a row and a column, only from one run\'s three reports');
+
   const row = (label, sha) => `| ${label} | ✅ 3 of 3 files passed | \`everything\` | 12 | \`${sha.slice(0, 7)}\` |`;
   const second = mergeComment({ headSha: SHA_B, data: { linux: results(SHA_B) }, earlier: first });
   assert.ok(second.includes('## Tests and coverage for `bbbbbbb`'));
