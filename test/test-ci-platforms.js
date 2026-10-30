@@ -512,6 +512,33 @@ export default async function run() {
     && unitJob.indexOf('- name: The npm cache for the release repro') < unitJob.indexOf('- name: Tests with coverage'), 'after npm ci fills it, before the tests');
   console.log('✓ the release repro installs from the job\'s npm cache');
 
+  // Cross-tests: tests_from names the commit whose test/ runs on `commit`'s code; the comment names both
+  const cross = renderComment({ headSha: SHA_A, testsFrom: SHA_B, platforms: { linux: results(SHA_A) } });
+  assert.ok(cross.includes('## Tests and coverage for `aaaaaaa`, tests from `bbbbbbb`'), cross);
+  assert.ok(renderComment({ headSha: SHA_A, platforms: { linux: results(SHA_A) } }).includes('## Tests and coverage for `aaaaaaa`\n'), 'no tests_from: the heading as before');
+  const crossInput = lines.indexOf('      tests_from:');
+  assert.ok(crossInput > 0 && lines.slice(crossInput + 1, crossInput + 4).some((line) => line.trim() === "default: ''"), 'an on-demand tests_from input, empty by default');
+  // Checked as a SHA and resolved, like commit; through the environment only; a cross run writes no PR comment
+  const commitStep = step(platformsJob, 'The commit and its PR');
+  for (const line of [
+    'TESTS_FROM: ${{ inputs.tests_from }}',
+    '[[ -z "$TESTS_FROM" || "$TESTS_FROM" =~ ^[0-9a-fA-F]{7,40}$ ]] || { echo "tests_from: not a SHA: $TESTS_FROM"; exit 1; }',
+    'tests_from=$(gh api "repos/$GITHUB_REPOSITORY/commits/$TESTS_FROM" --jq .sha)',
+    '[[ "$tests_from" =~ ^[0-9a-f]{40}$ ]] || { echo "tests_from: not a commit SHA: $tests_from"; exit 1; }',
+    'pr=""',
+    'echo "tests_from=$tests_from" >> "$GITHUB_OUTPUT"',
+  ]) assert.ok(commitStep.includes(line), `the commit step: ${line}`);
+  assert.ok(platformsJob.includes('tests_from: ${{ steps.head.outputs.tests_from }}'), 'its output');
+  // The test job: test/ exactly as tests_from has it, before anything installs or runs
+  const crossStep = step(unitJob, 'The tests from tests_from');
+  for (const line of ['shell: bash', 'TESTS_FROM: ${{ needs.platforms.outputs.tests_from }}', 'if [[ -n "$TESTS_FROM" ]]; then',
+    'git fetch --no-tags --depth=1 origin "$TESTS_FROM"', 'git rm -r -q test', 'git checkout "$TESTS_FROM" -- test']) {
+    assert.ok(crossStep.includes(line), `the cross step: ${line}\n${crossStep.join('\n')}`);
+  }
+  assert.ok(unitJob.indexOf('- name: The tests from tests_from') < unitJob.indexOf('- name: Install'), 'before the install');
+  assert.ok(commentJob.some((line) => line.trim() === 'TESTS_FROM: ${{ needs.platforms.outputs.tests_from }}'), 'the comment names both commits');
+  console.log('✓ cross-tests: tests_from\'s test/ on commit\'s code, checked like commit, both named, no PR comment');
+
   // The test job installs with npm 11 on every platform: Node 22's npm 10 runs the prepare
   // build inside `npm pack` even with ignore-scripts, into the JSON the release test reads
   const steps = unit.map((line) => line.trim());
