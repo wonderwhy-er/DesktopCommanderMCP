@@ -18,7 +18,8 @@
  * is a command that runs; bypass = blocked programs that slip through today;
  * name = a blocked program's name written another way (in quotes, with an
  * escape, a path, capitals or .exe); meaning = a PowerShell name whose meaning
- * there (an alias, or a program) decides what runs; long = the 14k-char case;
+ * there (an alias, or a program) decides what runs; fish = fish's own syntax
+ * (for … end, ( )), which the bash reader can't parse; long = the 14k-char case;
  * control = a plain blocked program, to keep every approach honest.
  */
 
@@ -137,6 +138,12 @@ export const CORPUS = [
   { id: 'name_ansi_c', group: 'name', shell: 'bash', expect: 'sudo', command: "$'\\x73udo' ls", note: "bash decodes $'\\x73udo' to sudo" },
   { id: 'name_cmd_quote', group: 'name', shell: 'cmd', expect: 'net', command: '"net" user', note: 'cmd drops the quotes and runs net' },
   { id: 'name_cmd_caret', group: 'name', shell: 'cmd', expect: 'net', command: 'n^et user', note: 'cmd drops the ^ and runs net' },
+  { id: 'name_cmd_semicolon', group: 'name', shell: 'cmd', expect: 'sc', command: ';sc stop Spooler', note: 'cmd skips ; before a command, as it skips a space, and runs sc' },
+  { id: 'name_cmd_comma', group: 'name', shell: 'cmd', expect: 'sc', command: ',sc stop Spooler', note: 'cmd skips , before a command and runs sc' },
+  { id: 'name_cmd_equals', group: 'name', shell: 'cmd', expect: 'sc', command: '=sc stop Spooler', note: 'cmd skips = before a command and runs sc' },
+  { id: 'name_cmd_at_space', group: 'name', shell: 'cmd', expect: 'sc', command: '@ sc stop Spooler', note: 'cmd drops the @ and the space after it, and runs sc' },
+  { id: 'name_cmd_lead_words', group: 'name', shell: 'cmd', expect: 'sc', command: 'echo ok & , ; sc stop Spooler', note: 'cmd skips the , and ; before the command after &, and runs sc' },
+  { id: 'name_cmd_lead_arg', group: 'name', shell: 'cmd', expect: null, command: 'echo ;sc', note: 'a ; in an argument is text: echo prints ;sc' },
   { id: 'name_ps_path', group: 'name', shell: 'powershell', expect: process.platform === 'win32' ? 'sc' : null, command: 'C:\\Windows\\System32\\SC.EXE query', note: 'sc.exe by its full path, in capitals: sc on Windows; elsewhere that path names no program' },
   { id: 'name_cmd_exe', group: 'name', shell: 'cmd', expect: 'sc', command: 'sc.exe stop Spooler', note: 'cmd runs sc.exe for sc.exe as for sc' },
   { id: 'name_cmd_path', group: 'name', shell: 'cmd', expect: process.platform === 'win32' ? 'sc' : null, command: '"C:\\Windows\\System32\\SC.EXE" query', note: 'sc.exe by its full path, quoted and in capitals: sc on Windows; elsewhere that path names no program' },
@@ -145,6 +152,13 @@ export const CORPUS = [
 
   // ---- What a name means in PowerShell: an alias runs its target, not a program of that name ----
   { id: 'meaning_sc', group: 'meaning', shell: 'powershell', expect: null, expectPerShell: { pwsh: 'sc' }, command: 'sc query', note: 'Windows PowerShell 5.1 runs Set-Content, the target of its alias sc; PowerShell 7 has no sc alias and runs sc.exe' },
+
+  // ---- fish's own syntax, which the bash reader can't parse: read as main reads it, by its commands' names ----
+  { id: 'fish_for', group: 'fish', shell: 'fish', expect: null, command: 'for f in *.txt; echo $f; end', note: "fish's for … end runs echo" },
+  { id: 'fish_if', group: 'fish', shell: 'fish', expect: null, command: 'if test -d src; ls src; end', note: "fish's if … end runs test and ls" },
+  { id: 'fish_cmdsub', group: 'fish', shell: 'fish', expect: null, command: 'echo (date)', note: "fish's ( ) is a command substitution; it runs date" },
+  { id: 'fish_for_sudo', group: 'fish', shell: 'fish', expect: 'sudo', command: 'for f in *.txt; sudo rm $f; end', note: "fish's for … end runs sudo; main refuses it too" },
+  { id: 'fish_if_sudo', group: 'fish', shell: 'fish', expect: 'sudo', command: 'if test -d src; sudo ls src; end', note: "fish's if … end runs sudo; main refuses it too" },
 
   // ---- The 14k-char case ----
   { id: 'long01', group: 'long', shell: 'powershell', expect: null, command: long01, note: '14k chars; su only as Spanish prose in a here-string' },
