@@ -178,10 +178,11 @@ export default async function run() {
     });
     try {
       const tail = '[2ms] pool = 16\n\n[31007ms] BLOCKED >30000ms -> bootstrap did NOT help';
-      const repro = { path: 'test/repro/test-bootstrap-threadpool.js', success: false, exitCode: 1, skipped: [], outputTail: tail };
+      const repro = { path: 'test/repro/test-bootstrap-threadpool.js', success: false, exitCode: 1, outputTail: tail };
+      const passed = { path: 'test/repro/test-b.js', success: true, skipped: [] };
       fs.mkdirSync(path.join(failedDir, 'results-windows-latest', 'repro'), { recursive: true });
       fs.writeFileSync(path.join(failedDir, 'results-windows-latest', 'repro', 'results.json'),
-        JSON.stringify({ suite: 'repro', files: [repro, { path: 'test/repro/test-b.js', success: true, skipped: [] }] }));
+        JSON.stringify({ suite: 'repro', files: [{ ...repro, skipped: [] }, passed] }));
       const listed = await comment(failedDir, { PR: '', GH_TOKEN: 'x', GITHUB_API_URL: failedApi.url, TESTS: '' });
       assert.strictEqual(listed.code, 0, listed.stderr);
       const row = `| Windows | [\`test/repro/test-bootstrap-threadpool.js\`](${windowsJob}) | `

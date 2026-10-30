@@ -242,11 +242,13 @@ export default async function run() {
 
   // Which files failed, per platform: each with its first error line and a link to its job
   assert.strictEqual(typeof ci.firstError, 'function', 'ci-platforms.js picks a failed file\'s first error line');
-  const tail = ['✓ run: a crash is one plain line naming its error', '❌ Unhandled error: AssertionError: no token', 'at run'];
-  assert.strictEqual(ci.firstError(tail.join('\n')), '❌ Unhandled error: AssertionError: no token', 'the ❌ line, not a ✓ one');
-  assert.strictEqual(ci.firstError('starting\nTypeError: x is not a function\n  at y'), 'TypeError: x is not a function');
-  assert.strictEqual(ci.firstError('[2ms] pool = 16\n[31007ms] BLOCKED >30000ms -> no help\n'), '[31007ms] BLOCKED >30000ms -> no help',
-    'no error line: the last line');
+  const crash = '❌ Unhandled error: AssertionError: no token';
+  const tail = ['✓ run: a crash is one plain line naming its error', crash, 'at run'].join('\n');
+  assert.strictEqual(ci.firstError(tail), crash, 'the ❌ line, not a ✓ one');
+  const typeError = 'TypeError: x is not a function';
+  assert.strictEqual(ci.firstError(`starting\n${typeError}\n  at y`), typeError, 'a line naming an Error');
+  const blocked = '[31007ms] BLOCKED >30000ms -> no help';
+  assert.strictEqual(ci.firstError(`[2ms] pool = 16\n${blocked}\n`), blocked, 'no error line: the last line');
   assert.strictEqual(ci.firstError(''), '', 'no output: nothing');
   assert.strictEqual(ci.firstError(`✗ ${'x'.repeat(400)}`).length, 200, 'a long line cut to 200 characters');
   const jobUrl = 'https://github.com/o/r/actions/runs/1/job/9';
@@ -254,20 +256,25 @@ export default async function run() {
     { file: 'test/repro/test-a.js', error: '[31007ms] BLOCKED >30000ms', job: jobUrl },
     { file: 'test/test-b.js', error: 'with `ticks` | pipes <b>', job: 'javascript:alert(1)' },
   ];
+  const testsWith = (list, files) => ({
+    files, passed: files - list.length, skipped: 0, failed: list.map((each) => each.file), failures: list,
+  });
   const listed = renderComment({ headSha: SHA_A, platforms: {
-    windows: results(SHA_A, { tests: { files: 3, passed: 1, skipped: 0, failed: failures.map((each) => each.file), failures } }),
+    windows: results(SHA_A, { tests: testsWith(failures, 3) }),
     linux: results(SHA_A),
   } });
-  assert.ok(listed.includes('| Platform | Failed file | First error |\n|---|---|---|\n'), `a table of the failed files:\n${listed}`);
-  assert.ok(listed.includes(`| Windows | [\`test/repro/test-a.js\`](${jobUrl}) | \`[31007ms] BLOCKED >30000ms\` |`), 'linked to its job');
-  assert.ok(listed.includes('| Windows | `test/test-b.js` | `with ticks  pipes b` |'), 'no link that isn\'t one; no markup');
+  const header = '| Platform | Failed file | First error |\n|---|---|---|\n';
+  assert.ok(listed.includes(header), `the failed files' table:\n${listed}`);
+  const linked = `| Windows | [\`test/repro/test-a.js\`](${jobUrl}) | \`[31007ms] BLOCKED >30000ms\` |`;
+  assert.ok(listed.includes(linked), 'linked to its job');
+  assert.ok(listed.includes('| Windows | `test/test-b.js` | `with ticks  pipes <b>` |'),
+    'no link that isn\'t one; no backtick or pipe to break the code span or the table');
   assert.ok(!listed.includes('| Linux | `'), 'a platform that passed has no rows');
   assert.ok(!failed.includes('Failed file'), 'no failures recorded (an older comment\'s row): no table');
   const many = Array.from({ length: 25 }, (_, i) => ({ file: `test/test-${i}.js`, error: 'x', job: jobUrl }));
-  const long = renderComment({ headSha: SHA_A, platforms: {
-    macos: results(SHA_A, { tests: { files: 30, passed: 5, skipped: 0, failed: many.map((each) => each.file), failures: many } }),
-  } });
-  assert.strictEqual(long.split('\n').filter((line) => line.startsWith('| macOS | [')).length, 20, 'at most 20 per platform');
+  const long = renderComment({ headSha: SHA_A, platforms: { macos: results(SHA_A, { tests: testsWith(many, 30) }) } });
+  const rows = long.split('\n').filter((line) => line.startsWith('| macOS | ['));
+  assert.strictEqual(rows.length, 20, 'at most 20 per platform');
   assert.ok(long.includes('| macOS | … and 5 more | the results artifact has them |'), 'the rest counted');
   assert.deepStrictEqual(prose(listed), [], 'still no prose');
   console.log('✓ the failed files, per platform: each with its first error line and its job');
