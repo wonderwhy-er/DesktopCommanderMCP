@@ -46,6 +46,12 @@ const MODEL = 'gemini-3.8-flash';
 // session there with no answer (exit 53)
 const TOOL_CALLS = 8;
 const MAX_TURNS = 20;
+// Every request carries the whole prompt, so it may take at most MAX_PROMPT_TOKENS of the model's
+// 1,048,576, leaving room for its reads and its answer (REVIEW_MAX_PROMPT_TOKENS for tests). Counted
+// before any request, at about 3 characters a token: a 16,150-line diff, a 650 KB prompt, came to
+// about 225,000 tokens a request
+const CHARS_PER_TOKEN = 3;
+const MAX_PROMPT_TOKENS = Number(process.env.REVIEW_MAX_PROMPT_TOKENS) || 800_000;
 // Gemini CLI and everything it starts are stopped after this (REVIEW_TIMEOUT_MS for tests)
 const TIMEOUT_MS = Number(process.env.REVIEW_TIMEOUT_MS) || 12 * 60 * 1000;
 const SETTINGS = {
@@ -208,6 +214,12 @@ async function run(range, ...options) {
     calls: TOOL_CALLS,
     tests,
   });
+
+  const tokens = Math.ceil(prompt.length / CHARS_PER_TOKEN);
+  if (tokens > MAX_PROMPT_TOKENS) {
+    throw new Error(`Too big to review: the prompt is about ${tokens.toLocaleString('en-US')} tokens (${diff.split('\n').length} diff lines), over the ${MAX_PROMPT_TOKENS.toLocaleString('en-US')} `
+      + 'the model\'s window leaves for it. Review it in parts: npm run review -- A..B for each.');
+  }
 
   // The model's folder: nothing in it but what we put there. By its real path, as
   // Gemini CLI sees its working folder (macOS's temp folder is behind a link)
