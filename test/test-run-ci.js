@@ -9,7 +9,9 @@
  * timed, changed:A..B or files:a.js,b.js. Stand-ins run the parts; nothing starts.
  */
 import assert from 'assert';
+import fs from 'fs';
 import path from 'path';
+import { fileURLToPath } from 'url';
 import { ciParts, planFor, runParts } from './run-ci.js';
 import { runIfMain } from './helpers/run-if-main.js';
 
@@ -92,6 +94,9 @@ export default async function run() {
   assert.ok(!('NODE_V8_COVERAGE' in release.env) && release.env.PATH === '/bin', 'it runs uncovered, in the rest of the environment');
   assert.ok(Number(release.env.REPRO_TIMEOUT_MS) >= 600_000,
     'a hang guard of 10 minutes: its two npm installs, with an empty cache, outlast 3 on GitHub\'s Windows');
+  // Its npm cache: one CI names (REPRO_NPM_CACHE), else a new one; from an empty cache its first install took 522 s on GitHub's Windows
+  const releaseRepro = fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), 'repro', 'test-release-packages-ship-contract.js'), 'utf8');
+  assert.ok(releaseRepro.includes('npm_config_cache: process.env.REPRO_NPM_CACHE ||'), 'the release repro takes the npm cache it\'s given');
   for (const part of covered.slice(3)) assert.ok(!('NODE_V8_COVERAGE' in part.env), `${part.name} runs uncovered`);
   assert.deepStrictEqual(covered.slice(5).map(script), ['tsc', 'map-copied-scripts.js'], 'then the coverage build again, its copied scripts mapped');
   console.log('✓ under coverage: three parts without their timed tests and Docker\'s uncovered, then the release repro uncovered, then the coverage build again');
