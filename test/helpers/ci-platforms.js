@@ -78,8 +78,9 @@ export function platformsFor(eventName, event) {
     return names.length > 0 ? names : ['linux'];
   }
   if (eventName !== 'pull_request') return [];
-  // Adding review runs every labelled platform, then the review; another label runs just its own
-  if (event.action === 'labeled') return event.label?.name === REVIEW_LABEL ? labelledOn(event.pull_request) : inOrder([event.label?.name]);
+  // A label runs just its own platform; review runs none (each platform ran on its own label's event, and a push
+  // runs them all), so a new PR runs each once and the review alone, once
+  if (event.action === 'labeled') return inOrder([event.label?.name]);
   // Not opened: a new PR's labels come as labeled events, each running its platform
   if (!['synchronize', 'reopened'].includes(event.action)) return [];
   return labelledOn(event.pull_request);
@@ -95,7 +96,8 @@ export function reviewFor(eventName, event) {
   if (eventName === 'issue_comment') return event.action === 'created' && Boolean(event.issue?.pull_request) && commandReview(event.comment?.body);
   if (eventName !== 'pull_request') return false;
   if (event.action === 'labeled') return event.label?.name === REVIEW_LABEL;
-  return ['opened', 'synchronize', 'reopened'].includes(event.action) && (event.pull_request?.labels ?? []).some(({ name }) => name === REVIEW_LABEL);
+  // Not opened: tests.yml doesn't get it, and a new PR's review label reviews through its own event
+  return ['synchronize', 'reopened'].includes(event.action) && (event.pull_request?.labels ?? []).some(({ name }) => name === REVIEW_LABEL);
 }
 
 /** The runner images of some platforms: the test job's matrix */

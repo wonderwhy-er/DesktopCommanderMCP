@@ -235,7 +235,7 @@ jobs:
           overwrite: true
 
   # The AI review, after the test jobs, passed or failed: review.yml, given this run's
-  # results and coverage. With no platform label it runs alone, with no test results.
+  # results and coverage. Adding the review label, or no platform label, runs it alone, with no test results.
   review:
     name: review
     needs: [platforms, unit]
