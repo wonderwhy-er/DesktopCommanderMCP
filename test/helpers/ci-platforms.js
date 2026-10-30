@@ -1,9 +1,10 @@
 /**
  * Which platforms a CI run tests, and the PR comment
- * (.github/workflows/tests.yml through test/ci-platforms.js, and test/ci-comment.js):
- * - only the maintainers start a PR's run: PRs they opened, comments they wrote.
- *   The workflow checks MAINTAINERS here. An on-demand run is for anyone GitHub
- *   lets start it (write access);
+ * (.github/workflows/tests.yml through test/ci-platforms.js, and test/ci-comment.js),
+ * and when the AI review runs (.github/workflows/review.yml through test/ci-review.js):
+ * - only the maintainers start a PR's run or a review: PRs they opened, comments
+ *   they wrote, on-demand reviews they started. Both workflows check MAINTAINERS
+ *   here. An on-demand tests run is for anyone GitHub lets start it (write access);
  * - only the platforms whose label the PR has run: `linux`, `windows`, `macos`;
  *   with none of them, nothing runs;
  * - a push (a PR pushed to or reopened) runs every labelled platform; a new PR's
@@ -13,7 +14,9 @@
  * - a new comment on the PR with a line `/test <platforms>` runs those: `linux`,
  *   `windows`, `macos`, several at once (`/test windows macos`);
  * - an on-demand run (`gh workflow run tests.yml -f platforms=linux,windows …`)
- *   runs the platforms it names, Linux when none; `tests=docker` runs on Linux only.
+ *   runs the platforms it names, Linux when none; `tests=docker` runs on Linux only;
+ * - the review runs on a push to a PR with the label `review`, on adding that
+ *   label, on a comment line `/review`, and on demand (`gh workflow run review.yml`).
  * The PR comment has no prose: a heading with the commit, a results table with a
  * row per platform, a coverage table, and the lines by area, collapsed. Each
  * platform's results are kept in it as hidden data, so a run replaces its own
@@ -28,9 +31,11 @@ export const PLATFORMS = [
 ];
 // The PR comment's first line: CI edits the comment that starts with it
 export const MARKER = '<!-- tests-and-coverage -->';
-// Who starts a PR's run. An explicit list: author_association COLLABORATOR
-// would also cover anyone given access later.
+// Who starts a run in either workflow. An explicit list: author_association
+// COLLABORATOR would also cover anyone given access later.
 export const MAINTAINERS = ['wonderwhy-er', 'mihailt', 'ds-dcmpc', 'edgarsskore', 'Rkrizanovskis', 'serg33v'];
+// The label that reviews a PR on every push
+export const REVIEW_LABEL = 'review';
 
 /** Whether a login is a maintainer's, in any case, as GitHub's own contains() compares them */
 export const isMaintainer = (login) => typeof login === 'string' && MAINTAINERS.some((name) => name.toLowerCase() === login.toLowerCase());
@@ -71,6 +76,19 @@ export function platformsFor(eventName, event) {
   // Not opened: a new PR's labels come as labeled events, each running its platform
   if (!['synchronize', 'reopened'].includes(event.action)) return [];
   return inOrder((event.pull_request?.labels ?? []).map(({ name }) => name));
+}
+
+/** Whether a comment asks for a review: a line that is just `/review` */
+export const commandReview = (body) => String(body ?? '').split(/\r?\n/).some((line) => /^\s*\/review\s*$/i.test(line));
+
+/** Whether a run reviews (review.yml): the label on a push or when added, a /review comment on a PR, or on demand */
+export function reviewFor(eventName, event) {
+  if (!isMaintainer(startedBy(eventName, event))) return false;
+  if (eventName === 'workflow_dispatch') return true;
+  if (eventName === 'issue_comment') return event.action === 'created' && Boolean(event.issue?.pull_request) && commandReview(event.comment?.body);
+  if (eventName !== 'pull_request') return false;
+  if (event.action === 'labeled') return event.label?.name === REVIEW_LABEL;
+  return ['opened', 'synchronize', 'reopened'].includes(event.action) && (event.pull_request?.labels ?? []).some(({ name }) => name === REVIEW_LABEL);
 }
 
 /** The runner images of some platforms: the test job's matrix */
