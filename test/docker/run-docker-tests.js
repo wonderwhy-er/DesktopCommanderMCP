@@ -11,7 +11,7 @@
  *   --none-ok          with no Docker test to run, pass and say so (a run of
  *                      everything); without it, that fails: the run asked for them
  *   --not-run <reason> run nothing and record why in the reports (results.json's
- *                      notRun), for the PR comment: Docker's tests on a platform
+ *                      notRun): Docker's tests on a platform
  *                      without Docker
  */
 import fs from 'fs';

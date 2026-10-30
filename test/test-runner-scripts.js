@@ -74,7 +74,7 @@ export default async function run() {
     const noneOk = runner('docker/run-docker-tests.js', ['--none-ok', ...dockerTests.flatMap((file) => ['--skip', file])], path.join(dir, 'docker-none-ok'));
     assert.strictEqual(noneOk.status, 0, `--none-ok: nothing to run passes:\n${noneOk.output}`);
     assert.ok(noneOk.files.length === 0 && /no Docker tests/.test(noneOk.notRun ?? ''), `its reports say so: ${noneOk.notRun}`);
-    // On a platform without Docker: nothing runs, and the reports carry the reason for the PR comment
+    // On a platform without Docker: nothing runs, and the reports carry the reason
     const reason = 'GitHub\'s macOS runner has no Docker';
     const notHere = runner('docker/run-docker-tests.js', ['--not-run', reason], path.join(dir, 'docker-not-here'));
     assert.strictEqual(notHere.status, 0, notHere.output);
