@@ -65,8 +65,12 @@ const POWERSHELL_PARAMETERS = [
   ...POWERSHELL_VALUE_PARAMETERS, ...POWERSHELL_SWITCHES, 'command', 'commandwithargs', 'cwa', 'encodedcommand', 'ec', 'file',
 ];
 
-/** The name a word gives a PowerShell parameter, written -Name, --Name or /Name, in lowercase */
-const parameterName = (word: string): string | undefined => /^(?:--?|\/)([a-z]+)$/i.exec(word)?.[1].toLowerCase();
+/**
+ * The name a word gives a PowerShell parameter, written -Name, --Name or /Name, in lowercase. PowerShell takes an
+ * en dash, an em dash or a horizontal bar (–, —, ―) for - too, and a second dash only if it is the same
+ */
+const parameterName = (word: string): string | undefined =>
+  /^(?:([-\u2013\u2014\u2015])\1?|\/)([a-z]+)$/i.exec(word)?.[2].toLowerCase();
 
 /** Whether a word is written as a PowerShell parameter is, with the start of a parameter's name (/c, not /tmp) */
 function isPowerShellParameter(word: string | null): boolean {
@@ -124,7 +128,9 @@ function readingsRun({ operands, texts, hidden }: OptionReadings, { words, wordT
  * script file after -File (-f). Without these, its first word that isn't a
  * parameter is a script file in PowerShell 7; Windows PowerShell runs it, and
  * the words after it, as a command, or as a script file when it is a .ps1.
- * Parameters start with -, -- or /, and a parameter's value is the next word,
+ * Parameters start with -, -- or / (pwsh takes –, — and ― for -, and Windows
+ * PowerShell, whose parser isn't open source, may too, so there such a word
+ * is read as no parameter as well), and a parameter's value is the next word,
  * whatever it is (-wd /home/me). A word known only at run time where a
  * parameter can be may be any of them: a switch, a parameter with a value,
  * -Command or -File. Where the check can't tell which word is a value,
@@ -155,10 +161,10 @@ function powerShellRuns({ words, wordTexts }: FoundCommand, program: string): Sh
         continue;
       }
       const parameter = parameterName(word);
-      if (parameter === undefined) {
+      if (parameter === undefined || (program !== 'pwsh' && /^[\u2013\u2014\u2015]/.test(word))) {
         if (program === 'pwsh' || /\.ps1$/i.test(word)) files.add(word);
         else addTexts([wordTexts.slice(i).join(' ')], words.slice(i));
-        return;
+        if (parameter === undefined) return;
       }
       if (parameter === 'ec' || 'encodedcommand'.startsWith(parameter)) {
         const encoded = words[i + 1];
@@ -238,7 +244,9 @@ function cmdRuns({ words, wordTexts }: FoundCommand): ShellRun {
  * words with spaces. Invoke-Expression runs one text, its Command; PowerShell
  * binds one of the words that aren't parameter names to it, and the others
  * may be values of other parameters (iex -ea 0 'net user'), so each of them
- * is a text. A text with a part known only at run time is read as written,
+ * is a text. Written with a colon, the parameter and its value are one word
+ * (iex -Command:'net user'), which runs what iex given that value runs. A
+ * text with a part known only at run time is read as written,
  * as the text of bash -c is, so the programs written in it are checked
  * (eval "cd $HOME && sudo ls"). That part may hold any command, so file is
  * null then, and the command is noted; so is a text that comes from the
@@ -264,10 +272,15 @@ export function sameShellTexts(found: FoundCommand, shellType: ShellType): Shell
   }
   if (shellType === 'powershell' && program === 'invoke-expression') {
     // Where the words that aren't parameter names are; with none, the text comes from the pipeline
-    const at = words.flatMap((word, i) => (i > 0 && (word === null || !word.startsWith('-')) ? [i] : []));
+    const at = words.flatMap((word, i) => (i > 0 && (word === null || !/^[-\u2013\u2014\u2015]/.test(word)) ? [i] : []));
+    // -Command:'net user' (-c: 'net user'): the command without the parameter's name runs the same, and is shorter
+    const withColon = words.flatMap((word) => {
+      const colon = word === null ? null : /^[-\u2013\u2014\u2015]([a-z]+):(.*)$/is.exec(word);
+      return colon && 'command'.startsWith(colon[1].toLowerCase()) ? [`${wordTexts[0]} ${colon[2]}`] : [];
+    });
     return {
-      texts: at.map((i) => wordTexts[i]),
-      ...(at.length === 0 || at.some((i) => words[i] === null) ? { file: null } : {}),
+      texts: [...at.map((i) => wordTexts[i]), ...withColon],
+      ...((at.length === 0 && withColon.length === 0) || at.some((i) => words[i] === null) ? { file: null } : {}),
     };
   }
   return { texts: [] };
