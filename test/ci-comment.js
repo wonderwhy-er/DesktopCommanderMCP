@@ -117,12 +117,15 @@ function testResults(os, own) {
 
 const pair = (metric) => [metric.covered, metric.total];
 /** A coverage summary as the comment keeps it: the totals, and the lines by area */
-const coverageOf = (summary) => ({
-  coverage: { lines: pair(summary.total.lines), branches: pair(summary.total.branches), functions: pair(summary.total.functions) },
-  areas: coverageByArea(summary).map(({ area, lines }) => [area, lines.covered, lines.total]),
+const coverageOf = ({ total, ...files }) => ({
+  coverage: { lines: pair(total.lines), branches: pair(total.branches), functions: pair(total.functions) },
+  areas: coverageByArea({ total, ...files }).map(({ area, lines }) => [area, lines.covered, lines.total]),
 });
 
-/** The three platforms combined from this run's own reports; undefined without all three, { missing } when one can't be read */
+/**
+ * The three platforms combined from this run's own reports; undefined without
+ * all three, { missing } when one can't be read
+ */
 function combinedCoverage() {
   const files = PLATFORMS.map(({ os }) => path.join(folder, `coverage-${os}`, 'coverage-final.json'));
   if (!files.every((file) => fs.existsSync(file))) return undefined;

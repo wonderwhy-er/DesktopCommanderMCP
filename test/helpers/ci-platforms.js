@@ -198,6 +198,26 @@ const minutesCell = ({ minutes }) => {
   return minutes === null ? '…' : String(count(minutes));
 };
 
+/** The coverage table's Combined row: a figure only from one run's three reports, else why there's none */
+function combinedRow(combined) {
+  const { lines: covered, branches, functions } = combined?.coverage ?? {};
+  const why = combined?.coverage ? '–' : plain(combined?.missing ?? 'needs Linux, Windows and macOS in one run');
+  return `| **Combined** | ${ratio(covered)} | ${ratio(branches)} | ${ratio(functions)} | ${why} | – |`;
+}
+
+/** Lines per area, a column each ({ label, areas, total }): a single total hides where the gaps are */
+function areaTable(columns) {
+  const cell = (list, area) => lines(list.find(([each]) => plain(each) === area)?.slice(1));
+  const areas = [...new Set(columns.flatMap((column) => column.areas.map(([area]) => plain(area))))].sort();
+  const row = (name, cells) => `| ${name} | ${cells.join(' | ')} |`;
+  return ['', '<details><summary>Lines by area</summary>', '',
+    row('Area', columns.map(({ label }) => label)),
+    `|---|${columns.map(() => '---').join('|')}|`,
+    ...areas.map((area) => row(`\`${area}\``, columns.map((column) => cell(column.areas, area)))),
+    row('**total**', columns.map(({ total }) => lines(total))),
+    '', '</details>'];
+}
+
 /**
  * The PR comment for some platforms' results ({ linux: results, … }); a
  * cross-test's (testsFrom, the commit whose tests ran) names both commits.
@@ -221,26 +241,14 @@ export function renderComment({ headSha, testsFrom, platforms, combined }) {
       out.push(`| ${label} | ${ratio(coverage?.lines)} | ${ratio(coverage?.branches)} | ${ratio(coverage?.functions)}`
         + ` | ${link(`coverage-${os}`, links?.coverage)} | ${link(`results-${os}`, links?.results)} |`);
     }
-    // The three platforms combined: a figure only from one run's three reports, else why not
-    const together = combined?.coverage ? combined : null;
-    if (ran.some(({ name }) => platforms[name].coverage)) {
-      const why = together ? '–' : plain(combined?.missing ?? 'needs Linux, Windows and macOS in one run');
-      out.push(`| **Combined** | ${ratio(together?.coverage.lines)} | ${ratio(together?.coverage.branches)} | ${ratio(together?.coverage.functions)} | ${why} | – |`);
-    }
-    // Lines per area, a column per platform and the combined one: a single total hides where the gaps are
-    const withAreas = ran.filter(({ name }) => platforms[name].areas?.length);
-    if (withAreas.length > 0) {
-      const areaOf = (list, area) => list.find(([each]) => plain(each) === area);
-      const togetherAreas = together?.areas?.length ? together.areas : null;
-      const areas = [...new Set([...withAreas.flatMap(({ name }) => platforms[name].areas), ...(togetherAreas ?? [])].map(([area]) => plain(area)))].sort();
-      const extra = (text) => (togetherAreas ? ` ${text} |` : '');
-      out.push('', '<details><summary>Lines by area</summary>', '',
-        `| Area | ${withAreas.map(({ label }) => label).join(' | ')} |${extra('Combined')}`,
-        `|---|${withAreas.map(() => '---').join('|')}|${togetherAreas ? '---|' : ''}`,
-        ...areas.map((area) => `| \`${area}\` | ${withAreas.map(({ name }) => lines(areaOf(platforms[name].areas, area)?.slice(1))).join(' | ')} |`
-          + extra(lines(togetherAreas && areaOf(togetherAreas, area)?.slice(1)))),
-        `| **total** | ${withAreas.map(({ name }) => lines(platforms[name].coverage?.lines)).join(' | ')} |${extra(lines(together?.coverage.lines))}`,
-        '', '</details>');
+    if (ran.some(({ name }) => platforms[name].coverage)) out.push(combinedRow(combined));
+    const columns = ran.filter(({ name }) => platforms[name].areas?.length)
+      .map(({ name, label }) => ({ label, areas: platforms[name].areas, total: platforms[name].coverage?.lines }));
+    if (columns.length > 0) {
+      if (combined?.coverage && combined.areas?.length) {
+        columns.push({ label: 'Combined', areas: combined.areas, total: combined.coverage.lines });
+      }
+      out.push(...areaTable(columns));
     }
   }
   // Each platform's results, for the next run to keep the platforms it doesn't run
@@ -263,5 +271,10 @@ export function dataOf(body) {
   return data;
 }
 
-/** The PR comment after a run: this run's platforms' results, and the earlier comment's for the others; the combined figure is this run's own */
-export const mergeComment = ({ headSha, data, earlier, combined }) => renderComment({ headSha, platforms: { ...dataOf(earlier), ...data }, combined });
+/**
+ * The PR comment after a run: this run's platforms' results, and the earlier
+ * comment's for the others; the combined figure is this run's own
+ */
+export const mergeComment = ({ headSha, data, earlier, combined }) => renderComment({
+  headSha, platforms: { ...dataOf(earlier), ...data }, combined,
+});

@@ -51,7 +51,8 @@ export function typeOnlyFiles() {
     for (const entry of fs.readdirSync(path.join(ROOT, dir), { withFileTypes: true })) {
       const file = `${dir}/${entry.name}`;
       if (entry.isDirectory()) walk(file);
-      else if (/\.tsx?$/.test(entry.name) && !entry.name.endsWith('.d.ts') && isTypeOnly(fs.readFileSync(path.join(ROOT, file), 'utf8'))) typeOnly.push(file);
+      else if (!/\.tsx?$/.test(entry.name) || entry.name.endsWith('.d.ts')) continue;
+      else if (isTypeOnly(fs.readFileSync(path.join(ROOT, file), 'utf8'))) typeOnly.push(file);
     }
   };
   walk('src');
@@ -105,7 +106,7 @@ if (isMain) {
   const unexcluded = typeOnlyFiles().filter((file) => !excluded.includes(file));
   const withCode = excluded.filter((file) => !typeOnlyFiles().includes(file));
 
-  if (unexcluded.length > 0) console.error(`✗ Types only, but .c8rc.json doesn't exclude them: ${unexcluded.join(', ')}`);
+  if (unexcluded.length > 0) console.error(`✗ Types only, but not in .c8rc.json's exclude: ${unexcluded.join(', ')}`);
   if (withCode.length > 0) console.error(`✗ .c8rc.json excludes them, but they have code: ${withCode.join(', ')}`);
   if (outside.length > 0) {
     console.error(`✗ ${outside.length} file(s) in the coverage report aren't counted product code (src/, the install scripts, ${VENDORED}/), e.g.:`);

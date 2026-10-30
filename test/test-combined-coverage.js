@@ -16,7 +16,19 @@ import { ROOT } from './helpers/node-test-runner.js';
 import { runIfMain } from './helpers/run-if-main.js';
 import { createTempDir } from './helpers/test-env.js';
 
-const loc = (line, startColumn, endLine, endColumn) => ({ start: { line, column: startColumn }, end: { line: endLine, column: endColumn } });
+const loc = (line, startColumn, endLine, endColumn) => ({
+  start: { line, column: startColumn },
+  end: { line: endLine, column: endColumn },
+});
+const branchOf = ([line, from, endLine, to]) => {
+  const place = loc(line, from, endLine, to);
+  return { type: 'branch', line, loc: place, locations: [place] };
+};
+const functionOf = ([line], i) => ({
+  name: `f${i}`, line, decl: loc(line, 9, line, 12), loc: loc(line, 0, line + 1, 0),
+});
+/** An object of one item per entry, keyed 0, 1, …, as coverage-final.json has its maps */
+const indexed = (list, make) => Object.fromEntries(list.map((item, i) => [i, make(item, i)]));
 
 /**
  * One platform's coverage-final.json entry for a file: lines (statements) by number
@@ -27,56 +39,65 @@ function final(file, { lines, branches = [], functions = [] }) {
   const statements = Object.entries(lines);
   return {
     path: file,
-    statementMap: Object.fromEntries(statements.map(([line], i) => [i, loc(Number(line), 0, Number(line), 10)])),
-    s: Object.fromEntries(statements.map(([, hits], i) => [i, hits])),
-    branchMap: Object.fromEntries(branches.map(([line, from, endLine, to], i) => [i, { type: 'branch', line, loc: loc(line, from, endLine, to), locations: [loc(line, from, endLine, to)] }])),
-    b: Object.fromEntries(branches.map(([, , , , hits], i) => [i, [hits]])),
-    fnMap: Object.fromEntries(functions.map(([line], i) => [i, { name: `f${i}`, line, decl: loc(line, 9, line, 12), loc: loc(line, 0, line + 1, 1) }])),
-    f: Object.fromEntries(functions.map(([, hits], i) => [i, hits])),
+    statementMap: indexed(statements, ([line]) => loc(Number(line), 0, Number(line), 10)),
+    s: indexed(statements, ([, hits]) => hits),
+    branchMap: indexed(branches, branchOf),
+    b: indexed(branches, (branch) => [branch[4]]),
+    fnMap: indexed(functions, functionOf),
+    f: indexed(functions, ([, hits]) => hits),
   };
 }
+
+const RUNNERS = {
+  linux: '/home/runner/work/DesktopCommanderMCP/DesktopCommanderMCP',
+  macos: '/Users/runner/work/DesktopCommanderMCP/DesktopCommanderMCP',
+  windows: 'D:\\a\\DesktopCommanderMCP\\DesktopCommanderMCP',
+};
 
 export default async function run() {
   const edit = path.join(ROOT, 'src', 'tools', 'edit.ts');
   const index = path.join(ROOT, 'src', 'index.ts');
-  // The same file as each runner names it: a Linux, a macOS and a Windows path
-  const linux = { [edit]: final(`/home/runner/work/DesktopCommanderMCP/DesktopCommanderMCP/src/tools/edit.ts`, {
+  // The same file as each runner names it
+  const linux = { [edit]: final(`${RUNNERS.linux}/src/tools/edit.ts`, {
     lines: { 1: 1, 2: 0, 3: 0, 4: 1 },
     branches: [[2, 4, 2, 9, 0], [3, 4, 3, 9, 0], [4, 4, 4, 9, 0]],
     functions: [[1, 1], [3, 0]],
   }) };
-  const macos = { [edit]: final(`/Users/runner/work/DesktopCommanderMCP/DesktopCommanderMCP/src/tools/edit.ts`, {
+  const macos = { [edit]: final(`${RUNNERS.macos}/src/tools/edit.ts`, {
     lines: { 1: 1, 2: 1, 3: 0, 4: 1 },
     branches: [[2, 4, 2, 9, 1], [3, 4, 3, 9, 0], [4, 4, 4, 9, 0]],
     functions: [[1, 1], [3, 0]],
   }) };
-  // Windows: start columns one off; line 4's branch not reported (it ran as often as its parent); one branch of its own
+  // Windows: start columns one off; line 4's branch unreported (it ran as often as its parent); one of its own
   const windows = {
-    [edit]: final(`D:\\a\\DesktopCommanderMCP\\DesktopCommanderMCP\\src\\tools\\edit.ts`, {
+    [edit]: final(`${RUNNERS.windows}\\src\\tools\\edit.ts`, {
       lines: { 1: 1, 2: 0, 3: 1, 4: 1, 5: 0 },
       branches: [[2, 3, 2, 9, 0], [3, 3, 3, 9, 1], [5, 3, 5, 9, 0]],
       functions: [[1, 1], [3, 1]],
     }),
-    [index]: final(`D:\\a\\DesktopCommanderMCP\\DesktopCommanderMCP\\src\\index.ts`, { lines: { 1: 0, 2: 0 } }),
+    [index]: final(`${RUNNERS.windows}\\src\\index.ts`, { lines: { 1: 0, 2: 0 } }),
   };
 
   const combined = combineCoverage([linux, macos, windows]);
   const file = Object.keys(combined).find((key) => key.endsWith('edit.ts'));
   assert.ok(file && path.isAbsolute(file), `a file is its path in this checkout: ${Object.keys(combined).join(', ')}`);
   const entry = combined[file];
-  assert.deepStrictEqual([entry.lines.covered, entry.lines.total], [4, 5], 'lines 1-4 ran on some platform; line 5 on none');
+  const pair = (metric) => [metric.covered, metric.total];
+  assert.deepStrictEqual(pair(entry.lines), [4, 5], 'lines 1-4 ran on some platform; line 5 on none');
   assert.deepStrictEqual(entry.statements, entry.lines, 'statements are the lines, as in c8\'s report');
-  assert.deepStrictEqual([entry.functions.covered, entry.functions.total], [2, 2], 'each function ran on some platform');
-  // Branches: line 2 ran on macOS, line 3 on Windows, line 4's ran on Windows (unreported on a line it ran), line 5's on none
-  assert.deepStrictEqual([entry.branches.covered, entry.branches.total], [3, 4], 'the same branch with Windows\' columns is one branch');
+  assert.deepStrictEqual(pair(entry.functions), [2, 2], 'each function ran on some platform');
+  // Line 2's branch ran on macOS, line 3's on Windows, line 4's on Windows (unreported on a line it ran),
+  // line 5's on none
+  assert.deepStrictEqual(pair(entry.branches), [3, 4], 'the same branch with Windows\' columns is one branch');
   assert.strictEqual(entry.lines.pct, 80);
   console.log('✓ a line, branch or function counts when any platform ran it; Windows\' columns match');
 
   const other = Object.keys(combined).find((key) => key.endsWith('index.ts'));
-  assert.deepStrictEqual([combined[other].lines.covered, combined[other].lines.total], [0, 2], 'a file one platform alone reports is still counted');
-  assert.deepStrictEqual(combined.total.lines, { total: 7, covered: 4, skipped: 0, pct: 57.14 }, 'the total sums the files, its pct cut to two decimals as c8 does');
-  const areas = coverageByArea(combined);
-  assert.deepStrictEqual(areas.map(({ area, files }) => [area, files]), [['src/*', 1], ['src/tools', 1]], 'coverage-areas.js reads the result');
+  assert.deepStrictEqual(pair(combined[other].lines), [0, 2], 'a file one platform alone reports is still counted');
+  assert.deepStrictEqual(combined.total.lines, { total: 7, covered: 4, skipped: 0, pct: 57.14 },
+    'the total sums the files, its pct cut to two decimals as c8 does');
+  const areas = coverageByArea(combined).map(({ area, files }) => [area, files]);
+  assert.deepStrictEqual(areas, [['src/*', 1], ['src/tools', 1]], 'coverage-areas.js reads the result');
   console.log('✓ coverage-summary.json\'s shape, which coverage-areas.js reads');
 
   // Fail closed: a report that's missing or can't be read stops it, naming the file
@@ -87,8 +108,9 @@ export default async function run() {
     const bad = path.join(dir, 'windows.json');
     fs.writeFileSync(bad, '{"cut off');
     assert.strictEqual(readFinals([good]).length, 1);
-    assert.throws(() => readFinals([good, bad]), (error) => error.message.includes('windows.json'), 'an unreadable report');
-    assert.throws(() => readFinals([good, path.join(dir, 'macos.json')]), (error) => error.message.includes('macos.json'), 'a missing report');
+    const naming = (name) => (error) => error.message.includes(name);
+    assert.throws(() => readFinals([good, bad]), naming('windows.json'), 'an unreadable report');
+    assert.throws(() => readFinals([good, path.join(dir, 'macos.json')]), naming('macos.json'), 'a missing report');
     console.log('✓ a missing or unreadable report stops it, naming the file');
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });

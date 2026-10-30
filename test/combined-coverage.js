@@ -43,49 +43,72 @@ function linesOf(data) {
 /** Entries keyed by their line and end, the start column left out; equal keys numbered in order */
 function keyed(map, locOf) {
   const seen = new Map();
-  return Object.entries(map)
-    .sort(([, a], [, b]) => locOf(a).start.line - locOf(b).start.line || locOf(a).start.column - locOf(b).start.column)
-    .map(([id, item]) => {
-      const { start, end } = locOf(item);
-      const base = `${start.line}-${end.line}:${end.column}`;
-      const n = seen.get(base) ?? 0;
-      seen.set(base, n + 1);
-      return { key: `${base}#${n}`, id, item };
-    });
+  const byPlace = ([, a], [, b]) => {
+    const [from, to] = [locOf(a).start, locOf(b).start];
+    return from.line - to.line || from.column - to.column;
+  };
+  return Object.entries(map).sort(byPlace).map(([id, item]) => {
+    const { start, end } = locOf(item);
+    const base = `${start.line}-${end.line}:${end.column}`;
+    const n = seen.get(base) ?? 0;
+    seen.set(base, n + 1);
+    return { key: `${base}#${n}`, id, item };
+  });
 }
 
-const metric = (covered, total) => ({ total, covered, skipped: 0, pct: total === 0 ? 100 : Math.floor((10000 * covered) / total) / 100 });
+/** A metric as c8's json-summary writes it, its percentage cut to two decimals */
+function metric(covered, total) {
+  return { total, covered, skipped: 0, pct: total === 0 ? 100 : Math.floor((10000 * covered) / total) / 100 };
+}
+
+const ran = (hits) => (hits ?? 0) > 0;
+
+/** Lines: each line any platform has, covered when one ran it */
+function combineLines(lines) {
+  const all = new Set(lines.flatMap((each) => [...each.keys()]));
+  return metric([...all].filter((line) => lines.some((each) => ran(each.get(line)))).length, all.size);
+}
+
+/** Branch paths: covered when a platform ran one, or doesn't report it on a line it ran */
+function combineBranches(reports, lines) {
+  const branches = reports.map((data) => new Map(keyed(data.branchMap, (branch) => branch.loc)
+    .map(({ key, id, item }) => [key, { item, hits: data.b[id] ?? [] }])));
+  const all = new Map();
+  for (const each of branches) for (const [key, { item }] of each) if (!all.has(key)) all.set(key, item);
+  let total = 0;
+  let covered = 0;
+  for (const [key, item] of all) {
+    for (let i = 0; i < item.locations.length; i++) {
+      total++;
+      const onLine = (p) => ran(lines[p].get(item.loc.start.line));
+      if (branches.some((each, p) => (each.has(key) ? ran(each.get(key).hits[i]) : onLine(p)))) covered++;
+    }
+  }
+  return metric(covered, total);
+}
+
+/** Functions: covered when any platform ran one */
+function combineFunctions(reports) {
+  const functions = reports.map((data) => new Map(keyed(data.fnMap, (fn) => fn.decl)
+    .map(({ key, id }) => [key, data.f[id]])));
+  const all = new Set(functions.flatMap((each) => [...each.keys()]));
+  return metric([...all].filter((key) => functions.some((each) => ran(each.get(key)))).length, all.size);
+}
 
 /** One file's reports, one per platform that has it, combined: { lines, statements, branches, functions } */
 function combineFile(reports) {
   const lines = reports.map(linesOf);
-  const allLines = new Set(lines.flatMap((each) => [...each.keys()]));
-  const coveredLines = [...allLines].filter((line) => lines.some((each) => (each.get(line) ?? 0) > 0)).length;
-
-  // Each branch path: covered when a platform ran it, or doesn't report it on a line it ran
-  const branches = reports.map((data) => new Map(keyed(data.branchMap, (branch) => branch.loc).map(({ key, id, item }) => [key, { item, hits: data.b[id] ?? [] }])));
-  const branchKeys = new Map();
-  for (const each of branches) for (const [key, { item }] of each) if (!branchKeys.has(key)) branchKeys.set(key, item);
-  let branchTotal = 0;
-  let branchCovered = 0;
-  for (const [key, item] of branchKeys) {
-    for (let i = 0; i < item.locations.length; i++) {
-      branchTotal++;
-      const ran = branches.some((each, p) => (each.has(key) ? (each.get(key).hits[i] ?? 0) > 0 : (lines[p].get(item.loc.start.line) ?? 0) > 0));
-      if (ran) branchCovered++;
-    }
-  }
-
-  const functions = reports.map((data) => new Map(keyed(data.fnMap, (fn) => fn.decl).map(({ key, id }) => [key, data.f[id] ?? 0])));
-  const fnKeys = new Set(functions.flatMap((each) => [...each.keys()]));
-  const fnCovered = [...fnKeys].filter((key) => functions.some((each) => (each.get(key) ?? 0) > 0)).length;
-
-  const lineMetric = metric(coveredLines, allLines.size);
-  return { lines: lineMetric, statements: { ...lineMetric }, branches: metric(branchCovered, branchTotal), functions: metric(fnCovered, fnKeys.size) };
+  const lineMetric = combineLines(lines);
+  return {
+    lines: lineMetric,
+    statements: { ...lineMetric },
+    branches: combineBranches(reports, lines),
+    functions: combineFunctions(reports),
+  };
 }
 
-/** Several platforms' coverage-final.json contents combined, in coverage-summary.json's shape */
-export function combineCoverage(finals) {
+/** Each file's reports from the platforms that have it, by its path in this checkout */
+function reportsByFile(finals) {
   const byFile = new Map();
   for (const final of finals) {
     for (const data of Object.values(final)) {
@@ -93,20 +116,28 @@ export function combineCoverage(finals) {
       byFile.set(file, [...(byFile.get(file) ?? []), data]);
     }
   }
+  return [...byFile].sort(([a], [b]) => a.localeCompare(b));
+}
+
+/** Several platforms' coverage-final.json contents combined, in coverage-summary.json's shape */
+export function combineCoverage(finals) {
   const summary = {};
   const totals = { lines: [0, 0], statements: [0, 0], branches: [0, 0], functions: [0, 0] };
-  for (const [file, reports] of [...byFile].sort(([a], [b]) => a.localeCompare(b))) {
+  for (const [file, reports] of reportsByFile(finals)) {
     summary[file] = combineFile(reports);
     for (const [name, sum] of Object.entries(totals)) {
       sum[0] += summary[file][name].covered;
       sum[1] += summary[file][name].total;
     }
   }
-  return { total: Object.fromEntries(Object.entries(totals).map(([name, [covered, total]]) => [name, metric(covered, total)])), ...summary };
+  const total = {};
+  for (const [name, [covered, sum]] of Object.entries(totals)) total[name] = metric(covered, sum);
+  return { total, ...summary };
 }
 
 // Real paths on both sides: started through a symlink or junction, it still prints
-if (process.argv[1] && fs.realpathSync.native(process.argv[1]) === fs.realpathSync.native(fileURLToPath(import.meta.url))) {
+const real = (file) => fs.realpathSync.native(file);
+if (process.argv[1] && real(process.argv[1]) === real(fileURLToPath(import.meta.url))) {
   const files = process.argv.slice(2);
   if (files.length === 0) {
     console.error('Usage: node test/combined-coverage.js <coverage-final.json>...');

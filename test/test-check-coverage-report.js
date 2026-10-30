@@ -44,17 +44,24 @@ export default async function run() {
 
   // A file of types only compiles to nothing a test could run: not counted, and .c8rc.json excludes it
   assert.strictEqual(typeof report.isTypeOnly, 'function', 'check-coverage-report.js tells a type-only file');
-  for (const source of ['export interface A { x: number }\n', 'import type { B } from \'./b.js\';\nexport type C = B;\n',
-    'declare global {\n  var x: number | undefined;\n}\nexport {};\n', 'import { X } from \'./x.js\';\n// a note\nexport type Y = X;\n']) {
-    assert.ok(report.isTypeOnly(source), `types only: ${JSON.stringify(source)}`);
-  }
-  for (const source of ['export const x = 1;\n', 'export enum E { A }\n', 'export function f() {}\n', 'import \'./side-effect.js\';\nexport type Y = string;\n']) {
-    assert.ok(!report.isTypeOnly(source), `has code: ${JSON.stringify(source)}`);
-  }
+  const typesOnly = [
+    'export interface A { x: number }\n',
+    'import type { B } from \'./b.js\';\nexport type C = B;\n',
+    'declare global {\n  var x: number | undefined;\n}\nexport {};\n',
+    'import { X } from \'./x.js\';\n// a note\nexport type Y = X;\n',
+  ];
+  for (const source of typesOnly) assert.ok(report.isTypeOnly(source), `types only: ${JSON.stringify(source)}`);
+  const withCode = [
+    'export const x = 1;\n',
+    'export enum E { A }\n',
+    'export function f() {}\n',
+    'import \'./side-effect.js\';\nexport type Y = string;\n',
+  ];
+  for (const source of withCode) assert.ok(!report.isTypeOnly(source), `has code: ${JSON.stringify(source)}`);
   const typeOnly = report.typeOnlyFiles();
   assert.ok(typeOnly.includes('src/types.ts'), 'src/types.ts is types only');
   const excluded = c8rc.exclude.filter((pattern) => pattern.startsWith('src/') && !pattern.includes('*'));
-  assert.deepStrictEqual([...excluded].sort(), [...typeOnly].sort(), '.c8rc.json excludes exactly the type-only files under src/');
+  assert.deepStrictEqual([...excluded].sort(), [...typeOnly].sort(), '.c8rc.json excludes exactly the type-only files');
   for (const file of typeOnly) {
     assert.ok(!isCounted(file) && !counted.includes(file), `${file} isn't counted`);
   }
