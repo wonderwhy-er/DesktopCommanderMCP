@@ -233,6 +233,48 @@ setup_persistent_volumes() {
     print_verbose "Persistent environment ready - your tools will survive restarts"
 }
 
+# Ends the installer before anything in the dc-system volume has changed
+stop_before_volume_update() {
+    print_error "$1"
+    print_info "Nothing was changed. Run the installer again."
+    exit 1
+}
+
+# Bring the pulled image into the dc-system volume. The volume keeps /usr, so
+# without this a new image's Desktop Commander and its Chromium stay hidden
+# behind the ones from the image the volume was first made with.
+update_system_volume() {
+    print_info "Updating Desktop Commander in your persistent volume dc-system..."
+
+    # Nothing may use the volume while it is copied: stop the containers that have it (found by
+    # the volume, not ancestor=, which after the pull no longer matches the older image's containers),
+    # then ask again. If Docker doesn't answer, or one still runs, stop before anything changes.
+    local containers
+    containers=$(docker ps -q --filter "volume=dc-system") ||
+        stop_before_volume_update "Docker didn't answer which containers use the volume dc-system"
+    if [ -n "$containers" ]; then
+        docker stop $containers >/dev/null 2>&1 || true
+        containers=$(docker ps -q --filter "volume=dc-system") ||
+            stop_before_volume_update "Docker didn't answer which containers use the volume dc-system"
+        [ -z "$containers" ] ||
+            stop_before_volume_update "Desktop Commander's container is still running and uses the volume dc-system"
+    fi
+
+    # Copies the new image's /usr into the volume, mounted at /target, so an update reaches users
+    # whose /usr is kept in that volume. Desktop Commander's own folder is replaced; the rest is
+    # copied over what the volume has, so the tools the AI installed stay. install-docker.ps1 has
+    # the same command.
+    if docker run --rm -v dc-system:/target "$DOCKER_IMAGE" sh -c 'rm -rf /target/src/app && cp -a /usr/. /target/'; then
+        print_success "Desktop Commander updated; the tools you installed are kept"
+    else
+        print_error "Could not copy the new image into the volume dc-system"
+        print_info "A folder in the volume may be a link in the new image, or the other way round."
+        print_info "Start again from a clean environment (this removes your installed tools and settings):"
+        echo "• Run: $0 --reset && $0"
+        exit 1
+    fi
+}
+
 # Build Docker run arguments
 build_docker_args() {
     print_verbose "Building Docker configuration..."
@@ -483,18 +525,40 @@ show_status() {
     fi
 }
 
+# The process IDs of the Claude Desktop app, one per line, and no others: Claude Code
+# also runs as "claude", and its sessions must keep running.
+# macOS: processes named exactly "Claude", the app's own (Claude Code's are "claude").
+# Linux: Claude Desktop's Linux package, and the community builds made from it, run a
+# program named claude-desktop; older community builds run electron with the app.asar in
+# their claude-desktop folder. Only the program being run counts, so an editor with a file
+# open in a claude-desktop folder is left alone.
+find_claude_desktop_pids() {
+    case "$OS" in
+        macos) pgrep -x "Claude" ;;
+        linux) ps -eo pid=,args= | awk '{ program = $2; sub(/.*\//, "", program) }
+            program == "claude-desktop" || (program ~ /electron/ && ($0 " ") ~ / [^ ]*\/claude-desktop\/([^ ]*\/)?app\.asar /) { print $1 }' ;;
+    esac
+}
+
+# Stop the Claude Desktop app if it runs, and nothing else
+stop_claude_desktop() {
+    local pids
+    # pgrep exits 1 when nothing runs, which with set -e would end the installer here
+    pids=$(find_claude_desktop_pids) || true
+    if [ -n "$pids" ]; then
+        kill $pids 2>/dev/null || true
+        sleep 2
+        print_info "Stopped Claude"
+    fi
+}
+
 # Try to restart Claude automatically
 restart_claude() {
     print_info "Attempting to restart Claude..."
+    stop_claude_desktop
 
     case "$OS" in
         macos)
-            # Kill Claude if running
-            if pgrep -f "Claude" > /dev/null; then
-                killall "Claude" 2>/dev/null || true
-                sleep 2
-                print_info "Stopped Claude"
-            fi
             # Try to start Claude
             if command -v open &> /dev/null; then
                 if open -a "Claude" 2>/dev/null; then
@@ -507,15 +571,9 @@ restart_claude() {
             fi
             ;;
         linux)
-            # Kill Claude if running
-            if pgrep -f "claude" > /dev/null; then
-                pkill -f "claude" 2>/dev/null || true
-                sleep 2
-                print_info "Stopped Claude"
-            fi
-            # Try to start Claude
-            if command -v claude &> /dev/null; then
-                if claude &>/dev/null & disown; then
+            # Try to start Claude (a community build's command: "claude" is Claude Code's)
+            if command -v claude-desktop &> /dev/null; then
+                if claude-desktop &>/dev/null & disown; then
                     print_success "Claude restarted successfully"
                 else
                     print_warning "Could not auto-start Claude. Please start it manually."
@@ -591,6 +649,7 @@ check_docker
 pull_docker_image
 ask_for_folders
 setup_persistent_volumes
+update_system_volume
 build_docker_args
 update_claude_config
 test_persistence

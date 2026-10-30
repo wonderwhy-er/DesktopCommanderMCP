@@ -321,6 +321,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         - fileReadLineLimit (max lines for read_file, default 1000)
                         - fileWriteLineLimit (max lines per write_file call, default 50)
                         - telemetryEnabled (boolean for telemetry opt-in/out)
+                        - toolCallAuditLogEnabled (boolean for writing tool calls to claude_tool_call.log and tool-history.jsonl, default true)
                         - currentClient (information about the currently connected MCP client)
                         - clientHistory (history of all clients that have connected)
                         - version (version of the DesktopCommander)
@@ -350,6 +351,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         - fileReadLineLimit (number, max lines for read_file)
                         - fileWriteLineLimit (number, max lines per write_file call)
                         - telemetryEnabled (boolean)
+                        - toolCallAuditLogEnabled (boolean, writes tool calls to claude_tool_call.log and tool-history.jsonl)
                         
                         IMPORTANT: Setting allowedDirectories to an empty array ([]) allows full access 
                         to the entire file system, regardless of the operating system.
@@ -1066,6 +1068,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                 description: `
                         Terminate a running process by PID.
 
+                        For a PID that start_process returned, it ends the whole command: the shell and every process the command started, as force_terminate does. Any other PID ends that process only. Sessions started with node:local have a negative PID; stop them with force_terminate.
+
                         Use with caution as this will forcefully terminate the specified process.
 
                         ${CMD_PREFIX_DESCRIPTION}`,
@@ -1105,7 +1109,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         - Debugging tool call sequences
                         
                         Note: Does not track its own calls or track_ui_event.
-                        History is persisted locally in tool-history.jsonl, keeps up to the last 1000
+                        History is persisted locally in tool-history.jsonl (not while toolCallAuditLogEnabled is false), keeps up to the last 1000
                         calls in memory, and trims older on-disk history. Stored outputs over 4 KiB
                         are replaced with an omission marker.
                         

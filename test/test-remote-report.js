@@ -50,6 +50,7 @@ import { deviceConfigPath, runRemote, writeDeviceConfig } from './helpers/remote
 import { startRemoteStandIn } from './helpers/remote-stand-in.js';
 import { createTestEnv, isTestHome } from './helpers/test-env.js';
 import { runIfMain, skip, SKIPPED } from './helpers/run-if-main.js';
+import { waitUntil } from './helpers/wait.js';
 
 const SERVER_AHEAD_S = 90;
 const EMAIL = 'planted.person@example.com';
@@ -65,13 +66,27 @@ function zipFile(result, name) {
     return new PizZip(fs.readFileSync(saved)).file(name).asText();
 }
 
-/** A package folder whose dist/index.js only waits: it stands in for an installed copy in the process list. */
-function fakePackage(folder, name) {
+/**
+ * A package folder whose dist/index.js only waits: it stands in for an installed copy in the process list.
+ * `start` is code its dist/index.js runs first.
+ */
+function fakePackage(folder, name, start = '') {
     fs.mkdirSync(path.join(folder, 'dist'), { recursive: true });
     fs.writeFileSync(path.join(folder, 'package.json'), JSON.stringify({ name, version: '0.0.0', type: 'module' }));
-    fs.writeFileSync(path.join(folder, 'dist', 'index.js'), 'setInterval(() => {}, 1 << 30);\n');
+    fs.writeFileSync(path.join(folder, 'dist', 'index.js'), `${start}\nsetInterval(() => {}, 1 << 30);\n`);
     return path.join(folder, 'dist', 'index.js');
 }
+
+/**
+ * Code for fakePackage(): the server's thread-pool setup as on Windows with Node 22 (src/utils/threadpool-size.ts).
+ * There the process the client started waits, and a copy of it serves. The copy then writes its process ID to the
+ * file named by its first argument.
+ */
+const STARTS_A_COPY = `
+import fs from 'node:fs';
+import { setThreadpoolSize } from ${JSON.stringify(new URL('../dist/utils/threadpool-size.js', import.meta.url).href)};
+setThreadpoolSize('16', false);
+fs.writeFileSync(process.argv[2], String(process.pid));`;
 
 async function runTests() {
     if (!isTestHome()) {
@@ -515,9 +530,13 @@ async function runTests() {
             });
         });
 
-        await test('Desktop Commander MCP: counts processes running its dist/index.js, not `remote`, not another app', async () => {
+        await test('Desktop Commander MCP: counts processes running its dist/index.js, not `remote`, not another app, a server and its copy once', async () => {
             const dcScript = fakePackage(path.join(home, 'fake-dc'), '@wonderwhy-er/desktop-commander');
             const otherScript = fakePackage(path.join(home, 'other-app'), 'other-app');
+            const pairScript = fakePackage(path.join(home, 'fake-dc-pair'), '@wonderwhy-er/desktop-commander', STARTS_A_COPY);
+            const copyPidFile = path.join(home, 'fake-dc-pair-copy.pid');
+            // Without a size from outside, so that the pair's first process starts its copy
+            const { UV_THREADPOOL_SIZE, ...withoutThreadpoolSize } = process.env;
             // Real copies may already run on this machine: compare with a run just before the stand-ins start
             const before = JSON.parse(zipFile(await runReport(env), 'report.json')).desktopCommanderMcp;
             assert(typeof before?.running === 'number', `report.json has desktopCommanderMcp.running: ${JSON.stringify(before)}`);
@@ -526,12 +545,17 @@ async function runTests() {
                 spawn(process.execPath, [dcScript], { stdio: 'ignore' }),
                 spawn(process.execPath, [dcScript, 'remote'], { stdio: 'ignore' }),
                 spawn(process.execPath, [otherScript], { stdio: 'ignore' }),
+                spawn(process.execPath, [pairScript, copyPidFile], { stdio: 'ignore', env: withoutThreadpoolSize }),
             ];
             try {
                 await new Promise((resolve) => setTimeout(resolve, 500));
+                await waitUntil(() => fs.existsSync(copyPidFile), 15_000, 'the copy of the stand-in pair runs');
+                // Without a copy (under --inspect, say) the first process writes the file itself, and the count would hold anyway
+                assert.notStrictEqual(Number(fs.readFileSync(copyPidFile, 'utf8')), standIns[3].pid, 'the stand-in pair should run as two processes');
                 const result = await runReport(env);
                 const after = JSON.parse(zipFile(result, 'report.json')).desktopCommanderMcp;
-                assert.strictEqual(after.running, before.running + 1, `only the stand-in MCP counts: before ${before.running}, after ${after.running}`);
+                assert.strictEqual(after.running, before.running + 2,
+                    `only the stand-in MCP, and the stand-in pair once, count: before ${before.running}, after ${after.running}`);
                 assert(Date.parse(after.since) <= startedAt + 2000, `since is the earliest start: ${after.since}`);
                 const txt = zipFile(result, 'report.txt');
                 const line = txt.split('\n').find((l) => l.startsWith('MCP ')) ?? '';
@@ -540,6 +564,10 @@ async function runTests() {
                 assert(!txt.includes('fake-dc') && !zipFile(result, 'report.json').includes('fake-dc'), 'no paths or command lines');
             } finally {
                 for (const child of standIns) child.kill();
+                // The pair's copy ends by itself once the process that started it is gone; this is in case it doesn't
+                if (fs.existsSync(copyPidFile)) {
+                    try { process.kill(Number(fs.readFileSync(copyPidFile, 'utf8'))); } catch { /* already gone */ }
+                }
             }
         });
 

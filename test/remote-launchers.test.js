@@ -5,6 +5,13 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSyn
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { skip } from "./helpers/run-if-main.js";
+
+// The Unix launchers run under /bin/sh with POSIX tools; test/remote-launcher-windows.test.ps1 checks the Windows one.
+if (process.platform === "win32") {
+    skip("the Unix launchers need /bin/sh, which Windows doesn't have (remote-launcher-windows.test.ps1 checks the Windows launcher)");
+    process.exit(0);
+}
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const quote = (value) => `'${value.replaceAll("'", "'\\''")}'`;
@@ -18,8 +25,9 @@ function executable(file, source) {
 }
 
 try {
-    for (const platform of ["macos", "linux"]) {
-        const original = path.join(root, "scripts/remote", `remote-${platform}.sh`);
+    // Each launcher by its file name, so a change to one picks this test (test/helpers/select-tests.js).
+    for (const [platform, launcher] of [["macos", "remote-macos.sh"], ["linux", "remote-linux.sh"]]) {
+        const original = path.join(root, "scripts/remote", launcher);
         const dir = path.join(temp, platform);
         const bin = path.join(dir, "bin");
         const home = path.join(dir, "user home");
@@ -34,7 +42,8 @@ try {
         writeFileSync(script, source
             .replace("install_prefix=/usr/local", `install_prefix=${quote(installed)}`)
             .replaceAll("</dev/tty", `<${quote(terminalInput)}`));
-        for (const tool of ["awk", "mkdir", "dirname", "mktemp", "rm", "mv", "tar", "shasum", "sha256sum", "cp"]) {
+        // GNU tar runs gzip for -z, so Linux needs it here too (macOS's tar has its own).
+        for (const tool of ["awk", "mkdir", "dirname", "mktemp", "rm", "mv", "tar", "gzip", "shasum", "sha256sum", "cp"]) {
             const found = spawnSync("/bin/sh", ["-c", `command -v ${tool}`], { encoding: "utf8" });
             if (found.status === 0) {
                 symlinkSync(found.stdout.trim(), path.join(bin, tool));

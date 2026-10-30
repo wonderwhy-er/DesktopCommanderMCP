@@ -39,6 +39,8 @@ https.request = (options, callback) => {
 };
 syncBuiltinESMExports();
 delete process.env.DESKTOP_COMMANDER_DISABLE_TELEMETRY;
+// The device sets this from the Remote MCP server; transport events go only there
+process.env.DC_TELEMETRY_URL = 'https://telemetry.desktopcommander.app/mp/collect';
 
 const { captureTransport } = await import('../dist/utils/capture.js');
 const { configManager } = await import('../dist/config-manager.js');

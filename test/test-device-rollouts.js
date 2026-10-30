@@ -241,7 +241,9 @@ async function runTests() {
       rolloutManager.startRefresh();`;
     const child = spawn(process.execPath, ['--input-type=module', '-e', script], { stdio: 'ignore' });
     const exited = await new Promise((resolve) => {
-      const timer = setTimeout(() => resolve(false), 10_000);
+      // It exits in well under a second here; a refresh that keeps it running
+      // keeps it for 30 minutes, so 30 s holds up on a loaded machine and still tells
+      const timer = setTimeout(() => resolve(false), 30_000);
       child.on('exit', () => {
         clearTimeout(timer);
         resolve(true);

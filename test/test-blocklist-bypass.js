@@ -4,30 +4,38 @@
  */
 
 import assert from 'assert';
+import { configManager } from '../dist/config-manager.js';
 import { commandManager } from '../dist/command-manager.js';
 import { exitProcess } from '../dist/utils/exit-process.js';
+import { skip } from './helpers/run-if-main.js';
+import { isTestHome } from './helpers/test-env.js';
+
+/** Asserts that bash running `command` is refused for `name` */
+async function assertBlocked(command, name) {
+    const check = await commandManager.checkCommand(command, 'bash');
+    console.log(`  ${command} =>`, check);
+    assert.deepStrictEqual([check.verdict, check.name], ['blocked', name], `FAIL: should block "${name}" in ${command}`);
+}
 
 async function runTests() {
-    // mock config with blocked commands
-    const blockedCmds = ['sudo', 'iptables', 'rm'];
+    // Sets blockedCommands, so only in a fresh test home
+    if (!isTestHome()) {
+        skip('test-blocklist-bypass.js sets blockedCommands; run it through the runner: node test/run-all-tests.js test-blocklist-bypass.js');
+        return;
+    }
+    await configManager.setValue('blockedCommands', ['sudo', 'iptables', 'rm']);
 
-    console.log('Testing extractCommands...\n');
+    console.log('Testing checkCommand and extractCommands...\n');
 
     try {
         // Test 1: absolute path should be normalized
-        const cmds1 = commandManager.extractCommands('/usr/bin/sudo ls');
-        console.log('  /usr/bin/sudo ls =>', cmds1);
-        assert.ok(cmds1.includes('sudo'), 'FAIL: should extract "sudo" from absolute path');
+        await assertBlocked('/usr/bin/sudo ls', 'sudo');
 
         // Test 2: $() command substitution inside quotes
-        const cmds2 = commandManager.extractCommands('echo "$(iptables -L)"');
-        console.log('  echo "$(iptables -L)" =>', cmds2);
-        assert.ok(cmds2.includes('iptables'), 'FAIL: should extract "iptables" from $() inside quotes');
+        await assertBlocked('echo "$(iptables -L)"', 'iptables');
 
-        // Test 3: backtick substitution  
-        const cmds3 = commandManager.extractCommands('echo `rm -rf /`');
-        console.log('  echo `rm -rf /` =>', cmds3);
-        assert.ok(cmds3.includes('rm'), 'FAIL: should extract "rm" from backticks');
+        // Test 3: backtick substitution
+        await assertBlocked('echo `rm -rf /`', 'rm');
 
         // Test 4: normal command still works
         const cmds4 = commandManager.extractCommands('ls -la /home');
@@ -40,14 +48,10 @@ async function runTests() {
         assert.ok(cmds5.includes('cat'), 'FAIL: should extract "cat" from nested $()');
 
         // Test 6: path with env var prefix
-        const cmds6 = commandManager.extractCommands('HOME=/tmp /usr/sbin/iptables');
-        console.log('  HOME=/tmp /usr/sbin/iptables =>', cmds6);
-        assert.ok(cmds6.includes('iptables'), 'FAIL: should extract "iptables" from path with env');
+        await assertBlocked('HOME=/tmp /usr/sbin/iptables', 'iptables');
 
         // Test 7: backtick substitution inside quotes
-        const cmds7 = commandManager.extractCommands('echo "`/usr/bin/sudo`"');
-        console.log('  echo "`/usr/bin/sudo`" =>', cmds7);
-        assert.ok(cmds7.includes('sudo'), 'FAIL: should extract "sudo" from backticks inside quotes');
+        await assertBlocked('echo "`/usr/bin/sudo`"', 'sudo');
 
         // Test 8: dollar-prefixed tokens should be ignored
         const cmds8 = commandManager.extractCommands('$MYVAR ls');

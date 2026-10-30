@@ -120,16 +120,6 @@ export function isExcelFile(path: string): boolean {
     return getExcelHandler().canHandle(path);
 }
 
-/**
- * Check if a file path is an image file
- * Delegates to ImageFileHandler.canHandle to avoid duplicating extension logic
- * @param path File path
- * @returns true if file is an image format
- */
-export function isImageFile(path: string): boolean {
-    return getImageHandler().canHandle(path);
-}
-
 export type FileAction = 'read' | 'write' | 'edit';
 
 /**

@@ -1,0 +1,328 @@
+# The tests with coverage for the maintainers' PRs, and for any PR a maintainer
+# comments "/test linux windows" on, on the platforms whose label the PR has:
+# linux, windows, macos. No label, no run. A push runs every labelled platform;
+# adding a label runs just its platform; a comment runs the platforms it names.
+# On demand: gh workflow run tests.yml -f commit=<sha> -f platforms=linux,windows
+# -f tests=<value>. One comment on the PR has a row per platform with its last
+# results and links to the reports. See test/README.md.
+---
+name: Tests
+
+on:
+  # No opened: GitHub sends a labeled event for each label a new PR has, and each runs
+  # its platform, so opened would run every platform a second time
+  pull_request:
+    types: [synchronize, reopened, labeled]
+  # A maintainer's "/test <platforms>" on a PR. GitHub runs this event from the
+  # default branch's workflow file, with the repository's token, so a comment's run
+  # tests the PR's code the way the jobs below say: by SHA, read-only, no secret.
+  issue_comment:
+    types: [created]
+  # An on-demand run of one commit. GitHub lets only people with write access start
+  # it, and runs it from the default branch's workflow file unless given --ref.
+  workflow_dispatch:
+    inputs:
+      commit:
+        description: The commit to test, as a SHA
+        required: true
+        type: string
+      platforms:
+        description: linux, windows and macos, comma-separated
+        default: linux
+        type: string
+      tests:
+        description: Empty for everything a push runs; or test, integration, repro, docker (Linux only), timed, changed:A..B or files:a.js,b.js
+        default: ''
+        type: string
+      tests_from:
+        description: A cross-test, the SHA whose test/ runs on commit's code (both need the test framework); empty for commit's own tests
+        default: ''
+        type: string
+
+permissions:
+  contents: read
+
+# A push cancels the PR's older push run, so only the newest writes its rows.
+# Each platform label has a group of its own, so adding it again cancels only its
+# own earlier run; any other label, each comment and each on-demand run gets a
+# group per run and cancels nothing.
+concurrency:
+  group: tests-${{ github.event.pull_request.number || github.event.issue.number }}-${{ github.event_name == 'pull_request' && (github.event.action != 'labeled' && 'push' || contains(fromJSON('["linux","windows","macos"]'), github.event.label.name) && github.event.label.name) || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  platforms:
+    name: platforms
+    # On demand: anyone GitHub lets start it (write access). Otherwise it starts for
+    # a /test comment on a PR, an added platform label, or a push to a PR with one.
+    # Whether a maintainer opened the PR or wrote the comment is test/ci-platforms.js's:
+    # MAINTAINERS in test/helpers/ci-platforms.js, the one list the review workflow
+    # checks too. For anyone else it picks no platform.
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'issue_comment' && github.event.issue.pull_request && (contains(github.event.comment.body, '/test') || contains(github.event.comment.body, '/review')) || github.event.action == 'labeled' && (contains(fromJSON('["linux","windows","macos"]'), github.event.label.name) || github.event.label.name == 'review') || github.event_name == 'pull_request' && github.event.action != 'labeled' && (contains(github.event.pull_request.labels.*.name, 'linux') || contains(github.event.pull_request.labels.*.name, 'windows') || contains(github.event.pull_request.labels.*.name, 'macos') || contains(github.event.pull_request.labels.*.name, 'review'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      review: ${{ steps.review.outputs.review }}
+      base: ${{ steps.review.outputs.base }}
+      os: ${{ steps.platforms.outputs.os }}
+      matrix: ${{ steps.platforms.outputs.matrix }}
+      sha: ${{ steps.head.outputs.sha }}
+      pr: ${{ steps.head.outputs.pr }}
+      tests_from: ${{ steps.head.outputs.tests_from }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            /package.json
+            /test/ci-platforms.js
+            /test/helpers/ci-platforms.js
+            /test/ci-review.js
+            /test/helpers/ci-review.js
+            /test/check-coverage-report.js
+            /test/helpers/node-test-runner.js
+            /test/helpers/github-api.js
+          sparse-checkout-cone-mode: false
+      # The commit the run tests and reports, and its PR, read once here for every job.
+      # A push or a label: the PR's head. A comment: the PR's head, from the API (its
+      # event has none). On demand: the commit it names, as a full SHA, and the open PR
+      # whose head it is, if any (another PR can have it too: a branch built on it).
+      - name: The commit and its PR
+        id: head
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE: ${{ github.event.issue.number }}
+          EVENT_PR: ${{ github.event.pull_request.number }}
+          EVENT_HEAD: ${{ github.event.pull_request.head.sha }}
+          COMMIT: ${{ inputs.commit }}
+          TESTS_FROM: ${{ inputs.tests_from }}
+        # GitHub's default bash has -e but not pipefail: without it a failed gh api
+        # piped into jq would leave pr empty, as if the commit had no PR
+        run: |
+          set -o pipefail
+          case "$GITHUB_EVENT_NAME" in
+            issue_comment)
+              sha=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$ISSUE" --jq .head.sha)
+              pr=$ISSUE ;;
+            workflow_dispatch)
+              [[ "$COMMIT" =~ ^[0-9a-fA-F]{7,40}$ ]] || { echo "commit: not a SHA: $COMMIT"; exit 1; }
+              sha=$(gh api "repos/$GITHUB_REPOSITORY/commits/$COMMIT" --jq .sha)
+              pr=$(gh api "repos/$GITHUB_REPOSITORY/commits/$sha/pulls" | jq -r --arg sha "$sha" '[.[] | select(.state == "open" and .head.sha == $sha)][0].number // empty') ;;
+            *)
+              sha=$EVENT_HEAD
+              pr=$EVENT_PR ;;
+          esac
+          [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || { echo "Not a commit SHA: $sha"; exit 1; }
+          # A cross-test: the commit whose test/ runs on sha's code, checked like commit.
+          # Its rows go into the job summary only, never a PR's comment.
+          [[ -z "$TESTS_FROM" || "$TESTS_FROM" =~ ^[0-9a-fA-F]{7,40}$ ]] || { echo "tests_from: not a SHA: $TESTS_FROM"; exit 1; }
+          if [[ -n "$TESTS_FROM" ]]; then
+            tests_from=$(gh api "repos/$GITHUB_REPOSITORY/commits/$TESTS_FROM" --jq .sha)
+            [[ "$tests_from" =~ ^[0-9a-f]{40}$ ]] || { echo "tests_from: not a commit SHA: $tests_from"; exit 1; }
+            echo "tests_from=$tests_from" >> "$GITHUB_OUTPUT"
+            pr=""
+          fi
+          [[ -z "$pr" || "$pr" =~ ^[0-9]+$ ]] || { echo "Not a PR number: $pr"; exit 1; }
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "pr=$pr" >> "$GITHUB_OUTPUT"
+      # An on-demand tests=timed: test/timed.txt at that commit, read through the API as
+      # data. This job runs no code from the commit. The input comes in through the
+      # environment, as every input does.
+      - name: The timed tests
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ steps.head.outputs.sha }}
+          TESTS: ${{ inputs.tests }}
+        run: |
+          set -o pipefail
+          if [[ "$TESTS" == timed ]]; then
+            gh api "repos/$GITHUB_REPOSITORY/contents/test/timed.txt?ref=$SHA" --jq .content | base64 -d > "$RUNNER_TEMP/timed.txt"
+          fi
+      # Whether this event reviews (a maintainer's review label or /review), and the PR's
+      # base for the review job below; not for an on-demand tests run
+      - name: Whether it reviews
+        id: review
+        if: github.event_name != 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node test/ci-review.js request
+      # A push: every labelled platform. An added label: just its platform. A comment:
+      # the platforms its /test lines name. On demand: the platforms it names, and with
+      # tests=timed a job per timed test on each. A PR or comment by anyone but the
+      # maintainers: none.
+      - name: Which platforms
+        id: platforms
+        run: node test/ci-platforms.js
+        env:
+          TIMED_LIST: ${{ runner.temp }}/timed.txt
+
+  unit:
+    name: unit (${{ matrix.os }}${{ matrix.timed && format(', {0}', matrix.timed) || '' }})
+    needs: platforms
+    if: needs.platforms.outputs.os != '[]'
+    # A job per platform; with tests=timed, a job per timed test and platform, each on its own runner
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.platforms.outputs.matrix) }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    # The PR's code runs here: a read-only token, and no secret named anywhere in this job
+    permissions:
+      contents: read
+    env:
+      DESKTOP_COMMANDER_DISABLE_TELEMETRY: '1'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          # A comment's or an on-demand run: exactly the commit the platforms job read
+          # (GitHub starts them from the default branch). A PR event: GitHub's merge of
+          # the PR with its base.
+          ref: ${{ github.event_name != 'pull_request' && needs.platforms.outputs.sha || '' }}
+      # A cross-test (tests_from): test/ exactly as that commit has it, on this commit's
+      # code, before anything installs or runs
+      - name: The tests from tests_from
+        shell: bash
+        env:
+          TESTS_FROM: ${{ needs.platforms.outputs.tests_from }}
+        run: |
+          if [[ -n "$TESTS_FROM" ]]; then
+            git fetch --no-tags --depth=1 origin "$TESTS_FROM"
+            git rm -r -q test
+            git checkout "$TESTS_FROM" -- test
+          fi
+      - name: Node.js 22
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          # Only on a PR event: a comment's or an on-demand run tests code no one has merged
+          cache: ${{ github.event_name == 'pull_request' && 'npm' || '' }}
+      # npm 11: Node 22's npm 10 runs the prepare build inside `npm pack` even with
+      # ignore-scripts, into the JSON the release test reads
+      # (repro/test-release-packages-ship-contract.js)
+      - name: npm 11
+        run: npm install --global npm@11
+      # Ubuntu keeps Chrome for Testing out of user namespaces (AppArmor), so
+      # Chrome's own sandbox can't start ("No usable sandbox!"). The PDF tests run
+      # Chrome with its sandbox on, never with --no-sandbox.
+      - name: Let Chrome's sandbox start (Linux)
+        if: runner.os == 'Linux'
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      # The job's own read-only token: @vscode/ripgrep's postinstall downloads ripgrep
+      # through api.github.com, which refuses a shared runner's anonymous requests
+      - name: Install
+        run: npm ci
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+      # The release-packages repro installs from this job's npm cache, which npm ci has
+      # just filled: from an empty one, its first install took 522 s on Windows
+      - name: The npm cache for the release repro
+        shell: bash
+        run: echo "REPRO_NPM_CACHE=$(npm config get cache)" >> "$GITHUB_ENV"
+      # Under c8. A push, a label, a comment, or an on-demand run with no tests value:
+      # the suite, the repro scripts and the integration tests, without the timed tests
+      # in test/timed.txt (a shared machine can't time them), and Docker's tests on Linux
+      # (elsewhere the comment says why not). On demand: what its tests value asks for
+      # (test/run-ci.js).
+      - name: Tests with coverage
+        if: ${{ !matrix.timed }}
+        run: npm run test:coverage
+        env:
+          TESTS: ${{ inputs.tests }}
+      # tests=timed: this job's one timed test, alone on its runner, without coverage
+      # (c8 slows what it times)
+      - name: A timed test, without coverage
+        if: ${{ matrix.timed }}
+        run: npm run test:ci
+        env:
+          TESTS: files:${{ matrix.timed }}
+      # A timed job's results apart from the others' (results-<runner>-timed-<test>, a / as -)
+      - name: Upload the test results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: results-${{ matrix.os }}${{ matrix.id && format('-{0}', matrix.id) || '' }}
+          path: |
+            test-results/
+            !test-results/c8-tmp/
+          retention-days: 14
+          overwrite: true
+      - name: Upload the coverage report
+        if: ${{ always() && !matrix.timed }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage-${{ matrix.os }}
+          path: coverage/
+          retention-days: 14
+          overwrite: true
+
+  # The AI review, after the test jobs, passed or failed: review.yml, given this run's
+  # results and coverage. Adding the review label, or no platform label, runs it alone, with no test results.
+  review:
+    name: review
+    needs: [platforms, unit]
+    if: ${{ !cancelled() && needs.platforms.outputs.review == 'true' }}
+    # actions: read for a text check's gh run view, in review.yml (a called job gets no more than this)
+    permissions:
+      contents: read
+      pull-requests: write
+      actions: read
+    uses: ./.github/workflows/review.yml
+    with:
+      pr: ${{ needs.platforms.outputs.pr }}
+      sha: ${{ needs.platforms.outputs.sha }}
+      base: ${{ needs.platforms.outputs.base }}
+    secrets:
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+
+  comment:
+    name: comment
+    needs: [platforms, unit]
+    # Not for a run a newer push cancelled: that push's run writes the comment
+    if: ${{ !cancelled() && needs.unit.result != 'skipped' }}
+    # One at a time per PR: each run rewrites the comment with its own platforms'
+    # rows and keeps the others', so two runs must not write at once. queue: max
+    # keeps every waiting one (the default keeps one, and a third run cancels it).
+    concurrency:
+      group: tests-comment-${{ needs.platforms.outputs.pr }}
+      cancel-in-progress: false
+      queue: max
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: write
+
+    steps:
+      # A comment's run checks out main, as GitHub starts it: this job holds a write
+      # token, so it runs our script, never the PR's, and reads the artifacts as data
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Node.js 22
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - name: Download the results and reports
+        uses: actions/download-artifact@v8
+        with:
+          path: ci
+      # An on-demand run on a commit no open PR has, or a cross-test: the job summary only
+      - name: Write the PR comment and the job summary
+        run: node test/ci-comment.js ci >> "$GITHUB_STEP_SUMMARY"
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ needs.platforms.outputs.pr }}
+          RUN_ID: ${{ github.run_id }}
+          HEAD_SHA: ${{ needs.platforms.outputs.sha }}
+          TESTS: ${{ inputs.tests }}
+          TESTS_FROM: ${{ needs.platforms.outputs.tests_from }}

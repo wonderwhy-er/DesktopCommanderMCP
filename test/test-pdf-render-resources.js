@@ -42,8 +42,29 @@ import path from 'path';
 import { writePdf } from '../dist/tools/filesystem.js';
 import { runIfMain, skip } from './helpers/run-if-main.js';
 
-/** Longest a Chrome profile may take to disappear after a render */
-const PROFILE_REMOVAL_LIMIT_MS = 30_000;
+/**
+ * Longest a Chrome profile may take to disappear after a render: past the
+ * product's own 60 s budget for removing it (CHROME_PROFILE_REMOVAL_BUDGET_MS),
+ * so a loaded machine still sees it go. The wait ends as soon as it is gone.
+ */
+const PROFILE_REMOVAL_LIMIT_MS = 75_000;
+/** Chrome's launch gets this long instead of Puppeteer's 30 s, so a loaded machine still starts it (launch_options.timeout applies) */
+const LAUNCH_TIMEOUT_MS = 120_000;
+/**
+ * A render waits at most this long for its Chrome to exit (CHROME_EXIT_WAIT_MS
+ * in src/tools/pdf/markdown.ts). Chrome still running when writePdf settles
+ * passes only after a render that took that long (a loaded machine), and must
+ * then exit within CHROME_EXIT_LIMIT_MS; a render that returns sooner without
+ * stopping its Chrome still fails.
+ */
+const PRODUCT_CHROME_EXIT_WAIT_MS = 10_000;
+const CHROME_EXIT_LIMIT_MS = 30_000;
+/**
+ * How long a request to the render's server waits for an answer or a refusal.
+ * It ends as soon as either comes, so it only has to outlast a loaded machine;
+ * no answer at all still counts against the server.
+ */
+const LOCAL_ANSWER_LIMIT_MS = 30_000;
 const LAUNCH_TIMEOUT_MESSAGE = 'Timed out after 1 ms while waiting for the WS endpoint URL to appear in stdout!';
 const DC_PROFILE_PREFIX = 'desktop-commander-chrome-profile-';
 /** Puppeteer prefixes a temporary profile folder it creates itself with puppeteer_dev_chrome_profile- */
@@ -136,15 +157,15 @@ function get(port, urlPath) {
             response.on('end', () => resolve({ status: response.statusCode, body }));
         });
         request.on('error', (error) => resolve({ error: error.code ?? error.message }));
-        request.setTimeout(5000, () => request.destroy(new Error('no answer within 5s')));
+        request.setTimeout(LOCAL_ANSWER_LIMIT_MS, () => request.destroy(new Error(`no answer within ${LOCAL_ANSWER_LIMIT_MS}ms`)));
     });
 }
 
-/** Resolves true if something accepts a connection on 127.0.0.1:port */
+/** Resolves true if something accepts a connection on 127.0.0.1:port, or neither accepts nor refuses it in time */
 function acceptsConnections(port) {
     return new Promise((resolve) => {
         const socket = net.connect({ host: '127.0.0.1', port });
-        socket.setTimeout(5000, () => { socket.destroy(); resolve(true); });
+        socket.setTimeout(LOCAL_ANSWER_LIMIT_MS, () => { socket.destroy(); resolve(true); });
         socket.once('connect', () => { socket.destroy(); resolve(true); });
         socket.once('error', () => resolve(false));
     });
@@ -154,9 +175,27 @@ const isRunning = (child) => child.exitCode === null && child.signalCode === nul
 const userDataDirOf = (child) => child.spawnargs.find((arg) => arg.startsWith('--user-data-dir='))?.slice('--user-data-dir='.length);
 
 /**
+ * The pids of the render's Chrome processes still running once writePdf
+ * settled. After a render that took the product's whole exit wait, they get
+ * CHROME_EXIT_LIMIT_MS more to exit; after a quicker one, none.
+ */
+async function chromesStillRunning(render) {
+    let running = render.chromes.filter(isRunning);
+    if (render.ms >= PRODUCT_CHROME_EXIT_WAIT_MS) {
+        const started = Date.now();
+        while (running.length > 0 && Date.now() - started < CHROME_EXIT_LIMIT_MS) {
+            await new Promise((resolve) => setTimeout(resolve, 250));
+            running = running.filter(isRunning);
+        }
+    }
+    return running.map((child) => child.pid);
+}
+
+/**
  * Checks what a render has left the moment writePdf settled: its servers must
- * be closed and its Chrome must have exited. Then waits for its Chrome
- * profile to be removed (that happens in the background once Chrome is gone).
+ * be closed and its Chrome must have exited (see chromesStillRunning). Then
+ * waits for its Chrome profile to be removed (that happens in the background
+ * once Chrome is gone).
  */
 async function assertNothingLeft(render, label) {
     assert.ok(render.servers.length > 0, `${label}: the render should have opened its web server`);
@@ -167,8 +206,8 @@ async function assertNothingLeft(render, label) {
             `${label}: the render's web server on port ${port} is still ${stillListening ? 'listening' : 'accepting connections'} after writePdf settled`);
     }
     assert.ok(render.chromes.length > 0, `${label}: the render should have started Chrome`);
-    const running = render.chromes.filter(isRunning).map((child) => child.pid);
-    assert.deepStrictEqual(running, [], `${label}: Chrome (pid ${running.join(', ')}) still running after writePdf settled`);
+    const running = await chromesStillRunning(render);
+    assert.deepStrictEqual(running, [], `${label}: Chrome (pid ${running.join(', ')}) still running after writePdf settled (in ${render.ms}ms)`);
 
     const profiles = render.chromes.map(userDataDirOf);
     const started = Date.now();
@@ -182,18 +221,23 @@ async function assertNothingLeft(render, label) {
     return Date.now() - started;
 }
 
-/** Runs writePdf while watching the render; resolves with what it opened and the error it rejected with, if any */
-async function render(outFile, markdown, options) {
+/**
+ * Runs writePdf while watching the render, with LAUNCH_TIMEOUT_MS for Chrome's
+ * launch unless `options` set one; resolves with what it opened, how long it
+ * took, and the error it rejected with, if any
+ */
+async function render(outFile, markdown, options = {}) {
     const watched = watchRender();
+    const started = Date.now();
     let error;
     try {
-        await writePdf(outFile, markdown, undefined, options);
+        await writePdf(outFile, markdown, undefined, { ...options, launch_options: { timeout: LAUNCH_TIMEOUT_MS, ...options.launch_options } });
     } catch (caught) {
         error = caught;
     } finally {
         watched.stop();
     }
-    return { ...watched, error };
+    return { ...watched, error, ms: Date.now() - started };
 }
 
 async function testSuccessfulRender() {

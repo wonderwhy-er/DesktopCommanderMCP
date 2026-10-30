@@ -176,9 +176,11 @@ async function testLargeFiles() {
   const text = finalResult.content[0].text;
   assert(text.includes('large.txt'), 'Should find matches in large files');
   
-  // Performance check - should complete within reasonable time (10 seconds)
-  assert(duration < 10000, `Search should complete within 10 seconds, took ${duration}ms`);
-  
+  // Performance check: a search that doesn't complete fails in
+  // searchAndWaitForCompletion (60 s). The time itself is only reported: a
+  // 1000-line file takes milliseconds, and a fixed limit here would measure
+  // how busy the machine is
+
   console.log(`${colors.green}✓ Large files test passed (${duration}ms)${colors.reset}`);
 }
 
@@ -211,13 +213,14 @@ async function testConcurrentSearches() {
 async function testVeryShortTimeout() {
   console.log(`${colors.yellow}Testing very short timeout...${colors.reset}`);
   
-  // A 1ms timeout must end the session promptly instead of hanging
+  // A 1ms timeout must end the session promptly instead of hanging. It ends
+  // in milliseconds; the wait returns then, and 30 s holds on a loaded machine
   const sessionId = await startSearchAndWait({
     path: EDGE_CASE_TEST_DIR,
     pattern: 'pattern',
     searchType: 'content',
     timeout_ms: 1 // Extremely short timeout
-  }, 5000);
+  }, 30_000);
   await handleStopSearch({ sessionId });
   
   console.log(`${colors.green}✓ Very short timeout test passed${colors.reset}`);

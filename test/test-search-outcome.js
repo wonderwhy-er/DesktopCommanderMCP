@@ -25,7 +25,6 @@
 
 import assert from 'assert';
 import fs from 'fs';
-import os from 'os';
 import path from 'path';
 import { fileURLToPath, pathToFileURL } from 'url';
 import { handleStartSearch, handleGetMoreSearchResults } from '../dist/handlers/search-handlers.js';
@@ -35,7 +34,7 @@ import { writeFile } from '../dist/tools/filesystem.js';
 import { searchUntilDone, startSearchAndWait } from './helpers/search.js';
 import { runNode } from './helpers/run-node.js';
 import { hookArgs } from './helpers/module-hooks.js';
-import { isTestHome } from './helpers/test-env.js';
+import { isTestHome, createTempDir } from './helpers/test-env.js';
 import { runIfMain, skip } from './helpers/run-if-main.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -44,6 +43,13 @@ const hooksOf = (file) => pathToFileURL(path.join(FIXTURES, file)).href;
 const moduleUrl = (file) => JSON.stringify(pathToFileURL(path.join(HERE, file)).href);
 
 const PERMISSIONS_WARNING = '✅ Search completed.\n⚠️  Warning: Some files were inaccessible due to permissions. Results may be incomplete.';
+
+// How long a child's untilComplete() reads a session, as long as the search
+// helpers wait (helpers/search.js): the searches end in milliseconds, or at
+// their 1-1.5 s time limit, and the waits return then; a loaded machine still meets it
+const SEARCH_WAIT_MS = 60_000;
+// A child process's limit: past its own waits, so their error reports first
+const CHILD_LIMIT_MS = 120_000;
 
 /** An answer's text with its session id and runtime replaced, to compare whole */
 const normalized = (text) => text.replace(/search_\d+_\d+/g, '<id>').replace(/^Runtime: \d+m?s$/m, 'Runtime: <t>');
@@ -89,7 +95,7 @@ async function inChild(hooks, env, body) {
     import { searchManager } from ${moduleUrl('../dist/search-manager.js')};
     import { searchUntilDone } from ${moduleUrl('helpers/search.js')};
     const untilComplete = async (sessionId, args = {}) => {
-      for (const deadline = Date.now() + 10000; ; await new Promise((resolve) => setTimeout(resolve, 50))) {
+      for (const deadline = Date.now() + ${SEARCH_WAIT_MS}; ; await new Promise((resolve) => setTimeout(resolve, 50))) {
         const page = await handleGetMoreSearchResults({ sessionId, ...args });
         if (page.isError || page.structuredContent.isComplete || Date.now() > deadline) return page;
       }
@@ -103,7 +109,7 @@ async function inChild(hooks, env, body) {
     console.log(JSON.stringify(answers));`;
   const child = await runNode([...hookArgs(hooks), '--input-type=module', '-e', code], {
     env: { ...process.env, ...env },
-    timeoutMs: 60_000,
+    timeoutMs: CHILD_LIMIT_MS,
   });
   assert.strictEqual(child.status, 0, `the search process failed (${child.status}): ${child.stderr}`);
   return JSON.parse(child.stdout.trim().split('\n').pop());
@@ -121,7 +127,7 @@ async function timeLimitAnswer(dir, searchArgs) {
   const child = await runNode([
     ...hookArgs(hooksOf('ripgrep-still-searching-hooks.mjs')),
     path.join(FIXTURES, 'search-stopped-by-time-limit.mjs'), dir, ...(searchArgs ? [JSON.stringify(searchArgs)] : []),
-  ], { timeoutMs: 60_000 });
+  ], { timeoutMs: CHILD_LIMIT_MS });
   assert.strictEqual(child.status, 0, `the search process failed (${child.status}): ${child.stderr}`);
   const { isError, text, outcome } = JSON.parse(child.stdout.trim().split('\n').pop());
   return { isError, outcome, text: normalized(text) };
@@ -364,10 +370,11 @@ function cases(dir) {
     }],
     ['13. a tail read (negative offset) keeps a finished session, as other reads do', async () => {
       const sessionId = await startSearchAndWait({ path: at('five'), pattern: 'needle', searchType: 'content' });
-      await new Promise((resolve) => setTimeout(resolve, 1000));
+      await new Promise((resolve) => setTimeout(resolve, 3000));
       assert(!(await handleGetMoreSearchResults({ sessionId, offset: -1 })).isError, 'the tail read should answer');
-      // Sessions not read for 500 ms go: this one was read just now
-      searchManager.cleanupSessions(500);
+      // Sessions not read for 1.5 s go: this one was read just now, and before
+      // that 3 s ago. 1.5 s on either side, so a loaded machine still tells them apart
+      searchManager.cleanupSessions(1500);
       const page = await handleGetMoreSearchResults({ sessionId, offset: 0 });
       assert(!page.isError, `a session just read from its end should still be there, got: ${page.content[0].text}`);
     }],
@@ -408,7 +415,7 @@ export default async function runTests() {
   if (!isTestHome()) {
     return skip('test-search-outcome.js changes allowedDirectories: it runs only in a test home (node test/run-all-tests.js test-search-outcome.js)');
   }
-  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'dc-search-outcome-')));
+  const dir = createTempDir('dc-search-outcome-');
   const originalConfig = await configManager.getConfig();
   await configManager.setValue('allowedDirectories', [dir]);
   const failures = [];
