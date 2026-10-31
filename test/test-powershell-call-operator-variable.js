@@ -38,6 +38,43 @@ async function runTests() {
   const quotedText = commandManager.extractCommands('echo "& $client init --help"');
   assert.deepEqual(quotedText, ['echo'], 'quoted text must not be treated as a dynamic invocation');
 
+  for (const escapedQuotedTarget of [
+    '& "r`m" file',
+    "& 'r''m' file"
+  ]) {
+    const commands = commandManager.extractCommands(escapedQuotedTarget);
+    assert.ok(commands.includes(DYNAMIC), `${escapedQuotedTarget} should remain unresolved`);
+    assert.equal(await commandManager.validateCommand(escapedQuotedTarget), false,
+      `${escapedQuotedTarget} should fail closed instead of comparing encoded literal text`);
+  }
+
+  const assignedDynamic = commandManager.extractCommands('$out = & $client init --help');
+  assert.ok(assignedDynamic.includes(DYNAMIC), 'assignment call operator should detect the dynamic target');
+  assert.equal(assignedDynamic.includes('init'), false, 'assignment must not misclassify the first argument as the executable');
+  assert.equal(assignedDynamic.includes('='), false, 'assignment syntax must not be extracted as a command');
+
+  const scriptblockDynamic = commandManager.extractCommands('if ($ok) { & $client init --help }');
+  assert.ok(scriptblockDynamic.includes(DYNAMIC), 'scriptblock call operator should detect the dynamic target');
+  assert.equal(scriptblockDynamic.includes('init'), false, 'scriptblock must not misclassify the first argument as the executable');
+
+  const multilineDynamic = commandManager.extractCommands('echo before\n& $client init --help');
+  assert.ok(multilineDynamic.includes('echo'), 'a real command before a newline call operator must still be extracted');
+  assert.ok(multilineDynamic.includes(DYNAMIC), 'newline call operator should detect the dynamic target');
+  assert.equal(multilineDynamic.includes('init'), false, 'newline call operator must not leak the first argument as a command');
+
+  const assignedLiteral = commandManager.extractCommands('$out = & init --help');
+  assert.ok(assignedLiteral.includes('init'), 'assignment call operator should preserve an unquoted literal target');
+  assert.equal(assignedLiteral.includes(DYNAMIC), false, 'literal assignment target must not become dynamic');
+
+  const scriptblockLiteral = commandManager.extractCommands('if ($ok) { & "init" --help }');
+  assert.ok(scriptblockLiteral.includes('init'), 'scriptblock call operator should preserve a quoted literal target');
+  assert.equal(scriptblockLiteral.includes(DYNAMIC), false, 'quoted literal scriptblock target must not become dynamic');
+
+  const multilineLiteral = commandManager.extractCommands('echo before\n& "init" --help');
+  assert.ok(multilineLiteral.includes('echo'), 'newline literal call must preserve the preceding command');
+  assert.ok(multilineLiteral.includes('init'), 'newline literal call should preserve the static target');
+  assert.equal(multilineLiteral.includes(DYNAMIC), false, 'newline literal target must not become dynamic');
+
   for (const dynamicTarget of [
     '& "$client" init --help',
     '& ($client) init --help',

@@ -46,12 +46,25 @@ class CommandManager {
         }
 
         const literal = commandString.slice(next + 1, end);
-        if (!literal || (quote === '"' && literal.includes('$'))) {
+        const hasEncodedLiteralSyntax = quote === '"'
+            ? literal.includes('`')
+            : literal.includes("''");
+        if (!literal || hasEncodedLiteralSyntax || (quote === '"' && literal.includes('$'))) {
             return { unresolved: true, command: null as string | null };
         }
 
         const command = asTyped ? literal : path.basename(literal);
         return { unresolved: false, command: command.toLowerCase() };
+    }
+
+    private getCallOperatorContext(currentCmd: string): { isCallOperator: boolean; precedingCommand: string | null } {
+        const lastNewline = Math.max(currentCmd.lastIndexOf('\n'), currentCmd.lastIndexOf('\r'));
+        const tail = (lastNewline >= 0 ? currentCmd.slice(lastNewline + 1) : currentCmd).trim();
+        const isCallOperator = tail.length === 0 || tail.endsWith('=') || tail.endsWith('{');
+        const precedingCommand = lastNewline >= 0
+            ? currentCmd.slice(0, lastNewline).trim() || null
+            : null;
+        return { isCallOperator, precedingCommand };
     }
 
     /**
@@ -186,36 +199,45 @@ class CommandManager {
                 let isSeparator = false;
                 for (const separator of separators) {
                     if (commandString.startsWith(separator, i)) {
-                        let startsDynamicCall = false;
+                        let isCallOperator = false;
+                        let carriesCallTargetSkip = false;
 
-                        // PowerShell's call operator can invoke either a static quoted command
-                        // or an executable expression. Resolve only the static quoted form;
-                        // variable/parenthesized/scriptblock targets remain fail-closed.
-                        if (separator === '&' && !currentCmd.trim()) {
-                            const target = this.classifyCallOperatorTarget(commandString, i, asTyped);
-                            if (target.unresolved) {
-                                commands.push(UNRESOLVED_DYNAMIC_COMMAND);
-                                skipCurrentBaseCommand = true;
-                                startsDynamicCall = true;
-                            } else if (target.command) {
-                                commands.push(target.command);
-                                skipCurrentBaseCommand = true;
-                                startsDynamicCall = true;
+                        // PowerShell's call operator can appear at the start of a segment,
+                        // after assignment/scriptblock syntax, or after a newline. Resolve
+                        // only static quoted targets; dynamic targets remain fail-closed.
+                        if (separator === '&') {
+                            const context = this.getCallOperatorContext(currentCmd);
+                            if (context.isCallOperator) {
+                                isCallOperator = true;
+                                if (context.precedingCommand) {
+                                    commands.push(...this.extractCommands(context.precedingCommand, asTyped));
+                                }
+                                const target = this.classifyCallOperatorTarget(commandString, i, asTyped);
+                                if (target.unresolved) {
+                                    commands.push(UNRESOLVED_DYNAMIC_COMMAND);
+                                    skipCurrentBaseCommand = true;
+                                    carriesCallTargetSkip = true;
+                                } else if (target.command) {
+                                    commands.push(target.command);
+                                    skipCurrentBaseCommand = true;
+                                    carriesCallTargetSkip = true;
+                                }
                             }
                         }
 
-                        // We found a separator - extract the command before it, unless this
-                        // segment is the unresolved target of a dynamic call operator.
-                        if (currentCmd.trim() && !skipCurrentBaseCommand) {
+                        // We found a separator - extract the command before it unless the
+                        // separator itself is a call operator or this segment is already
+                        // the consumed target/arguments of one.
+                        if (currentCmd.trim() && !skipCurrentBaseCommand && !isCallOperator) {
                             const baseCommand = this.extractBaseCommand(currentCmd.trim(), asTyped);
                             if (baseCommand) commands.push(baseCommand);
                         }
 
-                        // Move past the separator. Only the `&` that started the dynamic
-                        // invocation carries the skip state into the following segment.
+                        // Move past the separator. Only a call operator whose target was
+                        // consumed here carries skip state into the following argument text.
                         i += separator.length - 1;
                         currentCmd = '';
-                        if (!startsDynamicCall) {
+                        if (!carriesCallTargetSkip) {
                             skipCurrentBaseCommand = false;
                         }
                         isSeparator = true;
