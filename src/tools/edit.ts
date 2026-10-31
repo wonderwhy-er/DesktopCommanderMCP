@@ -163,27 +163,37 @@ export async function performSearchReplace(filePath: string, block: SearchReplac
     // match. If the raw form has the wrong occurrence count, fall back to the
     // historical normalized-match path instead.
     const normalizedSearch = normalizeLineEndings(block.search, fileLineEnding);
-    const countOccurrences = (search: string): number => {
-        if (search.length === 0) return 0;
-        let occurrences = 0;
+    const analyzeOccurrences = (search: string): { count: number; splitsCrlf: boolean } => {
+        if (search.length === 0) return { count: 0, splitsCrlf: false };
+        let count = 0;
+        let splitsCrlf = false;
         let pos = content.indexOf(search);
         while (pos !== -1) {
-            occurrences++;
-            pos = content.indexOf(search, pos + search.length);
+            count++;
+            const end = pos + search.length;
+            const startsInsideCrlf = pos > 0 && content[pos - 1] === '\r' && content[pos] === '\n';
+            const endsInsideCrlf = end < content.length && content[end - 1] === '\r' && content[end] === '\n';
+            splitsCrlf ||= startsInsideCrlf || endsInsideCrlf;
+            pos = content.indexOf(search, end);
         }
-        return occurrences;
+        return { count, splitsCrlf };
     };
 
-    const rawCount = countOccurrences(block.search);
+    const rawAnalysis = analyzeOccurrences(block.search);
     let exactSearch = block.search;
-    let count = rawCount;
+    let count = rawAnalysis.count;
 
-    // The new behavior applies only when the raw form exactly satisfies the
-    // caller's requested count. Otherwise keep the historical normalized path,
-    // including its occurrence-count diagnostics and fuzzy-search fallback.
-    if (rawCount !== expectedReplacements && normalizedSearch !== block.search) {
+    // The raw form is safe only when it satisfies the requested count without
+    // starting or ending inside a CRLF pair. Otherwise keep the historical
+    // normalized path, including its occurrence-count diagnostics and fuzzy fallback.
+    if ((rawAnalysis.count !== expectedReplacements || rawAnalysis.splitsCrlf)
+        && normalizedSearch !== block.search) {
         exactSearch = normalizedSearch;
-        count = countOccurrences(normalizedSearch);
+        count = analyzeOccurrences(normalizedSearch).count;
+    } else if (rawAnalysis.splitsCrlf) {
+        // No distinct normalized form exists, so do not perform a raw exact edit
+        // that would corrupt a CRLF pair. Let the existing fuzzy path decide.
+        count = 0;
     }
 
     const replacementLineEnding = /[\r\n]/.test(exactSearch)

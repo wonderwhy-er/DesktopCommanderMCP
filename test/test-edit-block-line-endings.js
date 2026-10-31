@@ -261,6 +261,34 @@ async function testMixedLineEndings() {
       'header\r\nbefore\nREPLACED\nafter\n',
       'Raw exact mixed-line-ending edit should preserve the matched block line ending');
 
+    // Raw matches must never split a CRLF pair. In a CRLF file, searching for
+    // a bare LF starts between the CR and LF bytes; replacing that raw match
+    // would leave stray CR characters behind instead of replacing the line ending.
+    await fs.writeFile(CRLF_FILE, 'alpha\r\nbeta\r\n', 'utf8');
+    const crlfStartBoundaryResult = await handleEditBlock({
+      file_path: CRLF_FILE,
+      old_string: '\n',
+      new_string: '|',
+      expected_replacements: 2
+    });
+    assertEditBlockSuccess(crlfStartBoundaryResult,
+      'Should normalize a raw LF search instead of splitting CRLF pairs');
+    await assertFileContent(CRLF_FILE, 'alpha|beta|',
+      'Replacing line endings must not leave stray CR characters');
+
+    // The same protection is required when a raw match ends after CR but before LF.
+    await fs.writeFile(CRLF_FILE, 'alpha\r\nbeta\r\n', 'utf8');
+    const crlfEndBoundaryResult = await handleEditBlock({
+      file_path: CRLF_FILE,
+      old_string: 'alpha\r',
+      new_string: 'ALPHA|',
+      expected_replacements: 1
+    });
+    assertEditBlockSuccess(crlfEndBoundaryResult,
+      'Should normalize a raw CR-ending search instead of splitting a CRLF pair');
+    await assertFileContent(CRLF_FILE, 'ALPHA|beta\r\n',
+      'A raw match ending inside CRLF must consume the complete normalized line ending');
+
     // If the raw form exists but does not match expected_replacements, keep the
     // previous normalized behavior when the normalized form has the requested count.
     await fs.writeFile(MIXED_FILE,
