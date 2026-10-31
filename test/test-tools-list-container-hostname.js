@@ -25,6 +25,7 @@ async function listTools(hostname) {
       USERPROFILE: profile,
       DESKTOP_COMMANDER_DISABLE_TELEMETRY: process.env.DESKTOP_COMMANDER_DISABLE_TELEMETRY ?? '1',
       DC_FLAG_URL: process.env.DC_FLAG_URL ?? 'http://127.0.0.1:9/',
+      MCP_CLIENT_DOCKER: 'true',
       COMPOSE_PROJECT_NAME: 'issue935',
       TEST_CONTAINER_HOSTNAME: hostname,
     },
