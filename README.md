@@ -933,13 +933,13 @@ You can specify which shell to use for command execution:
 
 ```javascript
 // Using default shell (bash or system default)
-start_process({ "command": "echo $SHELL", "timeout_ms": 5000 })
+start_process({ "command": "printf '%s\\n' \"$0\"", "timeout_ms": 5000 })
 
 // Using zsh specifically
-start_process({ "command": "echo $SHELL", "timeout_ms": 5000, "shell": "/bin/zsh" })
+start_process({ "command": "printf '%s\\n' \"$0\"", "timeout_ms": 5000, "shell": "/bin/zsh" })
 
 // Using bash specifically
-start_process({ "command": "echo $SHELL", "timeout_ms": 5000, "shell": "/bin/bash" })
+start_process({ "command": "printf '%s\\n' \"$0\"", "timeout_ms": 5000, "shell": "/bin/bash" })
 ```
 
 This allows you to use shell-specific features or maintain consistent environments across commands.
