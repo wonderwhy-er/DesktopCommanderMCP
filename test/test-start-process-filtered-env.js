@@ -22,7 +22,12 @@ import { connectToServer, closeClient } from './helpers/mcp-client.js';
 import { runIfMain, skip } from './helpers/run-if-main.js';
 
 const PROGRAM_DATA = /ProgramData=\[[A-Za-z]:\\ProgramData\]/i;
-const WINDOWS_DIRECTORY = /windir=\[[A-Za-z]:\\Windows\]/i;
+
+function windirMatchesSystemRoot(text) {
+  const systemRoot = process.env.SystemRoot;
+  return typeof systemRoot === 'string'
+    && text.toLowerCase().includes(`windir=[${systemRoot}]`.toLowerCase());
+}
 
 /** The server as a host on the MCP SDK starts it by default, plus the test run's telemetry and flag switches */
 function connectWithDefaultEnvironment() {
@@ -74,7 +79,7 @@ export default async function runTests() {
 
     const shown = await runCommand(client, 'cmd.exe /d /c echo ProgramData=[%ProgramData%] windir=[%windir%]');
     assert(PROGRAM_DATA.test(shown), `a command start_process runs should get ProgramData, got:\n${shown}`);
-    assert(WINDOWS_DIRECTORY.test(shown), `a command start_process runs should get windir, got:\n${shown}`);
+    assert(windirMatchesSystemRoot(shown), `a command start_process runs should get windir=${process.env.SystemRoot}, got:\n${shown}`);
     console.log('✓ start_process: the command gets ProgramData and windir');
 
     const session = await callTool(client, 'start_process', { command: 'node:local', timeout_ms: 10000 });
@@ -83,7 +88,7 @@ export default async function runTests() {
     const code = "console.log('ProgramData=[' + process.env.ProgramData + '] windir=[' + process.env.windir + ']')";
     const ran = await callTool(client, 'interact_with_process', { pid, input: code, timeout_ms: 10000 });
     assert(PROGRAM_DATA.test(ran), `node:local code should get ProgramData, got:\n${ran}`);
-    assert(WINDOWS_DIRECTORY.test(ran), `node:local code should get windir, got:\n${ran}`);
+    assert(windirMatchesSystemRoot(ran), `node:local code should get windir=${process.env.SystemRoot}, got:\n${ran}`);
     console.log('✓ node:local: the code gets ProgramData and windir');
   } finally {
     await closeClient(client);
