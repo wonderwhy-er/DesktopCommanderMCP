@@ -72,14 +72,23 @@ try {
     'returned timing events must not keep growing after start_process resolves'
   );
 
-  const buffered = tm.readOutputPaginated(pid, 0, 50);
-  assert.ok(buffered, 'session output should remain readable after wait machinery stops');
+  const firstPage = tm.readOutputPaginated(pid, 0, 50);
+  assert.ok(firstPage, 'session output should remain readable after wait machinery stops');
+  const bufferedLines = [...firstPage.lines];
+  const bufferedLineCount = firstPage.totalLines;
+  let offset = firstPage.readFrom + firstPage.readCount;
+  while (offset < bufferedLineCount) {
+    const page = tm.readOutputPaginated(pid, offset, Math.min(50, bufferedLineCount - offset));
+    assert.ok(page, 'session output should remain readable while paging buffered output');
+    bufferedLines.push(...page.lines);
+    offset = page.readFrom + page.readCount;
+  }
   assert.ok(
-    buffered.lines.some(line => line.includes('post-resolve-stdout')),
+    bufferedLines.some(line => line.includes('post-resolve-stdout')),
     'stdout should remain buffered for later read_process_output calls'
   );
   assert.ok(
-    buffered.lines.some(line => line.includes('post-resolve-stderr')),
+    bufferedLines.some(line => line.includes('post-resolve-stderr')),
     'stderr should remain buffered for later read_process_output calls'
   );
 
