@@ -71,6 +71,13 @@ function testLinuxUserSessionRepair() {
   repairLinuxUserSessionEnvironment(inherited, 'linux', 1000, () => { throw new Error('must not stat'); });
   assert.deepStrictEqual(inherited, { XDG_RUNTIME_DIR: '/custom/runtime', DBUS_SESSION_BUS_ADDRESS: 'unix:path=/custom/bus' });
 
+  const emptyInherited = { XDG_RUNTIME_DIR: '', DBUS_SESSION_BUS_ADDRESS: '' };
+  repairLinuxUserSessionEnvironment(emptyInherited, 'linux', 1000, safeStat);
+  assert.deepStrictEqual(emptyInherited, {
+    XDG_RUNTIME_DIR: runtime,
+    DBUS_SESSION_BUS_ADDRESS: `unix:path=${bus}`,
+  }, 'empty inherited Linux session values should be repaired when the standard resources are safe');
+
   for (const unsafeRuntime of [
     stat({ uid: 2000, directory: true }),
     stat({ mode: 0o755, directory: true }),
@@ -115,7 +122,9 @@ export default async function runTests() {
     const before = { ...process.env };
     const commandEnv = getCommandEnvironment();
     assert.deepStrictEqual({ ...process.env }, before, 'building a command environment must not mutate the server environment');
+    const restorableLinuxSessionKeys = new Set(['XDG_RUNTIME_DIR', 'DBUS_SESSION_BUS_ADDRESS']);
     for (const [key, value] of Object.entries(before)) {
+      if (process.platform === 'linux' && value === '' && restorableLinuxSessionKeys.has(key)) continue;
       assert.strictEqual(commandEnv[key], value, `inherited ${key} should be kept`);
     }
     console.log(`✓ ${process.platform}: inherited environment kept${process.platform === 'linux' ? '; safe session values may be added' : ''}`);
