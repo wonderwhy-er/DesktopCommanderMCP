@@ -28,6 +28,7 @@ import { configManager } from '../config-manager.js';
 import { fuzzySearchLogger, type FuzzySearchLogEntry } from '../utils/fuzzySearchLogger.js';
 import { resolvePreviewFileType } from '../ui/file-preview/shared/preview-file-types.js';
 import { resolveAbsolutePath } from '../handlers/filesystem-handlers.js';
+import type { EditResult } from '../utils/files/base.js';
 
 interface SearchReplace {
     search: string;
@@ -113,7 +114,7 @@ function getCharacterCodeData(expected: string, actual: string): {
     };
 }
 
-export async function performSearchReplace(filePath: string, block: SearchReplace, expectedReplacements: number = 1): Promise<ServerResult> {
+export async function performSearchReplace(filePath: string, block: SearchReplace, expectedReplacements: number = 1, origin?: 'ui' | 'llm'): Promise<ServerResult> {
     // Get file extension for telemetry using path module
     const fileExtension = path.extname(filePath).toLowerCase();
     
@@ -165,9 +166,11 @@ export async function performSearchReplace(filePath: string, block: SearchReplac
     let count = 0;
     let pos = tempContent.indexOf(normalizedSearch);
     
+    // Count the matches a replacement changes: they can't overlap, so the next
+    // search starts after this match (split/join below replaces the same ones)
     while (pos !== -1) {
         count++;
-        pos = tempContent.indexOf(normalizedSearch, pos + 1);
+        pos = tempContent.indexOf(normalizedSearch, pos + normalizedSearch.length);
     }
     
     // If exact match found and count matches expected replacements, proceed with exact replacement
@@ -223,13 +226,18 @@ RECOMMENDATION: For large search/replace operations, consider breaking them into
                 type: "text",
                 text: `${statusLine}${previewContent}`
             }],
-            structuredContent: {
-                fileName: path.basename(resolvedEditPath),
-                filePath: resolvedEditPath,
-                fileType: resolvePreviewFileType(resolvedEditPath),
-                sourceTool: 'edit_block',
-                ...await getDefaultEditorMetadata(resolvedEditPath),
-            },
+            // structuredContent only travels on widget-initiated calls: it is the
+            // widget's save-success signal (assertSuccessfulEditBlockResult) and
+            // metadata source. LLM-facing responses don't need it — nothing there
+            // consumes it, and the widget re-reads by path instead.
+            ...(origin === 'ui' ? {
+                structuredContent: {
+                    fileName: path.basename(resolvedEditPath),
+                    filePath: resolvedEditPath,
+                    fileType: resolvePreviewFileType(resolvedEditPath),
+                    ...await getDefaultEditorMetadata(resolvedEditPath),
+                },
+            } : {}),
         };
     }
     
@@ -290,6 +298,19 @@ RECOMMENDATION: For large search/replace operations, consider breaking them into
         await fuzzySearchLogger.log(logEntry);
         
         // Combine all fuzzy search data for single capture
+        //
+        // character_codes (characterCodeData.report) is deliberately NOT sent.
+        // It is a frequency map of the characters in the diff between the
+        // search text and the file text, so for a short diff it is close to
+        // recoverable file content — and mcp-privacy-policy.md states that
+        // file contents are not collected. It was added as diagnostics for the
+        // CRLF/LF normalization work in #103 (May 2025) to show whether failed
+        // matches came from \r (13), \n (10) or non-breaking spaces; that
+        // question is long since answered.
+        //
+        // The scalars below are kept: they are counts and lengths, and carry
+        // no recoverable content. The full report still goes to the local
+        // fuzzy-search.log for anyone debugging on their own machine.
         const fuzzySearchData = {
             similarity: similarity,
             execution_time_ms: executionTime,
@@ -297,7 +318,6 @@ RECOMMENDATION: For large search/replace operations, consider breaking them into
             file_size: content.length,
             threshold: FUZZY_THRESHOLD,
             found_text_length: fuzzyResult.value.length,
-            character_codes: characterCodeData.report,
             unique_character_count: characterCodeData.uniqueCount,
             total_diff_length: characterCodeData.diffLength
         };
@@ -380,6 +400,11 @@ function highlightDifferences(expected: string, actual: string): string {
     return `${commonPrefix}{-${expectedDiff}-}{+${actualDiff}+}${commonSuffix}`;
 }
 
+/** Why a file handler's edit failed, as edit_block reports it */
+function editFailure(result: EditResult): string {
+    return result.errors?.map(e => e.error).join('; ') || 'Unknown error';
+}
+
 /**
  * Handle edit_block command
  *
@@ -430,20 +455,24 @@ export async function handleEditBlock(args: unknown): Promise<ServerResult> {
         if (hasEditRange) {
             try {
                 // parsed.range is guaranteed non-empty string by hasRange check above
-                await handler.editRange!(validatedPath!, parsed.range!, content, parsed.options);
+                const result = await handler.editRange!(validatedPath!, parsed.range!, content, parsed.options);
+                if (!result.success) {
+                    return createErrorResponse(editFailure(result));
+                }
                 const resolvedRangePath = resolveAbsolutePath(parsed.file_path);
                 return {
                     content: [{
                         type: "text",
                         text: `Successfully updated range ${parsed.range} in ${parsed.file_path}`
                     }],
-                    structuredContent: {
-                        fileName: path.basename(resolvedRangePath),
-                        filePath: resolvedRangePath,
-                        fileType: resolvePreviewFileType(resolvedRangePath),
-                        sourceTool: 'edit_block',
-                        ...await getDefaultEditorMetadata(resolvedRangePath),
-                    },
+                    ...(parsed.origin === 'ui' ? {
+                        structuredContent: {
+                            fileName: path.basename(resolvedRangePath),
+                            filePath: resolvedRangePath,
+                            fileType: resolvePreviewFileType(resolvedRangePath),
+                            ...await getDefaultEditorMetadata(resolvedRangePath),
+                        },
+                    } : {}),
                 };
             } catch (error) {
                 const errorMessage = error instanceof Error ? error.message : String(error);
@@ -477,18 +506,18 @@ export async function handleEditBlock(args: unknown): Promise<ServerResult> {
                         type: "text",
                         text: `Successfully applied ${result.editsApplied} edit(s) to ${parsed.file_path}`
                     }],
-                    structuredContent: {
-                        fileName: path.basename(resolvedEditRangePath),
-                        filePath: resolvedEditRangePath,
-                        fileType: resolvePreviewFileType(resolvedEditRangePath),
-                        sourceTool: 'edit_block',
-                        ...await getDefaultEditorMetadata(resolvedEditRangePath),
-                    },
+                    ...(parsed.origin === 'ui' ? {
+                        structuredContent: {
+                            fileName: path.basename(resolvedEditRangePath),
+                            filePath: resolvedEditRangePath,
+                            fileType: resolvePreviewFileType(resolvedEditRangePath),
+                            ...await getDefaultEditorMetadata(resolvedEditRangePath),
+                        },
+                    } : {}),
                 };
             }
 
-            const errorMsg = result.errors?.map(e => e.error).join('; ') || 'Unknown error';
-            return createErrorResponse(errorMsg);
+            return createErrorResponse(editFailure(result));
         } catch (error) {
             const errorMessage = error instanceof Error ? error.message : String(error);
             return createErrorResponse(errorMessage);
@@ -498,5 +527,5 @@ export async function handleEditBlock(args: unknown): Promise<ServerResult> {
     return performSearchReplace(parsed.file_path, {
         search: parsed.old_string,
         replace: parsed.new_string
-    }, parsed.expected_replacements);
+    }, parsed.expected_replacements, parsed.origin);
 }

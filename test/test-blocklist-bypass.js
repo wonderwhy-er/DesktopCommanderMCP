@@ -12,6 +12,7 @@ import path from 'path';
 import { commandManager } from '../dist/command-manager.js';
 import { configManager } from '../dist/config-manager.js';
 import { forceTerminate, interactWithProcess, startProcess } from '../dist/tools/improved-process-tools.js';
+import { exitProcess } from '../dist/utils/exit-process.js';
 
 function getPythonCommand() {
     for (const command of ['python3', 'python']) {
@@ -166,5 +167,5 @@ async function runTests() {
 
 runTests().catch((error) => {
     console.error('Test failed:', error.message);
-    process.exit(1);
+    exitProcess(1);
 });

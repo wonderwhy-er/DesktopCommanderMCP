@@ -1,4 +1,5 @@
-import { getDocumentProxy, extractImages } from 'unpdf';
+import { LazyPackage } from '../../utils/lazy-package.js';
+import { closePdfDocument } from './utils.js';
 
 export interface ImageInfo {
     /** Object ID within PDF */
@@ -29,6 +30,9 @@ export interface ImageCompressionOptions {
     maxDimension?: number;
 }
 
+// import(): unpdf is an ES module only. If it fails, Node keeps it failed until a restart.
+export const unpdfPackage = new LazyPackage('unpdf', 'PDF reading support', () => import('unpdf'), true);
+
 /**
  * Optimized image extraction from PDF using unpdf's built-in extractImages method
  * @param pdfBuffer PDF file as Uint8Array
@@ -41,6 +45,7 @@ export async function extractImagesFromPdf(
     pageNumbers?: number[],
     compressionOptions: ImageCompressionOptions = {}
 ): Promise<Record<number, ImageInfo[]>> {
+    const { getDocumentProxy, extractImages } = await unpdfPackage.load();
     const pdfDocument = await getDocumentProxy(pdfBuffer);
 
     const pagesToProcess = pageNumbers || Array.from({ length: pdfDocument.numPages }, (_, i) => i + 1);
@@ -121,11 +126,7 @@ export async function extractImagesFromPdf(
                 await pdfDocument.cleanup(false);
             }
         } catch (e) { /* Ignore cleanup errors */ }
-        try {
-            if (typeof pdfDocument.destroy === 'function') {
-                await pdfDocument.destroy();
-            }
-        } catch (e) { /* Ignore cleanup errors */ }
+        await closePdfDocument(pdfDocument);
     }
 
     return pageResults;

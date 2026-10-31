@@ -12,6 +12,7 @@ import {
     type MultiFileResult
 } from '../tools/filesystem.js';
 import type { ReadOptions } from '../utils/files/base.js';
+import { TextFileHandler } from '../utils/files/text.js';
 
 import { ServerResult } from '../types.js';
 import { withTimeout } from '../utils/withTimeout.js';
@@ -90,20 +91,23 @@ export async function handleReadFile(args: unknown): Promise<ServerResult> {
             return createErrorResponse('Configuration not available');
         }
 
+        // The schema fills in `length: 1000` (the default tools/list shows), so
+        // whether the caller sent a length is read from the raw arguments: an
+        // omitted length follows the fileReadLineLimit setting, as documented.
         const defaultLimit = config.fileReadLineLimit ?? 1000;
+        const lengthGiven = (args as { length?: unknown }).length !== undefined;
 
-        // Convert sheet parameter: numeric strings become numbers for Excel index access
-        let sheetParam: string | number | undefined = parsed.sheet;
-        if (parsed.sheet !== undefined && /^\d+$/.test(parsed.sheet)) {
-            sheetParam = parseInt(parsed.sheet, 10);
-        }
-
+        // The sheet goes as given: the Excel handler knows the sheet names, so it
+        // decides whether "2024" is an index or a sheet named 2024
         const options: ReadOptions = {
             isUrl: parsed.isUrl,
             offset: parsed.offset ?? 0,
-            length: parsed.length ?? defaultLimit,
-            sheet: sheetParam,
-            range: parsed.range
+            length: lengthGiven ? parsed.length : defaultLimit,
+            sheet: parsed.sheet,
+            range: parsed.range,
+            // The preview widget draws an SVG as an image (ui/file-preview/src/image-preview.ts);
+            // everyone else reads it as the text it is
+            svgAsImage: parsed.origin === 'ui'
         };
 
         // Resolve to absolute path for local files (not URLs) so "Open in folder" works
@@ -139,29 +143,48 @@ export async function handleReadFile(args: unknown): Promise<ServerResult> {
                     },
                     ...pdfContent
                 ],
-                structuredContent: {
-                    fileName: path.basename(resolvedFilePath),
-                    filePath: resolvedFilePath,
-                    fileType: 'unsupported' as const,
-                    sourceTool: 'read_file',
-                    ...await getDefaultEditorMetadata(resolvedFilePath),
-                    content: pdfContent
-                        .filter((item): item is { type: "text"; text: string } => item.type === "text")
-                        .map((item) => item.text)
-                        .join("\n"),
-                },
+                ...(parsed.origin === 'ui' ? {
+                    structuredContent: {
+                        fileName: path.basename(resolvedFilePath),
+                        filePath: resolvedFilePath,
+                        fileType: 'unsupported' as const,
+                        ...await getDefaultEditorMetadata(resolvedFilePath),
+                    },
+                } : {}),
             };
         }
 
         // Handle image files
         if (fileResult.metadata?.isImage) {
             // Return the image bytes in the MCP content array so the host model can
-            // actually see the image. structuredContent additionally carries the bytes
-            // for the preview widget to render.
+            // actually see the image. The preview widget gets its copy from its own
+            // origin:'ui' read — structuredContent stays metadata-only.
             const imageData = typeof fileResult.content === 'string'
                 ? fileResult.content
                 : fileResult.content.toString('base64');
             const imageSummary = `Image file: ${parsed.path} (${fileResult.mimeType})\n`;
+            const imageStructuredContent = {
+                fileName: path.basename(resolvedFilePath),
+                filePath: resolvedFilePath,
+                fileType: 'image' as const,
+                ...await getDefaultEditorMetadata(resolvedFilePath),
+                mimeType: fileResult.mimeType,
+            };
+            // Widget pull (origin: 'ui'): return the base64 in a TEXT block, never
+            // an image block. An image content block makes the host inline-vision-
+            // render the result, which preempts delivery of this RPC response to
+            // the widget — leaving the preview stuck on "Preparing preview…" for
+            // exactly the host-rendered types (png/jpeg/gif/webp). Text-only lets
+            // the RPC response through so the widget can draw the <img>.
+            if (parsed.origin === 'ui') {
+                return {
+                    content: [{ type: "text", text: imageData }],
+                    structuredContent: imageStructuredContent,
+                };
+            }
+            // Model-facing read: keep the image block so the host/model sees it.
+            // No structuredContent — the widget renders from its own origin:'ui'
+            // read, and nothing else consumes it.
             return {
                 content: [
                     {
@@ -174,36 +197,31 @@ export async function handleReadFile(args: unknown): Promise<ServerResult> {
                         mimeType: fileResult.mimeType
                     }
                 ],
-                structuredContent: {
-                    fileName: path.basename(resolvedFilePath),
-                    filePath: resolvedFilePath,
-                    fileType: 'image',
-                    sourceTool: 'read_file',
-                    ...await getDefaultEditorMetadata(resolvedFilePath),
-                    // Image bytes for the preview widget, carried once. Deduped from the
-                    // old `content` + `imageData` pair down to this single `content` field.
-                    content: imageData,
-                    mimeType: fileResult.mimeType
-                }
             };
         } else {
             // For all other files, return as text.
             // structuredContent carries only file metadata (no content duplication);
-            // the widget reads text from the MCP content array.
-            const textContent = typeof fileResult.content === 'string'
+            // the widget reads text from the MCP content array (over the RPC read).
+            let textContent = typeof fileResult.content === 'string'
                 ? fileResult.content
                 : fileResult.content.toString('utf8');
             const fileType = fileResult.metadata?.isDirectory ? 'directory' as const : resolvePreviewFileType(resolvedFilePath);
+            // The directory fallback prefixes a "use list_directory instead" hint
+            // for the LLM. The widget's own read (a list_directory preview pulls
+            // read_file on the dir path) would render that hint as a notice — strip it.
+            if (parsed.origin === 'ui' && fileType === 'directory') {
+                textContent = textContent.replace(/^This is a directory, not a file\.[^\n]*\n+/, '');
+            }
             return {
                 content: [{ type: "text", text: textContent }],
-                structuredContent: {
-                    fileName: path.basename(resolvedFilePath),
-                    filePath: resolvedFilePath,
-                    fileType,
-                    sourceTool: 'read_file',
-                    ...await getDefaultEditorMetadata(resolvedFilePath),
-                    content: textContent,
-                },
+                ...(parsed.origin === 'ui' ? {
+                    structuredContent: {
+                        fileName: path.basename(resolvedFilePath),
+                        filePath: resolvedFilePath,
+                        fileType,
+                        ...await getDefaultEditorMetadata(resolvedFilePath),
+                    },
+                } : {}),
             };
         }
     };
@@ -225,9 +243,9 @@ export async function handleReadFile(args: unknown): Promise<ServerResult> {
 /**
  * Handle read_multiple_files command
  */
-export async function handleReadMultipleFiles(args: unknown): Promise<ServerResult> {
+export async function handleReadMultipleFiles(args: unknown, stillLoadingError?: (filePath: string) => string | undefined): Promise<ServerResult> {
     const parsed = ReadMultipleFilesArgsSchema.parse(args);
-    const fileResults = await readMultipleFiles(parsed.paths);
+    const fileResults = await readMultipleFiles(parsed.paths, stillLoadingError);
 
     // Create a text summary of all files
     const textSummary = fileResults.map(result => {
@@ -248,10 +266,13 @@ export async function handleReadMultipleFiles(args: unknown): Promise<ServerResu
     // Add the text summary
     contentItems.push({ type: "text", text: textSummary });
 
-    // Add each file content
+    // Add each file content after its path: several images, or a PDF's pages,
+    // can't be told apart by their order alone
     for (const result of fileResults) {
         if (!result.error && result.content !== undefined) {
+            const header = `\n--- ${result.path} contents: ---\n`;
             if (result.isPdf) {
+                contentItems.push({ type: "text", text: header });
                 result.payload?.pages.forEach((page, i) => {
                     page.images.forEach((image, i) => {
                         contentItems.push({
@@ -267,6 +288,7 @@ export async function handleReadMultipleFiles(args: unknown): Promise<ServerResu
                 });
             } else if (result.isImage && result.mimeType) {
                 // For image files, add an image content item
+                contentItems.push({ type: "text", text: header });
                 contentItems.push({
                     type: "image",
                     data: result.content,
@@ -276,7 +298,7 @@ export async function handleReadMultipleFiles(args: unknown): Promise<ServerResu
                 // For text files, add a text summary
                 contentItems.push({
                     type: "text",
-                    text: `\n--- ${result.path} contents: ---\n${result.content}`
+                    text: `${header}${result.content}`
                 });
             }
         }
@@ -290,15 +312,39 @@ export async function handleReadMultipleFiles(args: unknown): Promise<ServerResu
  */
 export async function handleWriteFile(args: unknown): Promise<ServerResult> {
     try {
+        const modeProvided = !!(args && typeof args === 'object' && 'mode' in args);
         const parsed = WriteFileArgsSchema.parse(args);
+
+        // An omitted `mode` falls back to 'rewrite', which silently destroys
+        // the target's existing content. The common failure is an LLM caller
+        // intending to append but dropping the optional param (issue #541), so
+        // require explicit intent when the target already has content;
+        // new/empty files keep the zero-friction default.
+        if (!modeProvided) {
+            let existing: Record<string, any> | null = null;
+            try {
+                existing = await getFileInfo(parsed.path);
+            } catch {
+                // Missing file or invalid path — nothing to protect; the write
+                // itself will surface any real path error.
+            }
+            if (existing?.isFile && existing.size > 0) {
+                return createErrorResponse(
+                    `Write rejected to prevent accidental data loss: ${parsed.path} already exists ` +
+                    `with content (${existing.size} bytes), and no 'mode' was specified — the default ` +
+                    `mode 'rewrite' would REPLACE the entire file. Retry with an explicit mode: ` +
+                    `'append' to add your content to the end of the existing file, or 'rewrite' ` +
+                    `to replace all existing content.`
+                );
+            }
+        }
 
         // Get the line limit from configuration
         const config = await configManager.getConfig();
         const MAX_LINES = config.fileWriteLineLimit ?? 50; // Default to 50 if not set
 
-        // Strictly enforce line count limit
-        const lines = parsed.content.split('\n');
-        const lineCount = lines.length;
+        // Lines as read_file counts them: a final line break doesn't start another line
+        const lineCount = TextFileHandler.countLines(parsed.content);
         let errorMessage = "";
         if (lineCount > MAX_LINES) {
             errorMessage = `✅ File written successfully! (${lineCount} lines)
@@ -311,20 +357,14 @@ export async function handleWriteFile(args: unknown): Promise<ServerResult> {
 
         // Provide more informative message based on mode
         const modeMessage = parsed.mode === 'append' ? 'appended to' : 'wrote to';
-        const resolvedWritePath = resolveAbsolutePath(parsed.path);
 
+        // No structuredContent: nothing in the UI calls write_file (the widget
+        // previews the write via its own read_file pull at tool-result time).
         return {
             content: [{
                 type: "text",
                 text: `Successfully ${modeMessage} ${parsed.path} (${lineCount} lines) ${errorMessage}`
             }],
-            structuredContent: {
-                fileName: path.basename(resolvedWritePath),
-                filePath: resolvedWritePath,
-                fileType: resolvePreviewFileType(resolvedWritePath),
-                sourceTool: 'write_file',
-                ...await getDefaultEditorMetadata(resolvedWritePath),
-            },
         };
     } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
@@ -363,16 +403,13 @@ export async function handleListDirectory(args: unknown): Promise<ServerResult> 
 
         return {
             content: [{ type: "text", text: resultText }],
-            structuredContent: {
-                fileName: path.basename(resolvedPath),
-                filePath: resolvedPath,
-                fileType: 'directory' as const,
-                sourceTool: 'list_directory',
-                // Carry the listing in structuredContent too. Chat reads the text
-                // content array, but structuredContent-only consumers (e.g. Cowork)
-                // render from here and would otherwise show an empty directory.
-                content: resultText,
-            },
+            ...(parsed.origin === 'ui' ? {
+                structuredContent: {
+                    fileName: path.basename(resolvedPath),
+                    filePath: resolvedPath,
+                    fileType: 'directory' as const,
+                },
+            } : {}),
         };
     } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
@@ -456,10 +493,12 @@ export async function handleGetFileInfo(args: unknown): Promise<ServerResult> {
 export async function handleWritePdf(args: unknown): Promise<ServerResult> {
     try {
         const parsed = WritePdfArgsSchema.parse(args);
-        await writePdf(parsed.path, parsed.content, parsed.outputPath, parsed.options);
+        const ignoredOptions = await writePdf(parsed.path, parsed.content, parsed.outputPath, parsed.options);
         const targetPath = parsed.outputPath || parsed.path;
         return {
             content: [{ type: "text", text: `Successfully wrote PDF to ${targetPath}${parsed.outputPath ? `\nOriginal file: ${parsed.path}` : ''}` }],
+            // Which options were ignored, and why: internal (tests), not sent to the client (see utils/internal-facts.ts)
+            ...(ignoredOptions.length > 0 ? { structuredContent: { ignoredOptions } } : {}),
         };
     } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);

@@ -327,28 +327,13 @@ function getSettingSummary(entry: ConfigEntry): string | null {
     return `${count} folder${count === 1 ? '' : 's'} allowed`;
 }
 
+// Shell options come only from the server (uiHints.availableShells, detected in src/utils/shell.ts).
 function getShellOptions(payload: ConfigEditorPayload | null, currentShell: string): string[] {
     const hintedShells = Array.isArray(payload?.uiHints?.availableShells)
         ? payload.uiHints.availableShells.filter((shell): shell is string => typeof shell === 'string' && shell.trim().length > 0)
         : [];
 
-    const config = payload?.config;
-    const systemInfo = isObjectRecord(config?.systemInfo) ? config.systemInfo : null;
-    const isWindows = Boolean(systemInfo && systemInfo.isWindows === true);
-    const isMacOS = Boolean(systemInfo && systemInfo.isMacOS === true);
-
-    const baseOptions = hintedShells.length > 0
-        ? hintedShells
-        : isWindows
-            ? ['powershell.exe', 'pwsh.exe', 'cmd.exe', 'bash.exe']
-            : isMacOS
-                ? ['/bin/zsh', '/bin/bash', '/bin/sh', '/usr/bin/fish', 'zsh', 'bash', 'sh', 'fish']
-                : ['/bin/bash', '/bin/sh', '/usr/bin/fish', '/bin/zsh', 'bash', 'sh', 'fish', 'zsh'];
-
-    const options = new Set<string>();
-    for (const shell of baseOptions) {
-        options.add(shell);
-    }
+    const options = new Set<string>(hintedShells);
     if (currentShell.trim().length > 0) {
         options.add(currentShell);
     }
@@ -470,7 +455,7 @@ export function createConfigEditorController(callTool: ToolCall, trackConfigUiEv
                 }),
             });
 
-            const refreshed = await callTool('get_config', {});
+            const refreshed = await callTool('get_config', { origin: 'ui' });
             if (isToolErrorResult(refreshed)) {
                 const errorMessage = extractToolText(refreshed) ?? 'Value was updated but config refresh failed.';
                 return {
@@ -827,8 +812,6 @@ export function bootstrapConfigEditorApp(): void {
         expanded: true,
     };
 
-    let configEditorShownEventSent = false;
-
     let quietContextSupported = true;
     let tooltipHideTimer: number | null = null;
 
@@ -924,20 +907,11 @@ export function bootstrapConfigEditorApp(): void {
         controller.setPayload(payload);
         widgetState.write(payload);
         scheduleRender();
-
-        if (!configEditorShownEventSent) {
-            configEditorShownEventSent = true;
-            // One-shot impression event for get_config UI card visibility.
-            trackConfigUiEvent('config_editor_shown', {
-                tool_name: GET_CONFIG_TOOL_NAME,
-                entry_count: payload.entries.length,
-            });
-        }
     };
 
     const refreshConfigFromServer = async (): Promise<void> => {
         try {
-            const result = await bridge.callTool('get_config', {});
+            const result = await bridge.callTool('get_config', { origin: 'ui' });
             const payload = controller.extractPayload(result);
             if (payload) {
                 applyPayload(payload);

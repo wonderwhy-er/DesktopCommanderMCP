@@ -5,7 +5,9 @@ import {
   isTelemetryDisabledValue,
   normalizeTelemetryEnabledValue,
 } from '../dist/config-manager.js';
+import { isInsideUiOriginCall, runInUiOriginCallContext } from '../dist/utils/capture.js';
 import { setConfigValue } from '../dist/tools/config.js';
+import { runIfMain } from './helpers/run-if-main.js';
 
 function testTelemetryHelpers() {
   console.log('\n--- Test: telemetry helper behavior ---');
@@ -122,6 +124,44 @@ async function testCapturePathAllowsTrueValues() {
   console.log('ok: capture path allows true values');
 }
 
+/**
+ * Tool calls fired programmatically by the widget UIs (args.origin === 'ui')
+ * run inside runInUiOriginCallContext, and capture() drops every event raised
+ * while isInsideUiOriginCall() is true — so UI refresh churn (pull-by-path
+ * reads, in-preview saves, link search) produces zero telemetry. This verifies
+ * the AsyncLocalStorage mechanics that invariant depends on: the flag holds
+ * across awaits, does not leak out, and does not bleed into interleaved calls.
+ */
+async function testUiOriginCallContext() {
+  console.log('\n--- Test: UI-origin call context (zero telemetry for widget calls) ---');
+
+  assert.strictEqual(isInsideUiOriginCall(), false, 'context should be off outside runInUiOriginCallContext');
+
+  const observed = await runInUiOriginCallContext(async () => {
+    const beforeAwait = isInsideUiOriginCall();
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    return { beforeAwait, afterAwait: isInsideUiOriginCall() };
+  });
+  assert.strictEqual(observed.beforeAwait, true, 'context should be on inside runInUiOriginCallContext');
+  assert.strictEqual(observed.afterAwait, true, 'context should survive awaits');
+  assert.strictEqual(isInsideUiOriginCall(), false, 'context should not leak after the wrapped call returns');
+
+  // An agent call interleaving with an in-flight UI-origin call must not
+  // inherit the UI flag (this is why it is AsyncLocalStorage, not a global).
+  let releaseUiCall;
+  const uiGate = new Promise((resolve) => { releaseUiCall = resolve; });
+  const uiCall = runInUiOriginCallContext(async () => {
+    await uiGate;
+    return isInsideUiOriginCall();
+  });
+  const interleavedAgentFlag = isInsideUiOriginCall();
+  releaseUiCall();
+  assert.strictEqual(interleavedAgentFlag, false, 'concurrent non-UI code must not inherit the UI context');
+  assert.strictEqual(await uiCall, true, 'UI-origin call keeps its context across interleaving');
+
+  console.log('ok: UI-origin call context');
+}
+
 export default async function runTests() {
   const originalConfig = await configManager.getConfig();
 
@@ -133,6 +173,7 @@ export default async function runTests() {
     await testCapturePathRespectsStringFALSE();
     await testCapturePathRespectsBooleanFalse();
     await testCapturePathAllowsTrueValues();
+    await testUiOriginCallContext();
 
     console.log('\nTelemetry handling tests passed.');
     return true;
@@ -148,13 +189,4 @@ export default async function runTests() {
   }
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
-  runTests()
-    .then((success) => {
-      process.exit(success ? 0 : 1);
-    })
-    .catch((error) => {
-      console.error('Unhandled error:', error);
-      process.exit(1);
-    });
-}
+runIfMain(import.meta.url, runTests);

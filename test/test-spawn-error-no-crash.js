@@ -1,0 +1,100 @@
+/**
+ * Regression test: a failing spawn must not kill the MCP server.
+ *
+ * spawn() reports failure asynchronously via an 'error' event rather than by
+ * throwing. terminal-manager used to return early on `!childProcess.pid` without
+ * ever attaching an 'error' listener, so Node rethrew the event as an uncaught
+ * exception one tick later and src/index.ts's uncaughtException handler called
+ * process.exit(1). The tool call had already returned "Failed to get process ID",
+ * so the crash looked unrelated to the command that caused it — and under
+ * `desktop-commander remote` the parent then answered every later call with
+ * "Not connected" over a dead stdio pipe.
+ *
+ * Cases:
+ *   - a bogus shell path (the /usr/bin/bash-on-Windows shape) returns an error
+ *     result AND the process is still alive several ticks later
+ *   - a bogus executable behaves the same way
+ *   - a normal command still works afterwards (the handler didn't break the path)
+ *
+ * Runs as part of `npm test` (needs `npm run build` first, which `npm test` does),
+ * or standalone: `node test/test-spawn-error-no-crash.js`.
+ */
+import assert from 'node:assert';
+import { terminalManager } from '../dist/terminal-manager.js';
+import { exitProcess } from '../dist/utils/exit-process.js';
+
+process.env.DESKTOP_COMMANDER_DISABLE_TELEMETRY = '1';
+
+// A path that cannot resolve on any platform we support.
+const BOGUS_SHELL = process.platform === 'win32'
+  ? '/usr/bin/definitely-not-a-shell'
+  : '/definitely/not/a/shell';
+
+// Record crashes so each case can report them, and fail the file even if one
+// lands after the last check (a late crash is exactly what this test guards).
+let uncaught = null;
+process.on('uncaughtException', (err) => {
+  uncaught = err;
+  process.exitCode = 1;
+  console.error('✗ uncaught exception:', err.message);
+});
+
+/** Let the spawn 'error' event (next tick) and anything it triggers land. */
+async function settle() {
+  for (let i = 0; i < 5; i++) await new Promise(r => setTimeout(r, 50));
+}
+
+async function testBogusShellDoesNotCrash() {
+  const result = await terminalManager.executeCommand('echo hi', 3000, BOGUS_SHELL);
+  await settle();
+
+  assert.strictEqual(uncaught, null,
+    `spawn failure escaped as an uncaught exception: ${uncaught && uncaught.message}`);
+  assert.ok(result, 'executeCommand must return a result, not hang');
+  assert.ok(
+    result.pid === -1 || /error/i.test(result.output),
+    `expected an error result, got ${JSON.stringify(result)}`
+  );
+  console.log('✓ bogus shell returns an error without crashing the process');
+}
+
+async function testBogusExecutableDoesNotCrash() {
+  // Runs through the default shell, which reports the unknown command itself.
+  // executeCommand returns as soon as the shell exits; the long wait is for a
+  // busy machine, where starting PowerShell alone can take more than 3 s.
+  const BOGUS_COMMAND = 'this-command-does-not-exist-4f2a';
+  const result = await terminalManager.executeCommand(BOGUS_COMMAND, 30000);
+  await settle();
+
+  assert.strictEqual(uncaught, null,
+    `spawn failure escaped as an uncaught exception: ${uncaught && uncaught.message}`);
+  // Every shell's "not found" message names the command (bash, zsh, cmd, PowerShell)
+  assert.ok(result.output.includes(BOGUS_COMMAND),
+    `expected the shell's not-found error for ${BOGUS_COMMAND}, got ${JSON.stringify(result)}`);
+  console.log('✓ bogus executable returns the shell error without crashing the process');
+}
+
+async function testHealthyCommandStillWorks() {
+  const result = await terminalManager.executeCommand('echo roundtrip-ok', 8000);
+  await settle();
+
+  assert.strictEqual(uncaught, null, 'healthy command must not raise');
+  assert.ok(result.pid > 0, `expected a real pid, got ${result.pid}`);
+  assert.ok(/roundtrip-ok/.test(result.output),
+    `expected command output, got ${JSON.stringify(result.output)}`);
+  console.log('✓ a normal command still runs after the error handler was added');
+}
+
+async function main() {
+  console.log('=== spawn error handling ===\n');
+  await testBogusShellDoesNotCrash();
+  await testBogusExecutableDoesNotCrash();
+  await testHealthyCommandStillWorks();
+  console.log('\nAll spawn-error tests passed.');
+}
+
+// The uncaughtException handler above may have set the exit code already
+main().then(() => exitProcess(process.exitCode ?? 0)).catch((err) => {
+  console.error('✗ FAILED:', err.message);
+  exitProcess(1);
+});

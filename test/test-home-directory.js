@@ -17,10 +17,12 @@ import {
   createDirectory 
 } from '../dist/tools/filesystem.js';
 import fs from 'fs/promises';
+import { realpathSync } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import assert from 'assert';
 import os from 'os';
+import { runIfMain } from './helpers/run-if-main.js';
 
 // Get directory name
 const __filename = fileURLToPath(import.meta.url);
@@ -28,8 +30,12 @@ const __dirname = path.dirname(__filename);
 
 // Define test paths
 const HOME_DIR = os.homedir();
+// validatePath returns real paths (symlinks resolved); on macOS a home under
+// /var (like the test runner's temp home) resolves to /private/var/...
+const REAL_HOME_DIR = realpathSync(HOME_DIR);
 const HOME_TILDE = '~';
 const HOME_DOCS_PATH = path.join(HOME_DIR, 'Documents');
+const REAL_HOME_DOCS_PATH = path.join(REAL_HOME_DIR, 'Documents');
 const HOME_DOCS_TILDE = '~/Documents';
 const TEST_DIR = path.join(HOME_DIR, '.claude-test-tilde');
 const TEST_DIR_TILDE = '~/.claude-test-tilde';
@@ -98,8 +104,8 @@ async function testTildeExpansion() {
     
     // Check if the expanded path is the home directory
     assert.ok(
-      expandedPath.toLowerCase() === HOME_DIR.toLowerCase() || 
-      expandedPath.toLowerCase().startsWith(HOME_DIR.toLowerCase()),
+      expandedPath.toLowerCase() === REAL_HOME_DIR.toLowerCase() || 
+      expandedPath.toLowerCase().startsWith(REAL_HOME_DIR.toLowerCase()),
       'Tilde (~) should expand to the home directory'
     );
     
@@ -127,8 +133,8 @@ async function testTildeWithSubdirectory() {
     
     // Check if the expanded path is the home documents directory
     assert.ok(
-      expandedPath.toLowerCase() === HOME_DOCS_PATH.toLowerCase() || 
-      expandedPath.toLowerCase().startsWith(HOME_DOCS_PATH.toLowerCase()),
+      expandedPath.toLowerCase() === REAL_HOME_DOCS_PATH.toLowerCase() || 
+      expandedPath.toLowerCase().startsWith(REAL_HOME_DOCS_PATH.toLowerCase()),
       '~/Documents should expand to the home documents directory'
     );
     
@@ -246,8 +252,8 @@ async function testHomeDirectory() {
     
     // Check if the expanded path is the home directory
     assert.ok(
-      expandedPath.toLowerCase() === HOME_DIR.toLowerCase() || 
-      expandedPath.toLowerCase().startsWith(HOME_DIR.toLowerCase()),
+      expandedPath.toLowerCase() === REAL_HOME_DIR.toLowerCase() || 
+      expandedPath.toLowerCase().startsWith(REAL_HOME_DIR.toLowerCase()),
       'Tilde (~) should expand to the home directory'
     );
     
@@ -285,9 +291,4 @@ export default async function runTests() {
 }
 
 // If this file is run directly (not imported), execute the test
-if (import.meta.url === `file://${process.argv[1]}`) {
-  runTests().catch(error => {
-    console.error('❌ Unhandled error:', error);
-    process.exit(1);
-  });
-}
+runIfMain(import.meta.url, runTests);
