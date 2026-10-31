@@ -20,6 +20,11 @@ export async function runTests() {
     ['document field instruction', 'word/document.xml', 'w:instrText', ' REF bookmark\n \\h '],
     ['header multiline text', 'word/header1.xml', 'w:t', 'first\n  second'],
     ['plain text control', 'word/document.xml', 'w:t', '  unchanged text  '],
+    ['text ending in greater-than', 'word/document.xml', 'w:t', 'value>'],
+    ['empty text', 'word/document.xml', 'w:t', ''],
+    ['field ending in greater-than', 'word/document.xml', 'w:instrText', ' IF 2 >'],
+    ['empty field instruction', 'word/document.xml', 'w:instrText', ''],
+    ['CDATA text', 'word/document.xml', 'w:t', '<![CDATA[value><next]]>'],
   ];
   try {
     for (const [index, [name, part, tag, content]] of cases.entries()) {

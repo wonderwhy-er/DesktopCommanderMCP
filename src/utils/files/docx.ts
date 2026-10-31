@@ -31,27 +31,32 @@ import { FileHandler, FileResult, FileInfo, ReadOptions, EditResult } from './ba
  * Preserves text node content exactly.
  */
 function prettyPrintXml(xml: string): string {
-    const parts = xml.split(/(?<=>)(?=<)/);
-    const lines: string[] = [];
+    // Tokenize markup separately: a '>' in text is not the end of a tag.
+    const parts = xml.match(/<!--[\s\S]*?-->|<!\[CDATA\[[\s\S]*?\]\]>|<(?:[^"'<>]|"[^"]*"|'[^']*')*>|[^<]+/g) ?? [];
+    let pretty = '';
     let depth = 0;
+    let previousTag = false;
+    let previousOpening = false;
 
     for (const part of parts) {
-        const trimmed = part.trim();
-        if (!trimmed) continue;
-
-        const isClosing = trimmed.startsWith('</');
-        const isSelfClosing = trimmed.endsWith('/>');
-        const isProcessingInstruction = trimmed.startsWith('<?');
-        const isInline = !isClosing && !isSelfClosing && trimmed.includes('</');
+        const isTag = part.startsWith('<') && !part.startsWith('<!');
+        const isClosing = isTag && part.startsWith('</');
+        const isOpening = isTag && !isClosing && !part.endsWith('/>') && !part.startsWith('<?');
 
         if (isClosing) depth = Math.max(0, depth - 1);
 
-        lines.push('  '.repeat(depth) + trimmed);
+        // Do not introduce content between an empty element's opening and closing tags.
+        if (isTag && previousTag && !(previousOpening && isClosing)) {
+            pretty += '\n' + '  '.repeat(depth);
+        }
+        pretty += part;
 
-        if (!isClosing && !isSelfClosing && !isInline && !isProcessingInstruction) depth++;
+        if (isOpening) depth++;
+        previousTag = isTag;
+        previousOpening = isOpening;
     }
 
-    return lines.join('\n');
+    return pretty;
 }
 
 // ════════════════════════════════════════════════════════════════
