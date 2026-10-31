@@ -139,6 +139,11 @@ export const MoveFileArgsSchema = z.object({
   destination: z.string(),
 });
 
+export const CopyFileArgsSchema = z.object({
+  source: z.string(),
+  destination: z.string(),
+});
+
 export const GetFileInfoArgsSchema = z.object({
   path: z.string(),
 });
@@ -258,6 +263,7 @@ export const toolArgSchemas: Record<string, z.ZodTypeAny> = {
   create_directory: CreateDirectoryArgsSchema,
   list_directory: ListDirectoryArgsSchema,
   move_file: MoveFileArgsSchema,
+  copy_file: CopyFileArgsSchema,
   start_search: StartSearchArgsSchema,
   get_more_search_results: GetMoreSearchResultsArgsSchema,
   stop_search: StopSearchArgsSchema,

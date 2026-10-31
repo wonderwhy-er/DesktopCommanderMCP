@@ -1,4 +1,5 @@
 import fs from "fs/promises";
+import { constants as fsConstants } from 'fs';
 import path from "path";
 import os from 'os';
 import fetch from 'cross-fetch';
@@ -894,6 +895,18 @@ export async function moveFile(sourcePath: string, destinationPath: string): Pro
     const validDestPath = await validatePath(destinationPath, { entry: true });
     // Across volumes, a copy and then removing the source
     await movePath(validSourcePath, validDestPath);
+}
+
+/** Copy a regular file, preserving its source and refusing to replace an existing target. */
+export async function copyFile(sourcePath: string, destinationPath: string): Promise<void> {
+    // Resolve symlinks on both ends so the actual read/write locations must be allowed.
+    const validSourcePath = await validatePath(sourcePath);
+    const validDestPath = await validatePath(destinationPath);
+    const source = await fs.stat(validSourcePath);
+    if (!source.isFile()) {
+        throw new Error(`copy_file only supports regular files: ${sourcePath}`);
+    }
+    await fs.copyFile(validSourcePath, validDestPath, fsConstants.COPYFILE_EXCL);
 }
 
 export async function searchFiles(rootPath: string, pattern: string): Promise<string[]> {
