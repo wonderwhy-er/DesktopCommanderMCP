@@ -18,8 +18,9 @@ class CommandManager {
             // Trim any leading/trailing whitespace
             commandString = commandString.trim();
 
-            // Define command separators - these are the operators that can chain commands
-            const separators = [';', '&&', '||', '|', '&'];
+            // Define command separators - these are the operators that can chain commands.
+            // A newline outside quotes also starts a new command in a shell.
+            const separators = [';', '&&', '||', '|', '&', '\n', '\r'];
 
             // This will store our extracted commands
             const commands: string[] = [];

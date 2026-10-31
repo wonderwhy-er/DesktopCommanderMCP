@@ -5,7 +5,6 @@
  */
 
 import assert from 'assert';
-import { execSync } from 'child_process';
 import fs from 'fs/promises';
 import os from 'os';
 import path from 'path';
@@ -13,19 +12,7 @@ import { commandManager } from '../dist/command-manager.js';
 import { configManager } from '../dist/config-manager.js';
 import { forceTerminate, interactWithProcess, startProcess } from '../dist/tools/improved-process-tools.js';
 import { exitProcess } from '../dist/utils/exit-process.js';
-
-function getPythonCommand() {
-    for (const command of ['python3', 'python']) {
-        try {
-            execSync(`command -v ${command}`, { stdio: 'ignore' });
-            return command;
-        } catch {
-            // Try the next Python executable.
-        }
-    }
-
-    throw new Error('Neither python3 nor python command is available in the PATH');
-}
+import { pythonCommand } from './helpers/python.js';
 
 function extractPid(result) {
     const match = result.content[0].text.match(/Process started with PID (\d+)/);
@@ -83,6 +70,23 @@ async function testCommandExtraction() {
     console.log('  $MYVAR ls =>', cmds8);
     assert.ok(cmds8.includes('ls'), 'FAIL: should extract "ls" and ignore $MYVAR');
     assert.ok(!cmds8.includes('$MYVAR'), 'FAIL: should not include $MYVAR as a command');
+
+    // Test 9: a newline starts a new command, with LF or CRLF endings
+    for (const separator of ['\n', '\r\n']) {
+        const cmds9 = commandManager.extractCommands(`echo ok${separator}dd if=/dev/zero`);
+        console.log(`  echo ok${JSON.stringify(separator)}dd if=/dev/zero =>`, cmds9);
+        assert.ok(cmds9.includes('dd'), 'FAIL: should extract "dd" from the second line');
+    }
+
+    // Test 10: a newline inside quotes is not a separator
+    const cmds10 = commandManager.extractCommands('echo "one\nsudo two"');
+    console.log('  echo "one\\nsudo two" =>', cmds10);
+    assert.ok(!cmds10.includes('sudo'), 'FAIL: should not split a quoted newline');
+
+    // Test 11: an escaped newline continues the same command
+    const cmds11 = commandManager.extractCommands('echo one \\\nsudo');
+    console.log('  echo one \\<newline>sudo =>', cmds11);
+    assert.ok(!cmds11.includes('sudo'), 'FAIL: should not split a line continuation');
 }
 
 async function testInteractWithProcessValidation(tempDir) {
@@ -100,9 +104,22 @@ async function testInteractWithProcessValidation(tempDir) {
     assert.match(blockedStart.content[0].text, /Command not allowed/, 'startProcess should return its blocked-command error');
     await assertFileDoesNotExist(startCanary, 'startProcess must not execute a blocked command');
 
-    const pythonCommand = getPythonCommand();
+    const multilineCanary = path.join(tempDir, 'multiline-start-canary');
+    const blockedMultilineStart = await startProcess({
+        command: `echo ok\ndd if=/dev/zero of=${multilineCanary} bs=1 count=1`,
+        timeout_ms: 1000
+    });
+    assert.strictEqual(blockedMultilineStart.isError, true, 'startProcess should reject dd on a later line');
+    await assertFileDoesNotExist(multilineCanary, 'startProcess must not execute a blocked command on a later line');
+
+    const python = pythonCommand();
+    if (!python) {
+        console.log('  Python not available, skipping the interactive checks');
+        return;
+    }
+
     const startResult = await startProcess({
-        command: `${pythonCommand} -i`,
+        command: `${python} -i`,
         timeout_ms: 5000
     });
     const pid = extractPid(startResult);
@@ -141,6 +158,18 @@ async function testInteractWithProcessValidation(tempDir) {
             'Blocked interactive input should return the expected rejection message'
         );
         await assertFileDoesNotExist(interactCanary, 'Rejected input must not be written to process stdin');
+
+        const blockedMultiline = await interactWithProcess({
+            pid,
+            input: `print("ok")\ndd if=/dev/zero of=${interactCanary} bs=1 count=1`,
+            timeout_ms: 3000
+        });
+        assert.strictEqual(blockedMultiline.isError, true, 'A blocked command on a later line should be rejected');
+        assert.strictEqual(
+            blockedMultiline.content[0].text,
+            'Input rejected: contains blocked command.',
+            'Multiline input should return the expected rejection message'
+        );
 
         const blockedSudoStart = await startProcess({ command: 'sudo --version' });
         const blockedSudoInput = await interactWithProcess({ pid, input: 'sudo --version' });
