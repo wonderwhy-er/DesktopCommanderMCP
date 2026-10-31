@@ -510,6 +510,15 @@ export function bootstrapApp(
             || (isPreviewStructuredContent(value) && typeof (value as RenderPayload).content === 'string'),
     );
     let lazyState: LazyPreviewState | undefined;
+    let startupState = initialState;
+    let pendingPersistedState: LazyPreviewState | undefined;
+    const sameLazyState = (left: LazyPreviewState, right: LazyPreviewState): boolean => (
+        JSON.stringify(left) === JSON.stringify(right)
+    );
+    const persistLazyState = (state: LazyPreviewState): void => {
+        pendingPersistedState = state;
+        widgetState.write(state);
+    };
     let loadEpoch = 0;
     let awaitingMutation = false;
     let mutationWatchdogId: ReturnType<typeof setTimeout> | undefined;
@@ -527,7 +536,7 @@ export function bootstrapApp(
             ? lazyState.readArgs : { path: payload.filePath };
         lazyState = createLazyPreviewState(readArgs, lazyState?.sourceTool);
         // Only small metadata is stored in host widget state, never file contents.
-        widgetState.write(lazyState);
+        persistLazyState(lazyState);
         currentPayload = payload;
         isExpanded = true;
         renderApp(container, payload, 'rendered', true);
@@ -596,17 +605,32 @@ export function bootstrapApp(
     };
 
     const syncFromPersistedWidgetState = (): void => {
-        const saved = widgetState.read();
-        if (!saved) {
-            // Some hosts do not provide widget-state persistence. The lazy shell
-            // still has the state in memory, so use it once to seed the viewer.
-            if (!lazyState && initialState) showLazyPreview(initialState);
+        if (startupState) {
+            const state = startupState;
+            startupState = undefined;
+            lazyState = state;
+            persistLazyState(state);
+            showLazyPreview(state);
             return;
         }
+
+        const saved = widgetState.read();
+        if (!saved) return;
+
         const state = isLazyPreviewState(saved) ? saved : createLazyStateFromLegacy(saved);
+        if (pendingPersistedState) {
+            if (sameLazyState(state, pendingPersistedState)) {
+                pendingPersistedState = undefined;
+            } else {
+                // A local state write can fail or lag behind the host snapshot.
+                // Never let that older snapshot roll the active preview backward.
+                return;
+            }
+        }
+
         // Replace old persisted full-payload widgets with metadata-only state.
-        if (!isLazyPreviewState(saved)) widgetState.write(state);
-        if (!lazyState || JSON.stringify(lazyState) !== JSON.stringify(state)) {
+        if (!isLazyPreviewState(saved)) persistLazyState(state);
+        if (!lazyState || !sameLazyState(lazyState, state)) {
             showLazyPreview(state);
         }
     };
@@ -616,7 +640,7 @@ export function bootstrapApp(
         const args = lazyState?.readArgs.path === payload.filePath
             ? lazyState.readArgs : { path: payload.filePath };
         lazyState = createLazyPreviewState(args, lazyState?.sourceTool);
-        widgetState.write(lazyState);
+        persistLazyState(lazyState);
     };
     rerenderCurrent = () => {
         if (currentPayload) renderApp(container, currentPayload, currentHtmlMode, isExpanded);
@@ -624,7 +648,7 @@ export function bootstrapApp(
     };
     unloadPreview = () => {
         if (lazyState) {
-            widgetState.write(lazyState);
+            persistLazyState(lazyState);
             showLazyPreview(lazyState);
         }
     };
@@ -675,7 +699,7 @@ export function bootstrapApp(
         clearMutationWatchdog();
         awaitingMutation = !!mutationTool;
         lazyState = state;
-        widgetState.write(state);
+        persistLazyState(state);
         showLazyPreview(state, false, awaitingMutation);
         if (awaitingMutation) {
             // Some hosts omit tool-result notifications. Offer manual retry after

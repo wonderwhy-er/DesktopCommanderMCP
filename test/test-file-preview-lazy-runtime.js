@@ -44,15 +44,16 @@ async function buildPreviewHarness() {
   return output.outputFiles[0].text;
 }
 
-async function mount(bundle, persistedState) {
+async function mount(bundle, persistedState, { persistWrites = true } = {}) {
   const dom = new JSDOM('<!doctype html><html><body><div id="app"></div></body></html>', {
     runScripts: 'outside-only', url: 'https://example.test/widget',
   });
   dom.window.TextEncoder = TextEncoder;
   dom.window.TextDecoder = TextDecoder;
+  Object.defineProperty(dom.window.document, 'visibilityState', { configurable: true, value: 'visible' });
   dom.window.openai = {
     widgetState: persistedState,
-    setWidgetState(value) { this.widgetState = value; },
+    setWidgetState(value) { if (persistWrites) this.widgetState = value; },
   };
   dom.window.eval(bundle);
   for (let i = 0; i < 4; i++) await new Promise(resolve => setTimeout(resolve, 0));
@@ -128,6 +129,23 @@ async function testOnDemandRuntime(bundle) {
   } finally { dom.window.close(); }
 }
 
+async function testFailedPersistenceDoesNotRestoreStaleState(bundle) {
+  const stale = createLazyPreviewState({ path: '/tmp/file-a.txt' });
+  const dom = await mount(bundle, { payload: stale }, { persistWrites: false });
+  try {
+    const app = dom.window.__dcApp;
+    app.ontoolinput({ arguments: { path: '/tmp/file-b.txt' } });
+    assert.equal(dom.window.document.querySelector('.lazy-preview-open')?.title, '/tmp/file-b.txt',
+      'new in-memory state should render even when persistence fails');
+
+    dom.window.document.dispatchEvent(new dom.window.Event('visibilitychange'));
+    assert.equal(dom.window.document.querySelector('.lazy-preview-open')?.title, '/tmp/file-b.txt',
+      'a stale persisted snapshot must not replace newer in-memory state');
+    assert.equal(dom.window.openai.widgetState.payload.readArgs.path, '/tmp/file-a.txt',
+      'test fixture should retain the stale persisted snapshot');
+  } finally { dom.window.close(); }
+}
+
 async function testMarkdownOnDemand(bundle) {
   const dom = await mount(bundle, null);
   try {
@@ -179,6 +197,7 @@ export default async function runTests() {
   await testDescriptorMetadata();
   const bundle = await buildPreviewHarness();
   await testOnDemandRuntime(bundle);
+  await testFailedPersistenceDoesNotRestoreStaleState(bundle);
   await testMarkdownOnDemand(bundle);
   await testMutationWait(bundle);
   await testLegacyMigration(bundle);
