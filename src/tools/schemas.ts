@@ -20,8 +20,14 @@ export const SetConfigValueArgsSchema = z.object({
   origin: z.enum(['ui', 'llm']).optional(),
 });
 
-// Empty schemas
-export const ListProcessesArgsSchema = z.object({});
+// A real machine can easily have hundreds of processes; ps aux/tasklist dumped
+// unfiltered blows past any consumer's practical output limit (seen directly:
+// 717 lines / 106KB on an ordinary desktop). sortBy/limit mirror list_directory's
+// own truncate-with-a-visible-count pattern rather than silently dropping rows.
+export const ListProcessesArgsSchema = z.object({
+  sortBy: z.enum(['cpu', 'memory']).optional(),   // default: memory
+  limit: z.number().int().positive().optional(),  // default: 50; explicit 0 or omitted "all" is not offered -- unfiltered is the exact failure mode this closes
+});
 
 // Terminal tools schemas
 export const StartProcessArgsSchema = z.object({

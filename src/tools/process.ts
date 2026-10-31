@@ -51,20 +51,43 @@ export function parsePsAux(stdout: string): ProcessInfo[] {
     .filter(p => !Number.isNaN(p.pid));
 }
 
-export async function listProcesses(): Promise<ServerResult> {
+/**
+ * The leading numeric value of a cpu/memory field, for sorting -- '21,436 K'
+ * (Windows tasklist) and '0.5' (ps aux %MEM) both need their thousands
+ * separators/units stripped before parseFloat, and 'n/a' (tasklist has no
+ * live per-process CPU%) must sort last, not first as NaN would via a plain
+ * numeric comparator.
+ */
+export function numericField(value: string): number {
+  const cleaned = value.replace(/,/g, '');
+  const n = parseFloat(cleaned);
+  return Number.isNaN(n) ? -Infinity : n;
+}
+
+export async function listProcesses(args: { sortBy?: 'cpu' | 'memory'; limit?: number } = {}): Promise<ServerResult> {
   const isWindows = os.platform() === 'win32';
-  const [program, args]: [string, string[]] = isWindows ? ['tasklist', ['/FO', 'CSV', '/NH']] : ['ps', ['aux']];
+  const [program, progArgs]: [string, string[]] = isWindows ? ['tasklist', ['/FO', 'CSV', '/NH']] : ['ps', ['aux']];
   try {
-    const { stdout } = await execFileAsync(resolveProgramPath(program), args);
+    const { stdout } = await execFileAsync(resolveProgramPath(program), progArgs);
     const processes = isWindows ? parseWindowsTasklistCsv(stdout) : parsePsAux(stdout);
 
+    const sortBy = args.sortBy ?? 'memory';
+    const sorted = [...processes].sort((a, b) => numericField(b[sortBy]) - numericField(a[sortBy]));
+    const limit = args.limit ?? 50;
+    const shown = sorted.slice(0, limit);
+
+    const lines = shown.map(p =>
+      `PID: ${p.pid}, Command: ${p.command}, CPU: ${p.cpu}, Memory: ${p.memory}`
+    );
+    // Same visible-truncation pattern list_directory already uses for an oversized
+    // nested directory, rather than silently dropping rows or blowing the caller's
+    // output limit the way an unfiltered dump did (#the exact bug this fixes).
+    if (sorted.length > shown.length) {
+      lines.push(`[TRUNCATED] showing top ${shown.length} of ${sorted.length} processes by ${sortBy} (pass limit/sortBy to see more or sort differently)`);
+    }
+
     return {
-      content: [{
-        type: "text",
-        text: processes.map(p =>
-          `PID: ${p.pid}, Command: ${p.command}, CPU: ${p.cpu}, Memory: ${p.memory}`
-        ).join('\n')
-      }],
+      content: [{ type: "text", text: lines.join('\n') }],
     };
   } catch (error) {
     return {

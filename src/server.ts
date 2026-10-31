@@ -1048,10 +1048,13 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             {
                 name: "list_processes",
                 description: `
-                        List all running processes.
-                        
+                        List running processes, sorted by memory usage (or CPU, with sortBy: "cpu"), highest first.
+
                         Returns process information including PID, command name, CPU usage, and memory usage.
-                        
+                        Capped at 50 by default (limit: N to change) -- a busy machine can have hundreds of
+                        processes, and an unfiltered dump can exceed what the caller can actually receive.
+                        A truncation line states how many were hidden when the cap is hit.
+
                         ${CMD_PREFIX_DESCRIPTION}`,
                 inputSchema: zodToJsonSchema(ListProcessesArgsSchema),
                 annotations: {
@@ -1349,7 +1352,7 @@ async function handleCallToolRequest(request: CallToolRequest): Promise<ServerRe
 
             // Process tools
             case "list_processes":
-                result = await handlers.handleListProcesses();
+                result = await handlers.handleListProcesses(args);
                 break;
 
             case "kill_process":
