@@ -34,8 +34,8 @@ export const CONFIG_FIELD_DEFINITIONS = {
     valueType: 'number',
   },
   fileWriteLineLimit: {
-    label: 'File Write Limit',
-    description: 'Maximum number of lines that can be written in one edit operation. This helps prevent accidental oversized writes and keeps file changes predictable.',
+    label: 'File Write Guidance Threshold',
+    description: 'Advisory line-count threshold used for write content and text edit blocks. Operations above this value are still allowed; write_file adds a performance tip suggesting smaller chunks.',
     valueType: 'number',
   },
 } as const satisfies Record<string, ConfigFieldDefinition>;

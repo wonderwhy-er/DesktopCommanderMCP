@@ -419,10 +419,10 @@ Claude Desktop Commander doesn't have a pre-defined blocklist, but you can use t
 
 ### Why is the fileWriteLineLimit set to 50 by default? What is the maximum value?
 
-The `fileWriteLineLimit` setting is set to 50 lines by default for these specific reasons:
+`fileWriteLineLimit` is an advisory threshold, not a hard write limit. It defaults to 50 lines. `write_file` calls above the threshold still succeed and receive a chunking/performance tip; text edits also are not rejected solely for exceeding this threshold.
 
 **Why 50 lines is the default:**
-- **AIs are wasteful with tokens**: Instead of doing two small edits in a file, AIs may decide to rewrite the whole thing. We're trying to force AIs to do things in smaller changes as it saves time and tokens
+- **AIs are wasteful with tokens**: Instead of doing two small edits in a file, AIs may decide to rewrite the whole thing. We're trying to encourage AIs to do things in smaller changes as it saves time and tokens
 - **Claude UX message limits**: There are limits within one message and hitting "Continue" does not really work. What we're trying here is to make AI work in smaller chunks so when you hit that limit, multiple chunks have succeeded and that work is not lost - it just needs to restart from the last chunk
 
 **What is the maximum value:**
@@ -433,12 +433,12 @@ The `fileWriteLineLimit` setting is set to 50 lines by default for these specifi
 // You can set it very high if needed
 set_config_value({ "key": "fileWriteLineLimit", "value": 2000 })
 
-// Or keep it small to force efficient behavior
+// Or keep it small to encourage smaller operations
 set_config_value({ "key": "fileWriteLineLimit", "value": 25 })
 ```
 
 **Why the chunking approach works:**
-When you exceed the limit, the system automatically suggests breaking operations into chunks:
+When a `write_file` call exceeds the threshold, the system automatically suggests breaking the write into chunks. Text `edit_block` operations are also allowed above the threshold, but they do not currently return the same automatic chunking tip:
 1. First chunk: `write_file(path, firstChunk, {mode: 'rewrite'})`
 2. Additional chunks: `write_file(path, nextChunk, {mode: 'append'})`
 
