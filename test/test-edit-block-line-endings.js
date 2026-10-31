@@ -289,6 +289,32 @@ async function testMixedLineEndings() {
     await assertFileContent(CRLF_FILE, 'ALPHA|beta\r\n',
       'A raw match ending inside CRLF must consume the complete normalized line ending');
 
+    // Normalized fallback must also exclude matches that would split a CRLF pair.
+    // Here the first LF is safe, while the second LF is the second byte of CRLF.
+    await fs.writeFile(MIXED_FILE, 'a\nb\r\n', 'utf8');
+    const normalizedBoundaryCountResult = await handleEditBlock({
+      file_path: MIXED_FILE,
+      old_string: '\r',
+      new_string: '|',
+      expected_replacements: 2
+    });
+    assert.ok(normalizedBoundaryCountResult.content[0].text.includes('Expected 2 occurrences but found 1'),
+      'Normalized occurrence diagnostics should count only CRLF-safe matches');
+    await assertFileContent(MIXED_FILE, 'a\nb\r\n',
+      'A normalized count mismatch must leave mixed line endings unchanged');
+
+    await fs.writeFile(MIXED_FILE, 'a\nb\r\n', 'utf8');
+    const normalizedBoundaryReplaceResult = await handleEditBlock({
+      file_path: MIXED_FILE,
+      old_string: '\r',
+      new_string: '|',
+      expected_replacements: 1
+    });
+    assertEditBlockSuccess(normalizedBoundaryReplaceResult,
+      'Should replace only the CRLF-safe normalized match');
+    await assertFileContent(MIXED_FILE, 'a|b\r\n',
+      'Normalized replacement must not split the later CRLF pair');
+
     // If the raw form exists but does not match expected_replacements, keep the
     // previous normalized behavior when the normalized form has the requested count.
     await fs.writeFile(MIXED_FILE,
