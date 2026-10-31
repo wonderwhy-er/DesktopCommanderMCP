@@ -131,9 +131,9 @@ if (container) {
       script.textContent = js;
       document.body.appendChild(script);
       script.remove();
-      const start = (window as unknown as { __dcStartFilePreview?: (app: App) => void }).__dcStartFilePreview;
+      const start = (window as unknown as { __dcStartFilePreview?: (app: App, state?: LazyPreviewState) => void }).__dcStartFilePreview;
       if (typeof start !== 'function') throw new Error('Viewer did not initialize (possible host CSP restriction)');
-      start(app as unknown as App); // Reuse the connected MCP App; never do a second handshake.
+      start(app as unknown as App, state); // Reuse the connected MCP App; never do a second handshake.
     } catch (error) {
       if (version !== generation) return;
       const reason = error instanceof Error ? error.message : String(error);

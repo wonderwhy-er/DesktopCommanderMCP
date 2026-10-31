@@ -1279,7 +1279,9 @@ async function handleCallToolRequest(request: CallToolRequest): Promise<ServerRe
                 if (!runtimeArgsValid) {
                     result = { content: [{ type: 'text', text: 'UI-only operation' }], isError: true };
                 } else {
-                    result = { content: [{ type: 'text', text: await getCompressedFilePreviewRuntime() }] };
+                    // Keep the fixed runtime payload exact: shared feedback/docker prompts,
+                    // usage tracking and tool history must not modify or record it.
+                    return { content: [{ type: 'text', text: await getCompressedFilePreviewRuntime() }] };
                 }
                 break;
             }

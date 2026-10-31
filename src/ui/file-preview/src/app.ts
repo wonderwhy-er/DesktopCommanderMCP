@@ -476,7 +476,12 @@ export function renderApp(
     onRender?.();
 }
 
-export function bootstrapApp(hostApp?: App, alreadyConnected = false, openOnStart = false): void {
+export function bootstrapApp(
+    hostApp?: App,
+    alreadyConnected = false,
+    openOnStart = false,
+    initialState?: LazyPreviewState,
+): void {
     const container = document.getElementById('app');
     if (!container) {
         return;
@@ -592,7 +597,12 @@ export function bootstrapApp(hostApp?: App, alreadyConnected = false, openOnStar
 
     const syncFromPersistedWidgetState = (): void => {
         const saved = widgetState.read();
-        if (!saved) return;
+        if (!saved) {
+            // Some hosts do not provide widget-state persistence. The lazy shell
+            // still has the state in memory, so use it once to seed the viewer.
+            if (!lazyState && initialState) showLazyPreview(initialState);
+            return;
+        }
         const state = isLazyPreviewState(saved) ? saved : createLazyStateFromLegacy(saved);
         // Replace old persisted full-payload widgets with metadata-only state.
         if (!isLazyPreviewState(saved)) widgetState.write(state);
