@@ -192,7 +192,7 @@ export class MCPDevice {
             await this.desktop.initialize();
             this.desktop.onDisconnect((reason) => void this.handleLocalMcpLoss(reason));
 
-            console.log('⏳ Connecting to Remote MCP');
+            console.log(`⏳ Connecting to Remote MCP ${this.baseServerUrl}`);
             const { supabaseUrl, anonKey } = await this.fetchSupabaseConfig();
             console.log(`   - 🔌 Connected to Remote MCP`);
 
