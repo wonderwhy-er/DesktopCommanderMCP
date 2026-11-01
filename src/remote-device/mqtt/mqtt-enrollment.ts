@@ -98,7 +98,7 @@ function validateCertificate(
 			Date.parse(certificate.validTo) <= now
 		)
 			throw new Error();
-	} catch {
+	} catch (_error){
 		throw new Error(
 			"MQTT certificate is invalid, expired, or does not match this device key and configured broker",
 		);
