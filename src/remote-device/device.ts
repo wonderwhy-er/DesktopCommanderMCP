@@ -313,6 +313,7 @@ export class MCPDevice {
             console.log(`   - Device ID:    ${this.deviceId}`);
             console.log(`   - Device Name:  ${deviceName}`);
             console.log(`   - Version:      ${VERSION}`);
+            console.debug(`   - Server URL:   ${this.baseServerUrl}`);
             if (!reachable) {
                 console.log('   - Retrying in the background; commands start working once you see "✅ Device ready".');
             } else {

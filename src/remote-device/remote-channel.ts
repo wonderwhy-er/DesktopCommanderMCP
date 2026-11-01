@@ -344,14 +344,14 @@ export class RemoteChannel {
         });
 
         if (error) {
-            console.error('[DEBUG] Failed to set session:', error.message);
+            console.error('[ERROR] Failed to set session:', error.message);
             await captureRemote('remote_channel_set_session_error', { error });
             return { error };
         }
 
         if (!user) {
             const noUserError = new Error('No user returned after setSession');
-            console.error('[DEBUG] No user returned:', noUserError.message);
+            console.error('[ERROR] No user returned:', noUserError.message);
             await captureRemote('remote_channel_get_user_empty', {});
             throw noUserError;
         }
