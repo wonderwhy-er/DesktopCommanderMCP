@@ -192,7 +192,7 @@ export class MCPDevice {
             await this.desktop.initialize();
             this.desktop.onDisconnect((reason) => void this.handleLocalMcpLoss(reason));
 
-            console.log(`⏳ Connecting to Remote MCP ${this.baseServerUrl}`);
+            console.log('⏳ Connecting to Remote MCP');
             const { supabaseUrl, anonKey } = await this.fetchSupabaseConfig();
             console.log(`   - 🔌 Connected to Remote MCP`);
 
@@ -313,6 +313,7 @@ export class MCPDevice {
             console.log(`   - Device ID:    ${this.deviceId}`);
             console.log(`   - Device Name:  ${deviceName}`);
             console.log(`   - Version:      ${VERSION}`);
+            console.debug(`   - Server URL:   ${this.baseServerUrl}`);
             if (!reachable) {
                 console.log('   - Retrying in the background; commands start working once you see "✅ Device ready".');
             } else {

@@ -174,6 +174,8 @@ Start with verbose logging:
 npx @wonderwhy-er/desktop-commander@latest remote --debug
 ```
 
+The device summary includes a `Server URL` line only in debug terminal output. It shows the Remote MCP service URL from `MCP_SERVER_URL`, or `https://mcp.desktopcommander.app` when that variable is unset or empty.
+
 ### My AI client cannot reach the device
 
 Check both sides of the connection:
