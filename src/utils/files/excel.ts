@@ -219,6 +219,8 @@ ${JSON.stringify(data)}`;
                 }
             }
 
+            this.validateMergedCellTargets(worksheet, content, startRow, startCol);
+
             for (let r = 0; r < content.length; r++) {
                 const rowData = content[r];
                 if (!Array.isArray(rowData)) continue;
@@ -236,6 +238,7 @@ ${JSON.stringify(data)}`;
             }
         } else {
             // Replace entire sheet content
+            this.validateMergedCellTargets(worksheet, content, 1, 1);
             // Clear existing data
             worksheet.eachRow((row, rowNumber) => {
                 row.eachCell((cell) => {
@@ -520,6 +523,25 @@ ${JSON.stringify(data)}`;
                 }
             }
             row.commit();
+        }
+    }
+
+    private validateMergedCellTargets(
+        worksheet: ExcelJS.Worksheet, content: any[][], startRow: number, startCol: number
+    ): void {
+        // ExcelJS redirects writes to merged cells to their master. Refuse
+        // aliases before any changes so writes cannot silently replace a value.
+        for (let r = 0; r < content.length; r++) {
+            if (!Array.isArray(content[r])) continue;
+            for (let c = 0; c < content[r].length; c++) {
+                const cell = worksheet.getCell(startRow + r, startCol + c);
+                if (cell.isMerged && cell.master.address !== cell.address) {
+                    throw new Error(
+                        `Cannot write merged cell ${cell.address}; write to its master ` +
+                        `${cell.master.address} instead. Nothing was written.`
+                    );
+                }
+            }
         }
     }
 
