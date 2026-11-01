@@ -10,14 +10,11 @@ import assert from 'assert';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { fileURLToPath } from 'url';
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { runIfMain, skip } from './helpers/run-if-main.js';
-import { closeClient } from './helpers/close-client.js';
+import { closeClient, connectToServer } from './helpers/mcp-client.js';
 import { callToolOnceLoaded } from './helpers/heavy-packages.js';
+import { waitUntil } from './helpers/wait.js';
 
-const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 const textOf = (result) => result.content?.find((block) => block.type === 'text')?.text ?? '';
 
@@ -134,13 +131,10 @@ async function searchStoppedAtMaxResultsSaysSo(client, dir) {
   assert(sessionId, `start_search should start a session, got: ${textOf(started)}`);
   try {
     let page;
-    const deadline = Date.now() + 10_000;
-    for (;;) {
+    await waitUntil(async () => {
       page = await client.callTool({ name: 'get_more_search_results', arguments: { sessionId } });
-      if (textOf(page).includes('Status: COMPLETED') || Date.now() > deadline) break;
-      await new Promise((resolve) => setTimeout(resolve, 100));
-    }
-    assert(textOf(page).includes('Status: COMPLETED'), `The search should complete, got: ${textOf(page)}`);
+      return textOf(page).includes('Status: COMPLETED');
+    }, 10_000, 'the search completes');
     assert(textOf(page).endsWith('\nStopped at maxResults (1): there may be more.') && !textOf(page).includes('✅ Search completed.'),
       `get_more_search_results should say the search stopped at maxResults, got: ${textOf(page)}`);
   } finally {
@@ -155,17 +149,10 @@ async function searchStoppedAtMaxResultsSaysSo(client, dir) {
 
 export default async function runTests() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dc-client-results-'));
-  const transport = new StdioClientTransport({
-    command: process.execPath,
-    args: [path.join(PROJECT_ROOT, 'dist/index.js'), '--no-onboarding'],
-    cwd: PROJECT_ROOT,
-    stderr: 'pipe',
-    env: { ...process.env },
-  });
-  const client = new Client({ name: 'client-results-test', version: '1.0.0' }, { capabilities: {} });
+  let client;
   const failures = [];
   try {
-    await client.connect(transport, { timeout: 30_000 });
+    client = await connectToServer('client-results-test');
     for (const check of [
       writePdfIgnoringAnOption, processToolsSendOnlyText, searchToolsSendOnlyText, toolDescriptionsAsBefore,
       searchStoppedAtMaxResultsSaysSo,

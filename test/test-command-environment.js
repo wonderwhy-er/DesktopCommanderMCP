@@ -13,25 +13,9 @@
 import assert from 'assert';
 import { getCommandEnvironment } from '../dist/utils/shell.js';
 import { runIfMain } from './helpers/run-if-main.js';
+import { withEnv } from './helpers/test-env.js';
 
 const STANDARD_PATHEXT = '.COM;.EXE;.BAT;.CMD;.VBS;.VBE;.JS;.JSE;.WSF;.WSH;.MSC';
-
-/** Runs fn with these variables in process.env (undefined: unset), then puts the old values back */
-function withEnv(values, fn) {
-  const saved = Object.fromEntries(Object.keys(values).map((name) => [name, process.env[name]]));
-  const apply = (entries) => {
-    for (const [name, value] of Object.entries(entries)) {
-      if (value === undefined) delete process.env[name];
-      else process.env[name] = value;
-    }
-  };
-  try {
-    apply(values);
-    return fn();
-  } finally {
-    apply(saved);
-  }
-}
 
 /** A variable of the returned environment, whatever the spelling of its name (Windows names ignore case) */
 function valueOf(env, name) {
@@ -58,7 +42,7 @@ export default async function runTests() {
       { ProgramData: 'D:\\Data', SystemDrive: 'Q:' }, 'D:\\Data'],
   ];
   for (const [name, values, expected] of programDataCases) {
-    const programData = withEnv(values, () => {
+    const programData = await withEnv(values, () => {
       const env = getCommandEnvironment();
       assert.strictEqual(process.env.ProgramData, values.ProgramData, `${name}: the server's own environment should not change`);
       return valueOf(env, 'ProgramData');
@@ -73,7 +57,7 @@ export default async function runTests() {
     ['PATHEXT with .EXE: kept', '.EXE;.PY', '.EXE;.PY'],
   ];
   for (const [name, value, expected] of pathExtCases) {
-    const pathExt = withEnv({ PATHEXT: value }, () => valueOf(getCommandEnvironment(), 'PATHEXT'));
+    const pathExt = await withEnv({ PATHEXT: value }, () => valueOf(getCommandEnvironment(), 'PATHEXT'));
     assert.strictEqual(pathExt, expected, `${name}: PATHEXT`);
     console.log(`✓ ${name}`);
   }
