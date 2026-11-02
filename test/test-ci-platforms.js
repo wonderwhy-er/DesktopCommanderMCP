@@ -222,6 +222,36 @@ export default async function run() {
     .includes('| Linux | 99.99 % | 66.66 % | 100 % |'), 'cut, not rounded, to two decimals, as c8\'s own report shows them');
   assert.deepStrictEqual(Object.keys(dataOf(first)), ['linux', 'windows'], 'each platform\'s results are kept in the comment');
 
+  // The three platforms combined, where the 100 % target is: a row under the platforms, and a column by area
+  const three = { linux: results(SHA_A), windows: results(SHA_A), macos: results(SHA_A) };
+  const combined = {
+    coverage: { lines: [60, 100], branches: [7, 8], functions: [10, 10] },
+    areas: [['src/tools', 45, 80], ['src/ui', 15, 20]],
+  };
+  const withCombined = renderComment({ headSha: SHA_A, platforms: three, combined });
+  assert.ok(withCombined.includes('| macOS | 50 % | 75 % | 90 % |'), 'the platforms\' rows');
+  const combinedRow = '| **Combined** | 60 % | 87.5 % | 100 % | – | – |';
+  assert.ok(withCombined.includes(combinedRow), `the combined row under them:\n${withCombined}`);
+  assert.ok(withCombined.includes('| Area | Linux | Windows | macOS | Combined |'), 'a combined column by area');
+  assert.ok(withCombined.includes('| `src/ui` | 50 % (10/20) | 50 % (10/20) | 50 % (10/20) | 75 % (15/20) |'));
+  assert.ok(withCombined.includes('| **total** | 50 % (50/100) | 50 % (50/100) | 50 % (50/100) | 60 % (60/100) |'));
+  assert.deepStrictEqual(prose(withCombined), [], 'still no prose');
+  const merged = mergeComment({ headSha: SHA_A, data: three, earlier: first, combined });
+  assert.ok(merged.includes('| **Combined** | 60 % |'), 'mergeComment passes it on');
+  // Fail closed: no figure unless this one run has the three reports, and the row says why
+  const partial = renderComment({ headSha: SHA_A, platforms: { linux: results(SHA_A) } });
+  const noFigure = '| **Combined** | – | – | – | needs Linux, Windows and macOS in one run | – |';
+  assert.ok(partial.includes(noFigure), `no combined figure from one platform:\n${partial}`);
+  assert.ok(!partial.includes('| Combined |'), 'and no combined column by area');
+  const unreadable = { missing: 'coverage-windows-latest can\'t be read' };
+  const unreadableRow = '| **Combined** | – | – | – | coverage-windows-latest can\'t be read | – |';
+  assert.ok(renderComment({ headSha: SHA_A, platforms: three, combined: unreadable }).includes(unreadableRow),
+    'a report that can\'t be read: said, no figure');
+  const noCoverage = { sha: SHA_A, tests: null, stoppedAt: 'Install', coverage: null, areas: [], links: {} };
+  const bare = renderComment({ headSha: SHA_A, platforms: { windows: noCoverage } });
+  assert.ok(!bare.includes('Combined'), 'no coverage at all: no combined row');
+  console.log('✓ the three platforms combined: a row and a column, only from one run\'s three reports');
+
   const row = (label, sha) => `| ${label} | ✅ 3 of 3 files passed | \`everything\` | 12 | \`${sha.slice(0, 7)}\` |`;
   const second = mergeComment({ headSha: SHA_B, data: { linux: results(SHA_B) }, earlier: first });
   assert.ok(second.includes('## Tests and coverage for `bbbbbbb`'));
@@ -459,6 +489,33 @@ export default async function run() {
   assert.ok(unitJob.indexOf('- name: Install') < unitJob.indexOf('- name: The npm cache for the release repro')
     && unitJob.indexOf('- name: The npm cache for the release repro') < unitJob.indexOf('- name: Tests with coverage'), 'after npm ci fills it, before the tests');
   console.log('✓ the release repro installs from the job\'s npm cache');
+
+  // Cross-tests: tests_from names the commit whose test/ runs on `commit`'s code; the comment names both
+  const cross = renderComment({ headSha: SHA_A, testsFrom: SHA_B, platforms: { linux: results(SHA_A) } });
+  assert.ok(cross.includes('## Tests and coverage for `aaaaaaa`, tests from `bbbbbbb`'), cross);
+  assert.ok(renderComment({ headSha: SHA_A, platforms: { linux: results(SHA_A) } }).includes('## Tests and coverage for `aaaaaaa`\n'), 'no tests_from: the heading as before');
+  const crossInput = lines.indexOf('      tests_from:');
+  assert.ok(crossInput > 0 && lines.slice(crossInput + 1, crossInput + 4).some((line) => line.trim() === "default: ''"), 'an on-demand tests_from input, empty by default');
+  // Checked as a SHA and resolved, like commit; through the environment only; a cross run writes no PR comment
+  const commitStep = step(platformsJob, 'The commit and its PR');
+  for (const line of [
+    'TESTS_FROM: ${{ inputs.tests_from }}',
+    '[[ -z "$TESTS_FROM" || "$TESTS_FROM" =~ ^[0-9a-fA-F]{7,40}$ ]] || { echo "tests_from: not a SHA: $TESTS_FROM"; exit 1; }',
+    'tests_from=$(gh api "repos/$GITHUB_REPOSITORY/commits/$TESTS_FROM" --jq .sha)',
+    '[[ "$tests_from" =~ ^[0-9a-f]{40}$ ]] || { echo "tests_from: not a commit SHA: $tests_from"; exit 1; }',
+    'pr=""',
+    'echo "tests_from=$tests_from" >> "$GITHUB_OUTPUT"',
+  ]) assert.ok(commitStep.includes(line), `the commit step: ${line}`);
+  assert.ok(platformsJob.includes('tests_from: ${{ steps.head.outputs.tests_from }}'), 'its output');
+  // The test job: test/ exactly as tests_from has it, before anything installs or runs
+  const crossStep = step(unitJob, 'The tests from tests_from');
+  for (const line of ['shell: bash', 'TESTS_FROM: ${{ needs.platforms.outputs.tests_from }}', 'if [[ -n "$TESTS_FROM" ]]; then',
+    'git fetch --no-tags --depth=1 origin "$TESTS_FROM"', 'git rm -r -q test', 'git checkout "$TESTS_FROM" -- test']) {
+    assert.ok(crossStep.includes(line), `the cross step: ${line}\n${crossStep.join('\n')}`);
+  }
+  assert.ok(unitJob.indexOf('- name: The tests from tests_from') < unitJob.indexOf('- name: Install'), 'before the install');
+  assert.ok(commentJob.some((line) => line.trim() === 'TESTS_FROM: ${{ needs.platforms.outputs.tests_from }}'), 'the comment names both commits');
+  console.log('✓ cross-tests: tests_from\'s test/ on commit\'s code, checked like commit, both named, no PR comment');
 
   // The test job installs with npm 11 on every platform: Node 22's npm 10 runs the prepare
   // build inside `npm pack` even with ignore-scripts, into the JSON the release test reads
