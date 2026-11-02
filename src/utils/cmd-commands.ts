@@ -10,6 +10,9 @@ import type { CommandReading, FoundCommand } from './command-reading.js';
  * - > and < with their target (2>&1, >>log.txt) are redirections, not words;
  * - ; , = and @ before a command are skipped, as spaces are (@echo off runs
  *   echo, ;sc and @ sc run sc);
+ * - a command's name ends at ; , = and / outside "…", also after ^ (net,user
+ *   and sc/query run net and sc), but a name with a drive letter keeps its /
+ *   (C:/Windows/System32/sc.exe);
  * - a word with %VAR% in it is known only at run time;
  * - if and for run the command after their condition or after "do".
  */
@@ -24,6 +27,8 @@ interface Token {
   atRunTime: boolean;
   /** How many of a word's first characters are ; , = or @ as written: cmd skips them where a command starts */
   lead?: number;
+  /** Where in value a command's name ends, at a ; , = or / outside "…"; undefined when the whole word is the name */
+  nameEnd?: number;
 }
 
 function tokenize(text: string): Token[] {
@@ -54,6 +59,8 @@ function tokenize(text: string): Token[] {
       const start = i;
       let value = '';
       let inQuotes = false;
+      // Where in value a ; , = or / is outside "…": cmd ends a command's name at the first one
+      const ends: number[] = [];
       while (i < text.length) {
         const c = text[i];
         if (inQuotes) {
@@ -65,17 +72,22 @@ function tokenize(text: string): Token[] {
           inQuotes = true;
           i++;
         } else if (c === '^' && i + 1 < text.length) {
+          if (';,=/'.includes(text[i + 1])) ends.push(value.length);
           value += text[i + 1];
           i += 2;
         } else if (' \t\r\n&|()<>'.includes(c)) {
           break;
         } else {
+          if (';,=/'.includes(c)) ends.push(value.length);
           value += c;
           i++;
         }
       }
       const written = text.slice(start, i);
-      tokens.push({ kind: 'word', value, start, atRunTime: /%[^%\s]+%/.test(written), lead: /^[;,=@]*/.exec(written)![0].length });
+      const lead = /^[;,=@]*/.exec(written)![0].length;
+      const drive = /^[A-Za-z]:/.test(value.slice(lead));
+      const nameEnd = ends.find((end) => end >= lead && !(drive && value[end] === '/'));
+      tokens.push({ kind: 'word', value, start, atRunTime: /%[^%\s]+%/.test(written), lead, nameEnd });
     }
   }
   return tokens;
@@ -106,7 +118,11 @@ function ifConditionLength(words: Token[], i: number): number | undefined {
 const isLead = (word: Token): boolean => word.lead !== undefined && word.lead > 0 && word.lead === word.value.length;
 
 /** The name a command's first word gives, without the ; , = and @ that cmd skips before it (;sc runs sc) */
-const commandName = (word: Token): string => word.value.slice(word.lead ?? 0);
+const commandName = (word: Token): string => word.value.slice(word.lead ?? 0, word.nameEnd);
+
+/** The rest of a command's first word after its name, cmd's first argument: user for net,user, /query for sc/query */
+const afterName = (word: Token): string =>
+  word.nameEnd === undefined ? '' : word.value.slice(word.nameEnd).replace(/^[;,=]+/, '');
 
 class CmdReader {
   private position = 0;
@@ -194,9 +210,14 @@ class CmdReader {
     const first = words[0];
     const name = commandName(first);
     if (!name && words.length === 1) return; // "" alone runs nothing
+    const rest = afterName(first);
+    const firstWords = rest ? [name, rest] : [name];
     this.commands.push({
       name,
-      words: words.map((word, index) => (word.atRunTime ? null : index === 0 ? name : word.value)),
+      words: [
+        ...firstWords.map((word) => (first.atRunTime ? null : word)),
+        ...words.slice(1).map((word) => (word.atRunTime ? null : word.value)),
+      ],
       start: first.start,
       nameAtRunTime: first.atRunTime,
     });
