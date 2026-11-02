@@ -18,15 +18,18 @@
 import fs from 'fs/promises';
 import path from 'path';
 import assert from 'assert';
-import { configManager } from '../dist/config-manager.js';
-import { handleMoveFile } from '../dist/handlers/filesystem-handlers.js';
-import { runIfMain } from './helpers/run-if-main.js';
-import { createTempDir } from './helpers/test-env.js';
+import { runIfMain, skip } from './helpers/run-if-main.js';
+import { createTempDir, isTestHome } from './helpers/test-env.js';
 
 const text = (result) => result.content.map((c) => c.text).join('\n');
 const exists = (p) => fs.lstat(p).then(() => true, () => false);
 
 async function run() {
+  if (!isTestHome()) {
+    return skip('move_file authorization changes config: run it through node test/run-all-tests.js');
+  }
+  const { configManager } = await import('../dist/config-manager.js');
+  const { handleMoveFile } = await import('../dist/handlers/filesystem-handlers.js');
   // Two sibling trees, each by its real path (as validatePath compares them):
   // one is the single allowed directory, the other is outside it.
   const allowedDir = createTempDir('dc-move-authz-allowed-');
