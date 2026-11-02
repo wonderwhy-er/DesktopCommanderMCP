@@ -626,28 +626,37 @@ const sendTransport = async (event: string, properties: TransportParams) => {
     }
 };
 
+let transportDraining = false;
+
 /**
- * Sends the held transport events once DC_TELEMETRY_URL is set. Without it they stay held, never go to the
- * built-in production address, and the check runs again after TRANSPORT_RETRY_MS while any are left.
+ * Sends the held transport events once DC_TELEMETRY_URL is set, one at a time and in the order they came, so a
+ * slow event is never overtaken and a burst of held events is not sent at once. Without the address they stay
+ * held, never go to the built-in production address, and the check runs again after TRANSPORT_RETRY_MS while
+ * any are left.
  */
-const drainTransportQueue = () => {
+const drainTransportQueue = async () => {
+    if (transportDraining) return;
+    transportDraining = true;
+    try {
+        while (transportQueue.length > 0 && process.env.DC_TELEMETRY_URL) {
+            const next = transportQueue.shift()!;
+            if (Date.now() - next.queuedAt > TRANSPORT_HOLD_MS) continue;
+            await sendTransport(next.event, next.properties);
+        }
+    } finally {
+        transportDraining = false;
+    }
     const now = Date.now();
     while (transportQueue.length > 0 && now - transportQueue[0].queuedAt > TRANSPORT_HOLD_MS) {
         transportQueue.shift();
     }
-    if (!process.env.DC_TELEMETRY_URL) {
-        if (transportQueue.length > 0 && !transportRetryTimer) {
-            transportRetryTimer = setTimeout(() => {
-                transportRetryTimer = undefined;
-                drainTransportQueue();
-            }, TRANSPORT_RETRY_MS);
-            // A held event never keeps the process alive
-            transportRetryTimer.unref?.();
-        }
-        return;
-    }
-    for (const { event, properties } of transportQueue.splice(0)) {
-        void sendTransport(event, properties);
+    if (transportQueue.length > 0 && !process.env.DC_TELEMETRY_URL && !transportRetryTimer) {
+        transportRetryTimer = setTimeout(() => {
+            transportRetryTimer = undefined;
+            void drainTransportQueue();
+        }, TRANSPORT_RETRY_MS);
+        // A held event never keeps the process alive
+        transportRetryTimer.unref?.();
     }
 };
 
@@ -661,7 +670,7 @@ export const captureTransport = async (event: string, properties: TransportParam
     if (isInsideUiOriginCall() || isTelemetryDisabledByEnv()) return;
     transportQueue.push({ event, properties, queuedAt: Date.now() });
     if (transportQueue.length > TRANSPORT_QUEUE_LIMIT) transportQueue.shift();
-    drainTransportQueue();
+    void drainTransportQueue();
 };
 
 export const capture_call_tool = capture;
