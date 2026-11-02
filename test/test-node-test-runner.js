@@ -55,7 +55,9 @@ export default async function run() {
   const dir = createTempDir('dc-node-test-runner-');
   try {
     fs.writeFileSync(path.join(dir, 'pass.mjs'), "console.log('fine');\n");
-    fs.writeFileSync(path.join(dir, 'fail.mjs'), "console.log('boom');\nprocess.exit(3);\n");
+    // 31 lines, then the exit: all of them fit in the 40 lines a failure keeps
+    fs.writeFileSync(path.join(dir, 'fail.mjs'),
+      "for (let line = 1; line <= 30; line++) console.log('line ' + line);\nconsole.log('boom');\nprocess.exit(3);\n");
     fs.writeFileSync(path.join(dir, 'skip.mjs'), "import fs from 'fs';\nfs.appendFileSync(process.env.DC_TEST_SKIP_FILE, 'no python\\n');\n");
     const runner = pathToFileURL(path.join(ROOT, 'test', 'helpers', 'node-test-runner.js')).href;
     fs.writeFileSync(path.join(dir, 'run.mjs'), [
@@ -74,6 +76,9 @@ export default async function run() {
     assert.deepStrictEqual(json.files.map(({ file, success }) => [file, success]), [['./pass.mjs', true], ['./fail.mjs', false], ['./skip.mjs', true]]);
     const failed = json.files[1];
     assert.ok(failed.exitCode === 3 && failed.outputTail.includes('boom'), 'a failed file: its exit code and its last output');
+    // Each printed line is one line of the tail: no empty line between them, and so room for the first of the 31
+    assert.ok(!/\n\s*\n/.test(failed.outputTail), `no empty line the file didn't print:\n${JSON.stringify(failed.outputTail)}`);
+    assert.ok(failed.outputTail.includes('line 1\n'), `the tail keeps the file's last 40 lines:\n${failed.outputTail}`);
     assert.deepStrictEqual(json.files[2].skipped, ['no python'], 'a skipped check, by its reason');
     assert.ok(json.summary.failed === 1 && json.summary.skippedChecks === 1);
 
