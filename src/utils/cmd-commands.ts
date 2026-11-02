@@ -235,6 +235,7 @@ class CmdReader {
         ...(rest ? [first.text.slice(0, first.textEnd), writtenAfterName(first)] : [first.text]),
         ...words.slice(1).map((word) => word.text),
       ],
+      wordTexts: [...firstWords, ...words.slice(1).map((word) => word.value)],
       start: first.start,
       nameAtRunTime: first.atRunTime,
     });

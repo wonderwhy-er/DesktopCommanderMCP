@@ -181,6 +181,8 @@ export async function readPosixCommands(command: string): Promise<CommandReading
             name: name.value ?? words[i].text,
             words: [...made.slice(k).map((word) => word.value), ...values.slice(i + 1)],
             written: [...made.slice(k).map(() => words[i].text), ...words.slice(i + 1).map((word) => word.text)],
+            // unbash's value of a word keeps the parts known only at run time as written
+            wordTexts: [...made.slice(k).map((word) => word.value ?? words[i].value), ...words.slice(i + 1).map((word) => word.value)],
             start: backticksStart ?? (i === 0 ? node.pos : words[i].pos),
             nameAtRunTime: name.value === null,
           });

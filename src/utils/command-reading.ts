@@ -28,6 +28,14 @@ export interface FoundCommand {
    */
   written: string[];
   /**
+   * The same words as the shell reads them, but with each part known only at
+   * run time kept as it is written: "sudo $X" gives sudo $X, where `words`
+   * has null and `written` keeps the quotes. A shell started with a command
+   * text (bash -c "sudo $X") gets such a word as its command, so the check
+   * reads it to see the programs it names.
+   */
+  wordTexts: string[];
+  /**
    * PowerShell's Start-Process only: the programs it may start, as this
    * PowerShell binds its FilePath, each with its value (null when known only
    * at run time) and its text as written. A splatted @params may hold
