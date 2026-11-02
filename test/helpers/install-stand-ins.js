@@ -33,14 +33,14 @@ function answerFor(event) {
 function respond(req, answer) {
   if (answer === 'error') return req.emit('error', new Error('stand-in: no network'));
   if (answer === 'hang') return undefined;
-  const res = new EventEmitter();
-  res.statusCode = answer === 'status' ? 500 : 200;
-  req.emit('response', res);
-  if (answer === 'response-error') return res.emit('error', new Error('stand-in: cut off'));
-  if (answer === 'close') return res.emit('close');
-  res.emit('data', '{}');
-  res.emit('end');
-  return res.emit('close');
+  const response = new EventEmitter();
+  response.statusCode = answer === 'status' ? 500 : 200;
+  req.emit('response', response);
+  if (answer === 'response-error') return response.emit('error', new Error('stand-in: cut off'));
+  if (answer === 'close') return response.emit('close');
+  response.emit('data', '{}');
+  response.emit('end');
+  return response.emit('close');
 }
 export function request(url) {
   const req = new EventEmitter();
@@ -49,6 +49,7 @@ export function request(url) {
   req.destroy = () => { req.destroyed = true; };
   req.end = () => {
     let event = null;
+    // A body that isn't JSON names no event; it gets the default answer, which is what the test plans for it
     try { event = JSON.parse(body).events?.[0]?.name ?? null; } catch {}
     const answer = answerFor(event);
     fs.appendFileSync(log, JSON.stringify({ post: String(url), event, answer, body }) + '\\n');
