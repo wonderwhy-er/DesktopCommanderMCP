@@ -5,7 +5,7 @@ import { capture } from "../utils/capture.js";
 import { ServerResult } from '../types.js';
 import { analyzeProcessState, cleanProcessOutput, formatProcessStateMessage, ProcessState } from '../utils/process-detection.js';
 import { configManager } from '../config-manager.js';
-import { getCommandEnvironment, getDefaultShell } from '../utils/shell.js';
+import { getCommandEnvironment, getCommandShell } from '../utils/shell.js';
 import { terminateProcessTree } from '../utils/process-tree.js';
 import { MAX_PROCESS_WAIT_MS } from '../config.js';
 import { spawn } from 'child_process';
@@ -166,7 +166,12 @@ export async function startProcess(args: unknown, maxWaitMs: number = MAX_PROCES
     });
   }
 
-  const isAllowed = await commandManager.validateCommand(parsed.data.command);
+  // The shell that runs the command, worked out before the check so the
+  // check reads the command with that shell's grammar
+  const config = await configManager.getConfig();
+  const shellUsed = getCommandShell(parsed.data.shell, config.defaultShell);
+
+  const isAllowed = await commandManager.validateCommand(parsed.data.command, shellUsed);
   if (!isAllowed) {
     return {
       content: [{ type: "text", text: `Error: Command not allowed: ${parsed.data.command}` }],
@@ -199,13 +204,6 @@ export async function startProcess(args: unknown, maxWaitMs: number = MAX_PROCES
       }],
       structuredContent: { pid: virtualPid, status: 'waiting_for_input' },
     };
-  }
-
-  let shellUsed: string | undefined = parsed.data.shell;
-
-  if (!shellUsed) {
-    const config = await configManager.getConfig();
-    shellUsed = config.defaultShell || getDefaultShell();
   }
 
   const result = await terminalManager.executeCommand(

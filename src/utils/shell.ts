@@ -192,6 +192,44 @@ export function detectAvailableShells(): string[] {
 }
 
 /**
+ * A program's name without its folder or extension (one of PATHEXT's, or
+ * .ps1), lowercased: C:\Windows\System32\NET.EXE is "net". The command check
+ * matches blockedCommands with it.
+ */
+export function programName(name: string): string {
+  const base = path.basename(name).toLowerCase();
+  const extension = path.extname(base);
+  const known = [...windowsExecutableExtensions(), '.ps1'].some((ext) => ext.toLowerCase() === extension);
+  return extension && known ? base.slice(0, -extension.length) : base;
+}
+
+/** The kinds of shell a command can run in. The command check has a reader for each. */
+export type ShellType = 'posix' | 'powershell' | 'cmd';
+
+/**
+ * Which kind of shell a shell program is, by its name without folder and
+ * lowercased, as getShellSpawnArgs() reads it: pwsh and powershell (with or
+ * without .exe) are PowerShell, cmd and cmd.exe are cmd, and every other shell
+ * (bash, zsh, sh, dash, ksh, fish) is POSIX. getShellSpawnArgs() starts each
+ * kind its own way.
+ */
+export function getShellType(shell: string): ShellType {
+  const name = path.basename(shell).toLowerCase();
+  if (['pwsh', 'pwsh.exe', 'powershell', 'powershell.exe'].includes(name)) return 'powershell';
+  if (name === 'cmd' || name === 'cmd.exe') return 'cmd';
+  return 'posix';
+}
+
+/**
+ * The shell start_process runs a command in: the one asked for, else the
+ * defaultShell setting, else this machine's default. The command check reads
+ * the command with the same shell.
+ */
+export function getCommandShell(shell: string | undefined, defaultShell: string | undefined): string {
+  return shell || defaultShell || getDefaultShell();
+}
+
+/**
  * Configuration for spawning a shell with appropriate flags
  */
 export interface ShellSpawnConfig {
