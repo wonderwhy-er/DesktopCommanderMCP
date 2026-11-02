@@ -1,7 +1,7 @@
 /**
  * The command-check corpus as one test: one case per command, with the answer
- * the check SHOULD give in that command's shell — allow, or refuse the blocked
- * program that really runs.
+ * the check SHOULD give in that command's shell — allow, refuse the blocked
+ * program that really runs, or allow and say it can't see the program.
  * The cases, and the groups they are in, are listed in fixtures/command-check-corpus.mjs.
  *
  * Each command is checked with the shell it is written for. A PowerShell
@@ -45,14 +45,20 @@ export default async function runTests() {
         failures.push(`${c.id} [${shell}]: checkCommand threw ${error && error.message}`);
         continue;
       }
-      // A refused command must be blocked for the program that runs, not refused for another reason
-      const right = expect === null
-        ? check.verdict === 'allowed'
-        : check.verdict === 'blocked' && check.name === expect;
-      if (!right) {
-        const want = expect === null ? 'allowed' : `blocked for ${expect}`;
-        failures.push(`${c.id} [${c.group}/${shell}] should be ${want} but was ${JSON.stringify(check)}`);
+      // unknowable: the check can't see the program, so it allows the command and says so (unseen).
+      // A refused command must be blocked for the program that runs, not refused for another reason.
+      let right, want;
+      if (expect === null) {
+        want = 'allowed';
+        right = check.verdict === 'allowed';
+      } else if (expect === 'unknowable') {
+        want = 'unseen';
+        right = check.verdict === 'unseen';
+      } else {
+        want = `blocked for ${expect}`;
+        right = check.verdict === 'blocked' && check.name === expect;
       }
+      if (!right) failures.push(`${c.id} [${c.group}/${shell}] should be ${want} but was ${JSON.stringify(check)}`);
     }
   }
 
