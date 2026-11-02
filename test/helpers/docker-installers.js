@@ -46,11 +46,11 @@ export function runInstallerSh(commands, { replace = {} } = {}) {
 }
 
 /**
- * Runs `commands` in Windows PowerShell, with `env`, after loading
- * install-docker.ps1's variables and functions, with `replace`; returns
- * spawnSync's result.
+ * Runs `commands` in Windows PowerShell (or in `shell`, such as pwsh), with `env`,
+ * after loading install-docker.ps1's variables and functions, with `replace`;
+ * returns spawnSync's result.
  */
-export function runInstallerPs1(commands, { replace = {}, env = process.env } = {}) {
+export function runInstallerPs1(commands, { replace = {}, env = process.env, shell = 'powershell' } = {}) {
   const text = fs.readFileSync(path.join(PROJECT_ROOT, 'install-docker.ps1'), 'utf8');
   return withCopy('install-docker.ps1', text, replace, (dir) => {
     const script = [
@@ -63,6 +63,6 @@ export function runInstallerPs1(commands, { replace = {}, env = process.env } = 
       '}',
       commands,
     ].join('\n');
-    return spawnSync('powershell', ['-NoProfile', '-NonInteractive', '-Command', script], { env, encoding: 'utf8' });
+    return spawnSync(shell, ['-NoProfile', '-NonInteractive', '-Command', script], { env, encoding: 'utf8' });
   });
 }
