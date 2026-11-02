@@ -117,8 +117,11 @@ export function uncoveredOf({ diff, lcovs, counted = () => true }) {
     // Only a file the coverage counts: whatever a report says about another, it's not the coverage's
     if (!counted(file)) continue;
     // The report's paths are the runner's own: one ends with the file's path from the repo's root
-    const records = reports.flatMap((report) => [...report].filter(([source]) => source === file || source.endsWith(`/${file}`)).map(([, hits]) => hits));
-    const missed = [...added].filter((line) => records.some((hits) => hits.has(line)) && !records.some((hits) => (hits.get(line) ?? 0) > 0));
+    const records = reports.flatMap((report) => [...report]
+      .filter(([source]) => source === file || source.endsWith(`/${file}`))
+      .map(([, hits]) => hits));
+    const missed = [...added]
+      .filter((line) => records.some((hits) => hits.has(line)) && !records.some((hits) => (hits.get(line) ?? 0) > 0));
     if (missed.length > 0) uncovered.push({ file, ranges: rangesOf(missed) });
   }
   return uncovered;
@@ -252,12 +255,14 @@ export function reviewOf({ answer, diff, headSha, baseSha, usage = null, inline 
   const rows = findings.map((finding, index) => ({ ...finding, index, rank: KINDS.indexOf(kindOf(finding.kind)) }))
     .sort((a, b) => a.rank - b.rank || a.index - b.index)
     .map(({ kind, file, line, text }) => `| ${kindOf(kind)[0]} | \`${plain(file || '?')}${line ? `:${line}` : ''}\` | ${oneLine(quiet(text)).replace(/\|/g, '\\|')} |`);
-  const result = KINDS.filter(([, label]) => counts.has(label))
+  const kindCounts = KINDS.filter(([, label]) => counts.has(label))
     .map(([, label, plural]) => `${counts.get(label)} ${counts.get(label) === 1 ? label.toLowerCase() : plural}`);
   // The writing style: the result first, on one line with the summary; then a table, one line per finding
   const summary = oneLine(quiet(answer.summary));
   const untested = tests === null ? ', with no test results' : '';
-  const body = [REVIEW_MARKER, `**AI review of ${commit(headSha)} against ${commit(baseSha)}:** ${result.length > 0 ? result.join(', ') : 'clean'}${untested}.${summary ? ` ${summary}` : ''}`];
+  const headline = `**AI review of ${commit(headSha)} against ${commit(baseSha)}:**`;
+  const outcome = kindCounts.length > 0 ? kindCounts.join(', ') : 'clean';
+  const body = [REVIEW_MARKER, `${headline} ${outcome}${untested}.${summary ? ` ${summary}` : ''}`];
   if (rows.length > 0) body.push('', '| Kind | Where | What |', '|---|---|---|', ...rows);
   if (usage) {
     body.push('', `<sub>${usage.models.map(plain).join(', ')} · ${usage.requests} requests · ${usage.total} tokens`
@@ -391,13 +396,14 @@ export function textAnswerOf(text) {
 export function textCheckOf({ answer, file, headSha }) {
   const at = (line) => (Number.isInteger(line) && line > 0 ? `${file}:${line}` : file);
   const findings = answer.findings.map((finding) => ({ ...finding, kind: textKindOf(finding.kind) }));
-  const result = TEXT_KINDS.map(([name, , plural]) => [name, plural, findings.filter(({ kind }) => kind[0] === name).length])
+  const kindCounts = TEXT_KINDS
+    .map(([name, , plural]) => [name, plural, findings.filter(({ kind }) => kind[0] === name).length])
     .filter(([, , count]) => count > 0)
     .map(([name, plural, count]) => `${count} ${count === 1 ? name : plural}`);
   const line = (text) => oneLine(quiet(text));
   return [
     `## Text check of \`${plain(file)}\` at ${commit(headSha)}`,
-    `**Result:** ${result.length > 0 ? result.join(', ') : 'clean'}.`,
+    `**Result:** ${kindCounts.length > 0 ? kindCounts.join(', ') : 'clean'}.`,
     line(answer.summary),
     ...(findings.length > 0 ? ['### Findings', ...findings.map(({ kind, line: where, text }) => `- **${kind[1]}** \`${at(where)}\`: ${line(text)}`)] : []),
     '### Checked',
