@@ -1,6 +1,6 @@
 import fs from 'fs/promises';
 import path from 'path';
-import os from 'os';
+import { fuzzyLogPath } from './data-paths.js';
 
 export interface FuzzySearchLogEntry {
     timestamp: Date;
@@ -26,9 +26,8 @@ class FuzzySearchLogger {
     private initialized = false;
 
     constructor() {
-        // Create log file in a dedicated directory
-        const logDir = path.join(os.homedir(), '.claude-server-commander-logs');
-        this.logPath = path.join(logDir, 'fuzzy-search.log');
+        // New installations share the main data folder; legacy logs stay readable.
+        this.logPath = fuzzyLogPath();
     }
 
     private async ensureLogFile(): Promise<void> {

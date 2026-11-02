@@ -1,12 +1,12 @@
 import fs from 'fs';
-import os from 'os';
 import path from 'path';
 import { format } from 'util';
 import { VERSION } from '../../version.js';
 import { redact } from './redact.js';
+import { remoteDeviceDir } from '../../utils/data-paths.js';
 
 /**
- * The remote device log: ~/.desktop-commander-device/remote-<day>.log, the
+ * The remote device log: ~/.claude-server-commander/device/remote-<day>.log, the
  * device's history that `remote --report` packs for support.
  *
  * `remote` passes the device's console output through startDeviceLog(). Every
@@ -35,7 +35,7 @@ const MAX_LINES_PER_CALL = 40;
 const MAX_WRITE_FAILURES = 5;
 
 export function getDeviceLogDir(): string {
-    return path.join(os.homedir(), '.desktop-commander-device');
+    return remoteDeviceDir();
 }
 
 // --- the private kinds: the only lines that don't reach the log as printed -------------------
@@ -107,7 +107,7 @@ export function cleanLine(line: string): string | null {
 }
 
 export interface DeviceLogOptions {
-    /** The folder for the log files; ~/.desktop-commander-device by default. */
+    /** The folder for the log files; ~/.claude-server-commander/device on new installations. */
     dir?: string;
     /** The clock (ms), for the timestamps and the day; Date.now by default. Tests set it. */
     now?: () => number;

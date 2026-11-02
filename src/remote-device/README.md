@@ -35,11 +35,13 @@ On first run, Desktop Commander starts an OAuth device-authorization flow:
 
 If the browser does not open, use the verification URL and code printed in the terminal.
 
-By default, the authenticated device session is saved to:
+For new installations, the authenticated device session is saved alongside the other Desktop Commander data:
 
 ```text
-~/.desktop-commander-device/device.json
+~/.claude-server-commander/device/device.json
 ```
+
+Existing sessions stored under `~/.desktop-commander-device/` are still used automatically to preserve authorization and logs. Desktop Commander does not move or delete that directory during an upgrade. To consolidate manually, stop the Remote Device and move the old device folder into `~/.claude-server-commander/device/` **only if that destination does not already exist**; never overwrite credentials from another login.
 
 On POSIX systems, the file is created with mode `0600` (read/write for the owning user only). On Windows, this code does not set a custom owner-only ACL; access is governed by the Windows filesystem permissions for the user profile. Restarting the Remote Device normally reuses this saved session, so browser authorization is not required on every start.
 
@@ -92,7 +94,7 @@ Run:
 npx @wonderwhy-er/desktop-commander@latest remote --logout
 ```
 
-This removes `~/.desktop-commander-device/device.json`. It does **not** revoke the device in the Remote MCP dashboard.
+This removes saved `device.json` from both locations if present (`~/.claude-server-commander/device/` and the older `~/.desktop-commander-device/`), preventing an old saved login from reappearing after logout. It does **not** revoke the device in the Remote MCP dashboard.
 
 For a completely clean authorization reset, revoke the device in the dashboard, log out locally, then start `remote` and pair again.
 
