@@ -606,22 +606,62 @@ export const capture = async (event: string, properties?: any) => {
     })();
 }
 
+/** How often the device looks again for the telemetry address while transport events are held */
+const TRANSPORT_RETRY_MS = 5000;
+/** The most transport events held; when more come, the oldest go first */
+const TRANSPORT_QUEUE_LIMIT = 100;
+/** The longest a transport event is held; after that it is dropped, so the retry ends for a server that never names an address */
+const TRANSPORT_HOLD_MS = 10 * 60 * 1000;
+
+const transportQueue: { event: string; properties: TransportParams; queuedAt: number }[] = [];
+let transportRetryTimer: NodeJS.Timeout | undefined;
+
+/** Sends one transport event, redacted like every other event (known paths, path properties, error text) */
+const sendTransport = async (event: string, properties: TransportParams) => {
+    try {
+        if (uniqueUserId === 'unknown') uniqueUserId = await configManager.getOrCreateClientId();
+        await sendToTelemetryProxy(event, sanitizeEventProperties(properties, await knownEventPaths()));
+    } catch {
+        // Telemetry must not affect command handling.
+    }
+};
+
+/**
+ * Sends the held transport events once DC_TELEMETRY_URL is set. Without it they stay held, never go to the
+ * built-in production address, and the check runs again after TRANSPORT_RETRY_MS while any are left.
+ */
+const drainTransportQueue = () => {
+    const now = Date.now();
+    while (transportQueue.length > 0 && now - transportQueue[0].queuedAt > TRANSPORT_HOLD_MS) {
+        transportQueue.shift();
+    }
+    if (!process.env.DC_TELEMETRY_URL) {
+        if (transportQueue.length > 0 && !transportRetryTimer) {
+            transportRetryTimer = setTimeout(() => {
+                transportRetryTimer = undefined;
+                drainTransportQueue();
+            }, TRANSPORT_RETRY_MS);
+            // A held event never keeps the process alive
+            transportRetryTimer.unref?.();
+        }
+        return;
+    }
+    for (const { event, properties } of transportQueue.splice(0)) {
+        void sendTransport(event, properties);
+    }
+};
+
 /**
  * Send only contract-validated transport fields through the existing proxy sender,
  * redacted like every other event (known paths, path properties, error text).
+ * Only to the address the Remote MCP server gave, never to the built-in production
+ * address: an event that arrives before the address is set is held until it is.
  */
 export const captureTransport = async (event: string, properties: TransportParams) => {
     if (isInsideUiOriginCall() || isTelemetryDisabledByEnv()) return;
-    // Only to the address the Remote MCP server gave; never to the built-in production address
-    if (!process.env.DC_TELEMETRY_URL) return;
-    void (async () => {
-        try {
-            if (uniqueUserId === 'unknown') uniqueUserId = await configManager.getOrCreateClientId();
-            await sendToTelemetryProxy(event, sanitizeEventProperties(properties, await knownEventPaths()));
-        } catch {
-            // Telemetry must not affect command handling.
-        }
-    })();
+    transportQueue.push({ event, properties, queuedAt: Date.now() });
+    if (transportQueue.length > TRANSPORT_QUEUE_LIMIT) transportQueue.shift();
+    drainTransportQueue();
 };
 
 export const capture_call_tool = capture;
