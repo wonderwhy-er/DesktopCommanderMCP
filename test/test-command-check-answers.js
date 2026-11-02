@@ -86,8 +86,11 @@ async function testThroughServer(bash, powershells) {
           const answer = await callStartProcess(client, c.command, shell);
           assert(!answer.isError && /^Process started with PID \d+/.test(answer.text),
             `${id} (${c.command}) should run, got:\n${answer.text}`);
-          const lastLine = answer.text.trimEnd().split('\n').pop();
-          assert(lastLine.includes(what), `${id}'s answer should end with a note naming ${what}, got:\n${answer.text}`);
+          // The notes are the answer's last lines. A text the command runs can add notes of its own after the command's
+          // note: eval "$CMD" notes eval, then $CMD
+          const lines = answer.text.trimEnd().split('\n');
+          const notes = lines.slice(lines.findLastIndex((line) => !line.startsWith('Note: ')) + 1);
+          assert(notes.some((note) => note.includes(what)), `${id}'s answer should end with a note naming ${what}, got:\n${answer.text}`);
         });
       }
     }
@@ -98,8 +101,8 @@ async function testThroughServer(bash, powershells) {
 
 /**
  * What hides a program from the check: the four kinds, the shells' options
- * around a script file, and commands that hide nothing, as checkCommand()
- * reads them.
+ * around a script file or a command text, and commands that hide nothing, as
+ * checkCommand() reads them.
  */
 async function testUnseen(powershells) {
   const runTime = (what) => [{ what, inFile: false }];
@@ -107,11 +110,19 @@ async function testUnseen(powershells) {
   // A Windows path to bash.exe names bash only on Windows, where the program's name drops .exe
   const isWindows = process.platform === 'win32';
   const cases = [
-    ['bash', 'eval "$CMD"', runTime('eval')],
+    // eval reads the text $CMD, and bash reads that as a program named only at run time, so both are noted, as for bash -c "$CMD"
+    ['bash', 'eval "$CMD"', [...runTime('eval'), ...runTime('$CMD')]],
     ['powershell', 'iex $cmd', runTime('Invoke-Expression')],
+    // The text eval or Invoke-Expression is given is read. A part of it known only at run time may hold any command, so
+    // eval or Invoke-Expression is noted too
+    ['bash', "eval 'echo hi'", []],
+    ['powershell', "iex 'Get-Date'", []],
+    ['bash', 'eval "ls $X"', runTime('eval')],
+    ['powershell', 'iex "Get-Date $x"', runTime('Invoke-Expression')],
     ['powershell', '& $tool stop Spooler', runTime('$tool')],
     ['bash', 'bash deploy.sh', inFile('deploy.sh')],
     ['bash', 'bash -o pipefail -x deploy.sh', inFile('deploy.sh')],
+    ['bash', 'bash -euo pipefail deploy.sh', inFile('deploy.sh')],
     ['bash', 'source ./env.sh', inFile('./env.sh')],
     ['bash', 'bash "$SCRIPT"', runTime('bash')],
     ['bash', '/usr/bin/bash deploy.sh', inFile('deploy.sh')],
@@ -121,6 +132,20 @@ async function testUnseen(powershells) {
     ['powershell', './deploy.ps1', inFile('./deploy.ps1')],
     ['powershell', '.\\deploy.ps1', inFile('.\\deploy.ps1')],
     ['powershell', '& ./deploy.ps1', inFile('./deploy.ps1')],
+    ['powershell', 'pwsh deploy', inFile('deploy')],
+    ['powershell', 'pwsh --file deploy', inFile('deploy')],
+    // The command given with -c is a command text, also when it names a .ps1
+    ['powershell', "pwsh -c 'Write-Output a.ps1'", []],
+    // A word known only at run time before -c may be the script file or an option: the shell is noted, and the command text is read too
+    ['bash', 'bash "$OPTS" -c make', runTime('bash')],
+    ['bash', 'bash "$OPTS" -c "$CMD"', [...runTime('bash'), ...runTime('$CMD')]],
+    // A command text with a part known only at run time notes the shell given it, and the programs it hides are noted too
+    ['bash', 'bash -c "$CMD"', [...runTime('bash'), ...runTime('$CMD')]],
+    ['bash', 'bash -c "ls $X"', runTime('bash')],
+    // PowerShell names a program by its file name, with .exe on Windows
+    ...powershells.map((shell) => ['powershell', `${shell} -Command "$cmd"`, runTime(isWindows ? `${shell}.exe` : shell)]),
+    ['cmd', 'bash -c %CMD%', runTime('bash')],
+    ...powershells.map((shell) => ['bash', `${shell} -c "$CMD"`, runTime(shell)]),
     ['bash', "bash -c 'sudo ls'", []],
     ['bash', 'bash -lc make', []],
     ['bash', 'bash -s < deploy.sh', []],
