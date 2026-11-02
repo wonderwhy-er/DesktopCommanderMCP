@@ -184,7 +184,7 @@ export class MqttTransport {
 					console.debug("[MQTT] Disconnected; waiting for reconnection");
 				}
 				this.ready = false;
-				void this.onReady(false).catch(() => {});
+				void this.onReady(this.ready).catch(() => {});
 			});
 			// MQTT.js reconnects after network faults. Never print TLS/broker errors,
 			// which can include certificate paths or broker-provided sensitive text.
