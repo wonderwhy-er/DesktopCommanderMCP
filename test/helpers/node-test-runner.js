@@ -133,17 +133,26 @@ export async function runTestFiles({ dir, files, outDir, suiteName, timeoutMs = 
   return results;
 }
 
+/** A test's status: node:test's skip is true or the reason given to skip(), and false or missing when it ran */
+function testStatus(failed, skip) {
+  if (failed) return 'failed';
+  if (skip !== undefined && skip !== false) return 'skipped';
+  return 'passed';
+}
+
 /** A pass or fail event: the file's own (the whole process) or one test in a node:test file */
 function recordTest(entry, type, data) {
   const failed = type === 'test:fail' && !data.todo;
   const error = data.details?.error;
   if (isFileEvent(data, entry)) {
     entry.fileDuration = data.details?.duration_ms;
-    if (failed) entry.exitCode = error?.failureType === 'testTimeoutFailure' ? 'timeout' : error?.exitCode ?? error?.signal ?? 1;
+    if (failed) {
+      entry.exitCode = error?.failureType === 'testTimeoutFailure' ? 'timeout' : error?.exitCode ?? error?.signal ?? 1;
+    }
   } else {
     entry.tests.push({
       name: data.name,
-      status: failed ? 'failed' : data.skip !== undefined && data.skip !== false ? 'skipped' : 'passed',
+      status: testStatus(failed, data.skip),
       duration: Math.round(data.details?.duration_ms ?? 0),
       message: failed ? String(error?.cause?.message ?? error?.cause ?? error?.message ?? 'failed') : undefined,
     });
@@ -208,6 +217,13 @@ const xmlText = (text) => String(text)
   .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 const seconds = (ms) => (ms / 1000).toFixed(3);
 
+/** What goes inside a test's <testcase>: a failure or a skip; a test that passed has nothing */
+function testCaseInner(test) {
+  if (test.status === 'failed') return `      <failure message="${xmlText(test.message)}" type="test"/>`;
+  if (test.status === 'skipped') return '      <skipped/>';
+  return undefined;
+}
+
 function junitXml({ suiteName, startedAt, duration, results }) {
   const cases = [];
   for (const result of results) {
@@ -229,10 +245,9 @@ function junitXml({ suiteName, startedAt, duration, results }) {
       ].join('\n'));
     }
     for (const test of result.tests) {
-      const testAttrs = `classname="${xmlText(result.path)}" name="${xmlText(test.name)}" file="${xmlText(result.path)}" time="${seconds(test.duration)}"`;
-      const inner = test.status === 'failed'
-        ? `      <failure message="${xmlText(test.message)}" type="test"/>`
-        : test.status === 'skipped' ? '      <skipped/>' : undefined;
+      const testAttrs = `classname="${xmlText(result.path)}" name="${xmlText(test.name)}" file="${xmlText(result.path)}"`
+        + ` time="${seconds(test.duration)}"`;
+      const inner = testCaseInner(test);
       cases.push(inner ? `    <testcase ${testAttrs}>\n${inner}\n    </testcase>` : `    <testcase ${testAttrs}/>`);
     }
   }
