@@ -77,7 +77,17 @@ export const ReadMultipleFilesArgsSchema = z.object({
 export const WriteFileArgsSchema = z.object({
   path: z.string(),
   content: z.string(),
-  mode: z.enum(['rewrite', 'append']).default('rewrite'),
+  // No JSON-Schema default (issue #981): since v0.2.44 an omitted `mode` is
+  // rejected when the target already has content, so advertising a default made
+  // LLM callers omit the field and fail the call. Stays optional so new/empty
+  // files keep the zero-friction runtime default.
+  mode: z
+    .enum(['rewrite', 'append'])
+    .optional()
+    .describe(
+      "Required when the target file already exists with content: 'rewrite' replaces it, " +
+        "'append' adds to it. Omit only for a new or empty file (the runtime then rewrites it)."
+    ),
   // 'ui' when fired by the file-preview UI, else 'llm'. 'ui' calls are
   // excluded from tool-call telemetry; see isUiOriginCall in server.ts.
   origin: z.enum(['ui', 'llm']).optional(),

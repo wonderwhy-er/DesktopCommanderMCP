@@ -22,6 +22,8 @@ import { getFileHandler } from '../dist/utils/files/factory.js';
 import { handleReadFile, handleWriteFile } from '../dist/handlers/filesystem-handlers.js';
 import { handleEditBlock } from '../dist/handlers/edit-search-handlers.js';
 import { parsePdfToMarkdown } from '../dist/tools/pdf/index.js';
+import { WriteFileArgsSchema } from '../dist/tools/schemas.js';
+import { zodToJsonSchema } from 'zod-to-json-schema';
 import { isNoChrome } from './helpers/pdf.js';
 import { runIfMain, skip, SKIPPED } from './helpers/run-if-main.js';
 
@@ -477,6 +479,17 @@ async function testWriteModeGuard() {
   assert.notStrictEqual(filledEmpty.isError, true, 'No-mode write to an empty file should succeed');
   assert.strictEqual(await fs.readFile(EMPTY_FILE, 'utf8'), 'now has content\n', 'Empty file should accept the write');
   console.log('✓ No-mode write to empty file succeeds');
+
+  // The advertised JSON Schema must match the runtime guard (#981): an omitted
+  // mode is rejected for existing content, so the schema may not claim a
+  // default (LLM clients read it and omit the field).
+  const writeFileJsonSchema = zodToJsonSchema(WriteFileArgsSchema);
+  const modeSchema = writeFileJsonSchema.properties?.mode ?? {};
+  assert.strictEqual(modeSchema.default, undefined,
+    'write_file schema must not advertise a mode default while an omitted mode is rejected');
+  assert.ok(modeSchema.description && /required/i.test(modeSchema.description),
+    'write_file mode description should tell callers that mode is required for existing files');
+  console.log('✓ write_file schema advertises no mode default and explains when mode is required');
 }
 
 /**
