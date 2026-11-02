@@ -175,7 +175,7 @@ async function testBlockedCommandsExecution() {
     console.log(`Testing blocked command: ${command}`);
     
     // Check validation directly
-    const isAllowed = await commandManager.validateCommand(command);
+    const isAllowed = await commandManager.validateCommand(command, 'bash');
     console.log(`Command ${command} allowed:`, isAllowed);
     
     // The command should NOT be allowed
@@ -195,7 +195,7 @@ async function testUpdatingBlockedCommands() {
   await configManager.setValue('blockedCommands', [testCommand]);
   
   // Verify the command is blocked
-  const isAllowed1 = await commandManager.validateCommand(testCommand);
+  const isAllowed1 = await commandManager.validateCommand(testCommand, 'bash');
   assert.strictEqual(isAllowed1, false, 'Command should be blocked before update');
   console.log(`Command ${testCommand} blocked before update: ${!isAllowed1}`);
   
@@ -203,7 +203,7 @@ async function testUpdatingBlockedCommands() {
   await configManager.setValue('blockedCommands', []);
   
   // Verify the command is now allowed
-  const isAllowed2 = await commandManager.validateCommand(testCommand);
+  const isAllowed2 = await commandManager.validateCommand(testCommand, 'bash');
   assert.strictEqual(isAllowed2, true, 'Command should be allowed after update');
   console.log(`Command ${testCommand} allowed after update: ${isAllowed2}`);
   
@@ -228,7 +228,7 @@ async function testEmptyBlockedCommands() {
   
   for (const command of allCommands) {
     console.log(`Testing with empty blockedCommands: ${command}`);
-    const isAllowed = await commandManager.validateCommand(command);
+    const isAllowed = await commandManager.validateCommand(command, 'bash');
     assert.strictEqual(isAllowed, true, `No commands should be blocked with empty blockedCommands: ${command}`);
     console.log(`✓ Command allowed with empty blockedCommands: ${command}`);
   }
