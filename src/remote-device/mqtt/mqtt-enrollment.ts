@@ -3,7 +3,7 @@ import {
 	generateKeyPair,
 	X509Certificate,
 } from "node:crypto";
-import { mkdir, open, readFile, rm } from "node:fs/promises";
+import { mkdir, readFile, rm } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 import forge from "node-forge";
@@ -42,15 +42,12 @@ async function readCache(file: string): Promise<any | null> {
 	}
 }
 
-/** Exclusive creation preserves the winner's private key if two processes use the same profile. */
+/** Save private credentials through the shared atomic writer. */
 async function writePrivateCache(file: string, value: unknown): Promise<void> {
 	try {
-		const handle = await open(file, "wx", 0o600);
-		try {
-			await handle.writeFile(JSON.stringify(value));
-		} finally {
-			await handle.close();
-		}
+		await writeFileAtomic(file, JSON.stringify(value), {
+			mode: 0o600, // Node fs File modes: owner read (0400) + write (0200); Windows uses inherited ACLs.
+		});
 	} catch {
 		// Do not include filesystem/provider errors: startup errors also go to telemetry.
 		throw new Error(
