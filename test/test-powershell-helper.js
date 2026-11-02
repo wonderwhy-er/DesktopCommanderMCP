@@ -23,6 +23,11 @@ import { waitUntil } from './helpers/wait.js';
 
 /** Slack for a loaded machine on top of the helper's time limit */
 const TIMING_SLACK_MS = 5000;
+/**
+ * How much earlier than the time limit a failure may come, as Date.now() sees it: Node counts a timer from the
+ * event loop's time, which a loaded machine leaves behind Date.now() (on a busy Linux machine, about 100 ms early)
+ */
+const EARLY_SLACK_MS = 1000;
 
 /** A stand-in helper: it answers its first request with an empty reading, and then never again */
 const ANSWERS_FIRST_REQUEST_ONLY = `
@@ -42,7 +47,7 @@ async function expectTimeout(helper, limitMs, message) {
     return true;
   });
   const waited = Date.now() - started;
-  assert.ok(waited >= limitMs - 50, `failed only after the time limit (${waited} ms)`);
+  assert.ok(waited >= limitMs - EARLY_SLACK_MS, `failed only after the time limit (${waited} ms)`);
   assert.ok(waited < limitMs + TIMING_SLACK_MS, `failed soon after the time limit (${waited} ms)`);
   assert.strictEqual(helper.pid, undefined, 'the stand-in that stopped answering is stopped');
   console.log(`✓ the check failed after ${waited} ms with "${message}"`);
