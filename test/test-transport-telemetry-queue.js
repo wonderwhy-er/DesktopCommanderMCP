@@ -140,6 +140,24 @@ const cases = [
     },
   },
   {
+    name: 'the retry stops once the held events have aged out',
+    run: async () => {
+      const timer = globalThis.setTimeout;
+      let started = 0;
+      globalThis.setTimeout = (...args) => { started++; return timer(...args); };
+      try {
+        observe('call-aged');
+        await advance(HOLD_MS + RETRY_MS * 2);
+        const before = started;
+        assert.ok(before > 0, 'the retry ran while the event was held');
+        await advance(RETRY_MS * 10);
+        assert.equal(started, before, 'no retry is started once nothing is held');
+      } finally {
+        globalThis.setTimeout = timer;
+      }
+    },
+  },
+  {
     name: 'with the address set, an event is sent at once',
     run: async () => {
       process.env.DC_TELEMETRY_URL = ADDRESS;
