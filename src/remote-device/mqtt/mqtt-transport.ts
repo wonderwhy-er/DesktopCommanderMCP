@@ -5,15 +5,13 @@ import { observeTransport } from "../transport-telemetry.js";
 const ID = /^[A-Za-z0-9_-]{1,128}$/;
 const CONNECT_TIMEOUT_MS = 10_000;
 
-export interface MqttCallFlags {
-	IS_MQTT_EXECUTION_ENABLED?: boolean;
-}
-
-/** The server publishes identifiers only; RemoteChannel fetches the durable command row. */
-export interface MqttDoorbell extends MqttCallFlags {
+/** Identify a call for MQTT observation. */
+export interface MqttDoorbell {
 	call_id: string;
 	user_id: string;
 	device_id: string;
+	// Accepted from existing backend publishers; never controls execution or telemetry.
+	IS_MQTT_EXECUTION_ENABLED?: boolean;
 }
 
 export interface MqttConfig {

@@ -4,8 +4,7 @@ MQTT starts automatically in the background while Broadcast connects. No flag is
 for shadow observation. Enrollment or MQTT failure leaves Broadcast working.
 
 The `MQTT` branch records MQTT receipts without fetching, claiming or executing calls.
-This holds whether `IS_MQTT_EXECUTION_ENABLED` is `false`, `true` or missing, and regardless
-of cached rollouts. MQTT execution lives on the stacked `codex/mqtt-execution` branch.
+MQTT execution lives on the stacked `codex/mqtt-execution` branch.
 
 The device advertises `transport_mqtt_v1` when MQTT is ready. The backend requires it
 even for shadow publications. This capability does not distinguish the two device
@@ -18,7 +17,9 @@ switching an execution device to this branch.
 `MQTT_TRANSPORT_ENABLED` gates backend MQTT publications and enrollment; when it is off,
 the backend sends no MQTT command.
 
-This receiver accepts only the three required identifiers plus the optional execution boolean.
+This receiver accepts the three required identifiers plus the optional legacy
+`IS_MQTT_EXECUTION_ENABLED` boolean for compatibility with existing backend publishers.
+That field is ignored by command handling and omitted from telemetry.
 It rejects packets containing `expires_at`, `notification_id`, `attempt_number`, or any other extra field.
 Older MQTT pilot receivers require different envelopes and must be updated together with the backend:
 disable MQTT execution, drain active calls, update both sides, then re-enable execution.
@@ -26,11 +27,6 @@ Broadcast retains its database-time conditional claim, ambiguous-claim readback 
 recovery, with duplicate suppression. Every valid MQTT receipt is observed, including retries, with
 `transport`, `call_id`, a unique observation ID and a UTC timestamp.
 Device telemetry omits MQTT notification/attempt IDs and monotonic timestamps.
-Telemetry includes the per-call `IS_MQTT_EXECUTION_ENABLED` boolean when known, preserving explicit `false`.
-The collector's updated transport and command-event allowlists must be deployed before
-this field appears in backend warehouse telemetry. The existing GA4-compatible schema
-stores it as a `"true"`/`"false"` string under the exact uppercase key. Device telemetry
-routing is unchanged.
 Telemetry uses the existing sender, privacy controls and opt-outs. Cross-process clocks
 cannot establish exact one-way latency.
 

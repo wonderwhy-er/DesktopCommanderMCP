@@ -20,7 +20,7 @@ const stagesOf = callId => sent.flatMap(body => body.events)
     .map(event => event.name);
 
 /** Handles one tool call on a device whose tool and result save fail as asked; returns the call's transport stages and result rows. */
-async function handle(callId, { toolThrows = false, saveThrows = false, execution = false } = {}) {
+async function handle(callId, { toolThrows = false, saveThrows = false } = {}) {
     const writes = [];
     const device = new MCPDevice();
     device.deviceId = DEVICE_ID;
@@ -40,7 +40,7 @@ async function handle(callId, { toolThrows = false, saveThrows = false, executio
     };
     await device.handleNewToolCall({
         new: { id: callId, tool_name: 'read_file', tool_args: {}, device_id: DEVICE_ID,
-            metadata: { transport: execution ? 'mqtt_v1' : 'broadcast_v1' } },
+            metadata: { transport: 'broadcast_v1' } },
     });
     // Transport events aren't awaited: wait for the one the call ends with, then a little longer for any other
     const last = toolThrows ? 'tool_call_failed' : 'tool_call_completed';
@@ -49,7 +49,7 @@ async function handle(callId, { toolThrows = false, saveThrows = false, executio
     }
     await new Promise(resolve => setTimeout(resolve, 200));
     for (const event of sent.flatMap(body => body.events).filter(event => event.params?.call_id === callId)) {
-        assert.equal(event.params.IS_MQTT_EXECUTION_ENABLED, execution);
+        assert.equal('IS_MQTT_EXECUTION_ENABLED' in event.params, false);
     }
     for (const body of sent.filter(body => body.events.some(event => event.params?.call_id === callId))) {
         assert.equal(body.telemetry_type, 'transport');
@@ -81,7 +81,7 @@ try {
     };
     syncBuiltinESMExports();
 
-    const saveFails = await handle('call-save-fails', { saveThrows: true, execution: true });
+    const saveFails = await handle('call-save-fails', { saveThrows: true });
     assert.ok(saveFails.stages.includes('tool_call_completed'),
         `a tool that ran should be reported as completed: ${saveFails.stages.join(', ')}`);
     assert.ok(!saveFails.stages.includes('tool_call_failed'),

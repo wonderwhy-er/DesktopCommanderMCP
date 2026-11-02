@@ -1,7 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { sanitizeTransportEvent } from '@desktop-commander/telemetry-contract/transport';
 import { captureTransport } from '../utils/capture.js';
-import type { MqttCallFlags } from './mqtt/mqtt-transport.js';
 
 const ID = /^[A-Za-z0-9_-]{1,128}$/;
 const PROCESS_ID = randomUUID();
@@ -9,7 +8,7 @@ const PROCESS_ID = randomUUID();
 type TransportObservation = (
     | { stage: 'received'; payload: any; deviceId: string | null }
     | { stage: string; callId: string; deviceId: string | null | undefined; toolName?: string; operation?: string; operationId?: string }
-) & MqttCallFlags & { userId: string | undefined; transport?: 'broadcast' | 'mqtt' };
+) & { userId: string | undefined; transport?: 'broadcast' | 'mqtt' };
 
 /** Record a device transport checkpoint without affecting command handling. */
 export function observeTransport(input: TransportObservation) {
@@ -26,7 +25,6 @@ export function observeTransport(input: TransportObservation) {
             (input.payload.user_id !== undefined && input.payload.user_id !== input.userId))) return null;
 
         const observationId = randomUUID();
-        const mqttFlags = receipt ? input.payload : input;
         let operationId: string | undefined;
         if (!receipt) {
             operationId = input.stage === 'operation_start' ? observationId : input.operationId;
@@ -35,7 +33,6 @@ export function observeTransport(input: TransportObservation) {
             call_id: callId,
             device_id: deviceId,
             stage: input.stage,
-            ...(typeof mqttFlags.IS_MQTT_EXECUTION_ENABLED === 'boolean' ? { IS_MQTT_EXECUTION_ENABLED: mqttFlags.IS_MQTT_EXECUTION_ENABLED } : {}),
             ...(input.transport === 'broadcast' || input.transport === 'mqtt' ? { transport: input.transport } : {}),
             ...(input.transport === 'broadcast' ? {
                 notification_id: `${callId}:broadcast:1`, attempt_number: 1,

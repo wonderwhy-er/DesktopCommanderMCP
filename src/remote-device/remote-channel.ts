@@ -4,7 +4,7 @@ import { observeTransport } from './transport-telemetry.js';
 import { RealtimeHealthTelemetry } from './realtime-health-telemetry.js';
 import { rolloutManager } from './rollouts.js';
 import { VERSION } from '../version.js';
-import { MqttTransport, type MqttCallFlags, type MqttConfig, type MqttDoorbell } from './mqtt/mqtt-transport.js';
+import { MqttTransport, type MqttConfig, type MqttDoorbell } from './mqtt/mqtt-transport.js';
 import { enrollMqttDevice } from './mqtt/mqtt-enrollment.js';
 import { getRemoteDeviceLogoutVersion } from './remote-utils.js';
 
@@ -1421,7 +1421,7 @@ export class RemoteChannel {
         return claimed;
     }
 
-    async updateCallResult(callId: string, status: string, result: any = null, errorMessage: string | null = null, originInstance?: string, mqttFlags: MqttCallFlags = {}): Promise<void> {
+    async updateCallResult(callId: string, status: string, result: any = null, errorMessage: string | null = null, originInstance?: string): Promise<void> {
         if (!this.client) throw new Error('Client not initialized');
         // The DB terminal-status trigger stamps completed_at using PostgreSQL
         // time. Do not send a device-generated timestamp.
@@ -1468,7 +1468,6 @@ export class RemoteChannel {
                     null,
                     `Result could not be stored (${error.message})`,
                     originInstance,
-                    mqttFlags,
                 );
             }
         } else {
@@ -1476,18 +1475,18 @@ export class RemoteChannel {
             console.debug('[DEBUG] Call result updated successfully:', callId);
             if (originInstance && (status === 'completed' || status === 'failed')) {
                 // The write already triggers Broadcast in shadow mode; MQTT must never delay it.
-                void this.publishMqttResult(callId, originInstance, mqttFlags).catch(() => {});
+                void this.publishMqttResult(callId, originInstance).catch(() => {});
             }
         }
     }
 
-    private async publishMqttResult(callId: string, originInstance: string, mqttFlags: MqttCallFlags = {}): Promise<void> {
+    private async publishMqttResult(callId: string, originInstance: string): Promise<void> {
         const receiver = this.mqttReceiver;
         if (!receiver) return;
         const generation = this.authGeneration;
         for (let attempt = 1; attempt <= 3; attempt++) {
             if (generation !== this.authGeneration || receiver !== this.mqttReceiver || this.shuttingDown || this.sessionLost) return;
-            const observation = { callId, deviceId: this.deviceId, userId: this.user?.id, transport: 'mqtt' as const, ...mqttFlags };
+            const observation = { callId, deviceId: this.deviceId, userId: this.user?.id, transport: 'mqtt' as const };
             try {
                 await receiver.publishResult(callId, originInstance);
                 return;

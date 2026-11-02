@@ -11,8 +11,6 @@ import forge from 'node-forge';
 
 for (const key of Object.keys(process.env)) if (key.startsWith('MQTT_')) delete process.env[key];
 process.env.DESKTOP_COMMANDER_DISABLE_TELEMETRY = '1';
-const { rolloutManager } = await import('../dist/remote-device/rollouts.js');
-rolloutManager.update({ IS_MQTT_EXECUTION_ENABLED: true });
 const { RemoteChannel } = await import('../dist/remote-device/remote-channel.js');
 const { MCPDevice } = await import('../dist/remote-device/device.js');
 const { MqttTransport, createMqttConfig, mqttDoorbellTopic } = await import('../dist/remote-device/mqtt/mqtt-transport.js');
@@ -85,8 +83,7 @@ const channels = [];
 let publisher;
 let pendingReceiver;
 let malformed = 0;
-const bell = id => ({ call_id: id, user_id: 'owner', device_id: 'device',
-    IS_MQTT_EXECUTION_ENABLED: true });
+const bell = id => ({ call_id: id, user_id: 'owner', device_id: 'device' });
 
 function fixture() {
     const rows = new Map();
@@ -157,7 +154,7 @@ function fixture() {
 
 try {
     const f = fixture();
-    assert.equal(f.channel.isReachable(), true, 'Broadcast readiness cannot depend on cached MQTT execution');
+    assert.equal(f.channel.isReachable(), true, 'Broadcast readiness cannot depend on MQTT');
     await f.channel.startMqttTransport(config);
     assert.equal(f.channel.isReachable(), true);
     assert.equal(f.capabilities.at(-1).transport_mqtt_v1, true);
@@ -174,36 +171,34 @@ try {
     });
     await publisher.subscribeAsync(resultTopic, { qos: 1 });
 
-    for (const cached of [undefined, false, true]) {
-        rolloutManager.update(cached === undefined ? {} : { IS_MQTT_EXECUTION_ENABLED: cached });
-        for (const enabled of [undefined, false, true]) {
-            const id = `shadow-${cached}-${enabled}`;
-            f.add(id);
-            f.rows.get(id).metadata.origin_instance = 'backend';
-            const payload = bell(id);
-            if (enabled === undefined) delete payload.IS_MQTT_EXECUTION_ENABLED;
-            else payload.IS_MQTT_EXECUTION_ENABLED = enabled;
-            const before = f.operations.length;
-            const executionsBefore = f.executed.length;
-            await Promise.all([send(payload), send(payload)]);
-            await until(() => events.filter(event => event.params.call_id === id && event.name === 'received_from_backend').length === 2);
-            const receipts = events.filter(event => event.params.call_id === id && event.name === 'received_from_backend');
-            for (const event of receipts) {
-                assert.equal(event.params.transport, 'mqtt');
-                assert.ok(Number.isFinite(Date.parse(event.params.timestamp_utc)));
-            }
-            assert.equal(f.operations.length, before, 'MQTT receipts never read or claim a call');
-            assert.equal(f.executed.length, executionsBefore, 'duplicate MQTT packets only record analytics');
-            assert.equal(f.rows.get(id).status, 'pending');
-            assert.ok(!resultPackets.some(packet => packet.body.call_id === id));
-            await f.channel.onBroadcastDoorbell(payload);
-            await until(() => f.rows.get(id).status === 'completed');
-            await until(() => resultPackets.some(packet => packet.body.call_id === id));
-            assert.deepEqual(resultPackets.find(packet => packet.body.call_id === id), {
-                body: { call_id: id }, qos: 1, retain: false,
-            });
-            assert.equal(f.executed.length, executionsBefore + 1, 'Broadcast still executes once');
+    // Existing backend packets remain valid, but their legacy flag has no effect.
+    for (const enabled of [undefined, false, true]) {
+        const id = `shadow-${enabled}`;
+        f.add(id);
+        f.rows.get(id).metadata.origin_instance = 'backend';
+        const payload = bell(id);
+        if (enabled !== undefined) payload.IS_MQTT_EXECUTION_ENABLED = enabled;
+        const before = f.operations.length;
+        const executionsBefore = f.executed.length;
+        await Promise.all([send(payload), send(payload)]);
+        await until(() => events.filter(event => event.params.call_id === id && event.name === 'received_from_backend').length === 2);
+        const receipts = events.filter(event => event.params.call_id === id && event.name === 'received_from_backend');
+        for (const event of receipts) {
+            assert.equal(event.params.transport, 'mqtt');
+            assert.equal('IS_MQTT_EXECUTION_ENABLED' in event.params, false);
+            assert.ok(Number.isFinite(Date.parse(event.params.timestamp_utc)));
         }
+        assert.equal(f.operations.length, before, 'MQTT receipts never read or claim a call');
+        assert.equal(f.executed.length, executionsBefore, 'duplicate MQTT packets only record analytics');
+        assert.equal(f.rows.get(id).status, 'pending');
+        assert.ok(!resultPackets.some(packet => packet.body.call_id === id));
+        await f.channel.onBroadcastDoorbell(payload);
+        await until(() => f.rows.get(id).status === 'completed');
+        await until(() => resultPackets.some(packet => packet.body.call_id === id));
+        assert.deepEqual(resultPackets.find(packet => packet.body.call_id === id), {
+            body: { call_id: id }, qos: 1, retain: false,
+        });
+        assert.equal(f.executed.length, executionsBefore + 1, 'Broadcast still executes once');
     }
 
     f.add('mqtt-selected', 'mqtt_v1');
@@ -227,15 +222,14 @@ try {
         for (const stage of ['device_call_received', 'tool_call_completed']) {
             const event = events.find(event => event.params.call_id === id && event.name === stage);
             assert.ok(event, `missing ${stage}`);
-            assert.equal(event.params.IS_MQTT_EXECUTION_ENABLED, false);
+            assert.equal('IS_MQTT_EXECUTION_ENABLED' in event.params, false);
         }
     }
 
-    // Shadow result retries keep the call's mode after the rollout cache changes.
+    // Failed shadow result publications are retried and each attempt is observed.
     const originalPublish = f.channel.mqttReceiver.publishResult.bind(f.channel.mqttReceiver);
     const originalSleep = f.channel.sleep;
     try {
-        rolloutManager.update({ IS_MQTT_EXECUTION_ENABLED: false });
         const id = 'telemetry-retry';
         f.add(id);
         f.rows.get(id).metadata.origin_instance = 'backend';
@@ -244,13 +238,13 @@ try {
             if (args[0] === id && ++attempts <= 2) throw Error('synthetic publish failure');
             return originalPublish(...args);
         };
-        f.channel.sleep = async () => { rolloutManager.update({ IS_MQTT_EXECUTION_ENABLED: true }); };
+        f.channel.sleep = async () => {};
         await f.channel.onBroadcastDoorbell(bell(id));
         await until(() => resultPackets.some(packet => packet.body.call_id === id));
         assert.equal(attempts, 3);
         const retryEvents = events.filter(event => event.params.call_id === id && event.name.startsWith('publish_from_device'));
         assert.deepEqual(retryEvents.map(event => event.name), ['publish_from_device_failed', 'publish_from_device_failed', 'publish_from_device']);
-        for (const event of retryEvents.slice(0, 2)) assert.equal(event.params.IS_MQTT_EXECUTION_ENABLED, false);
+        for (const event of retryEvents) assert.equal('IS_MQTT_EXECUTION_ENABLED' in event.params, false);
     } finally {
         f.channel.mqttReceiver.publishResult = originalPublish;
         f.channel.sleep = originalSleep;
@@ -261,7 +255,7 @@ try {
         ['mqtt-failure', 'failed', null, 'bad\u0000message'],
     ]) {
         f.add(id);
-        await f.channel.updateCallResult(id, status, result, error, 'backend', { IS_MQTT_EXECUTION_ENABLED: false });
+        await f.channel.updateCallResult(id, status, result, error, 'backend');
         await until(() => resultPackets.some(packet => packet.body.call_id === id));
         const expected = status === 'completed'
             ? { status, result: { content: [{ type: 'text', text: 'ab' }] } }
@@ -292,7 +286,6 @@ try {
         { call_id: valid.call_id, user_id: valid.user_id, device_id: valid.device_id, expires_at: new Date(Date.now() + 60_000).toISOString() },
         { ...valid, notification_id: 'malformed:mqtt:1' }, { ...valid, attempt_number: 1 },
         { ...valid, notification_id: 'malformed:mqtt:1', attempt_number: 1 },
-        { ...valid, IS_MQTT_EXECUTION_ENABLED: undefined, notification_id: 'malformed:mqtt:1', attempt_number: 1 },
         { ...valid, IS_MQTT_EXECUTION_ENABLED: 'true' },
         { ...valid, IS_MQTT_EXECUTION_ENABLED: null }, 'x'.repeat(1025)];
     for (const payload of invalid) await send(payload);

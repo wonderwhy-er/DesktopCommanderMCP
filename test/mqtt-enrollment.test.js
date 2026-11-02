@@ -11,9 +11,6 @@ import { mock } from 'node:test';
 import forge from 'node-forge';
 
 process.env.DESKTOP_COMMANDER_DISABLE_TELEMETRY = '1';
-const { rolloutManager } = await import('../dist/remote-device/rollouts.js');
-const originalRollouts = rolloutManager.getAll();
-rolloutManager.update({ IS_MQTT_EXECUTION_ENABLED: true });
 const { enrollMqttDevice } = await import('../dist/remote-device/mqtt/mqtt-enrollment.js');
 const { getRemoteDeviceConfigDirectory } = await import('../dist/remote-device/remote-utils.js');
 const { RemoteChannel } = await import('../dist/remote-device/remote-channel.js');
@@ -671,8 +668,7 @@ try {
     assert.equal(broadcastStarts, 1);
   });
 
-  await check('transport rollout off returns enrollment 404 without blocking Broadcast despite stale execution cache', async () => {
-    rolloutManager.update({ IS_MQTT_EXECUTION_ENABLED: true });
+  await check('transport rollout off returns enrollment 404 without blocking Broadcast', async () => {
     const profile = options();
     const channel = new RemoteChannel(profile);
     let broadcasts = 0;
@@ -735,7 +731,6 @@ try {
 } finally {
   mock.restoreAll();
   await rm(workspace, { recursive: true, force: true });
-  rolloutManager.update(originalRollouts);
   if (originalBroker === undefined) delete process.env.MQTT_BROKER_URL;
   else process.env.MQTT_BROKER_URL = originalBroker;
   if (originalDcEnv === undefined) delete process.env.DC_ENV;

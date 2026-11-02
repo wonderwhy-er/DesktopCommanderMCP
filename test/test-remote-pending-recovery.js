@@ -10,7 +10,6 @@
 
 import assert from 'node:assert';
 import { RemoteChannel } from '../dist/remote-device/remote-channel.js';
-import { rolloutManager } from '../dist/remote-device/rollouts.js';
 import { runIfMain } from './helpers/run-if-main.js';
 
 process.env.DESKTOP_COMMANDER_DISABLE_TELEMETRY = '1';
@@ -151,8 +150,7 @@ const baseRow = (id, overrides = {}) => ({
 });
 
 async function runTests() {
-  for (const execution of [false, true]) {
-    rolloutManager.update({ IS_MQTT_EXECUTION_ENABLED: execution });
+  {
     const rows = [
       baseRow('mqtt', { metadata: { transport: 'mqtt_v1' } }),
       baseRow('broadcast', { metadata: { transport: 'broadcast_v1' } }),
@@ -165,12 +163,11 @@ async function runTests() {
     rc.mqttReady = true;
     await Promise.all([
       rc.recoverPendingCalls(),
-      rc.onMqttDoorbell({ call_id: 'mqtt', device_id: DEVICE_ID, user_id: 'user-1', IS_MQTT_EXECUTION_ENABLED: true }),
+      rc.onMqttDoorbell({ call_id: 'mqtt', device_id: DEVICE_ID, user_id: 'user-1' }),
     ]);
     assert.deepEqual(delivered.map(payload => payload.new.id).sort(), ['broadcast', 'legacy']);
     assert.equal(rows[0].status, 'pending', 'MQTT readiness and packets cannot enable execution on a shadow device');
   }
-  rolloutManager.update({});
   {
     const rows = [
       baseRow('live-old', { created_at: iso(-10_000) }),
