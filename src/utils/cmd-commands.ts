@@ -14,7 +14,9 @@ import type { CommandReading, FoundCommand } from './command-reading.js';
  *   and sc/query run net and sc), but a name with a drive letter keeps its /
  *   (C:/Windows/System32/sc.exe);
  * - a word with %VAR% in it is known only at run time;
- * - if and for run the command after their condition or after "do".
+ * - if and for run the command after their condition or after "do";
+ * - call runs the command after it (call :label runs a label of a batch file,
+ *   which no blockedCommands entry names).
  * cmd has no functions, so none are listed.
  */
 
@@ -23,6 +25,8 @@ interface Token {
   kind: 'word' | 'op' | 'open' | 'close' | 'redirect';
   /** The word as cmd reads it: quotes and ^ removed */
   value: string;
+  /** The word as written, quotes and ^ included */
+  text: string;
   start: number;
   /** True when the word has %VAR% in it, so its value is known only at run time */
   atRunTime: boolean;
@@ -30,6 +34,8 @@ interface Token {
   lead?: number;
   /** Where in value a command's name ends, at a ; , = or / outside "…"; undefined when the whole word is the name */
   nameEnd?: number;
+  /** Where in text the name ends, as nameEnd in value */
+  textEnd?: number;
 }
 
 function tokenize(text: string): Token[] {
@@ -40,14 +46,14 @@ function tokenize(text: string): Token[] {
     if (char === ' ' || char === '\t') {
       i++;
     } else if (char === '\r' || char === '\n') {
-      tokens.push({ kind: 'op', value: '\n', start: i, atRunTime: false });
+      tokens.push({ kind: 'op', value: '\n', text: char, start: i, atRunTime: false });
       i++;
     } else if (char === '&' || char === '|') {
       const value = text[i + 1] === char ? char + char : char;
-      tokens.push({ kind: 'op', value, start: i, atRunTime: false });
+      tokens.push({ kind: 'op', value, text: value, start: i, atRunTime: false });
       i += value.length;
     } else if (char === '(' || char === ')') {
-      tokens.push({ kind: char === '(' ? 'open' : 'close', value: char, start: i, atRunTime: false });
+      tokens.push({ kind: char === '(' ? 'open' : 'close', value: char, text: char, start: i, atRunTime: false });
       i++;
     } else if (char === '>' || char === '<' || (/[0-9]/.test(char) && /[<>]/.test(text[i + 1] ?? ''))) {
       // A redirection: an optional handle number, > >> or <, and &N when it points at another handle
@@ -55,13 +61,13 @@ function tokenize(text: string): Token[] {
       if (/[0-9]/.test(char)) i++;
       i += text[i] === '>' && text[i + 1] === '>' ? 2 : 1;
       if (text[i] === '&' && /[0-9]/.test(text[i + 1] ?? '')) i += 2;
-      tokens.push({ kind: 'redirect', value: text.slice(start, i), start, atRunTime: false });
+      tokens.push({ kind: 'redirect', value: text.slice(start, i), text: text.slice(start, i), start, atRunTime: false });
     } else {
       const start = i;
       let value = '';
       let inQuotes = false;
       // Where in value a ; , = or / is outside "…": cmd ends a command's name at the first one
-      const ends: number[] = [];
+      const ends: { value: number; text: number }[] = [];
       while (i < text.length) {
         const c = text[i];
         if (inQuotes) {
@@ -73,13 +79,13 @@ function tokenize(text: string): Token[] {
           inQuotes = true;
           i++;
         } else if (c === '^' && i + 1 < text.length) {
-          if (';,=/'.includes(text[i + 1])) ends.push(value.length);
+          if (';,=/'.includes(text[i + 1])) ends.push({ value: value.length, text: i - start });
           value += text[i + 1];
           i += 2;
         } else if (' \t\r\n&|()<>'.includes(c)) {
           break;
         } else {
-          if (';,=/'.includes(c)) ends.push(value.length);
+          if (';,=/'.includes(c)) ends.push({ value: value.length, text: i - start });
           value += c;
           i++;
         }
@@ -87,8 +93,10 @@ function tokenize(text: string): Token[] {
       const written = text.slice(start, i);
       const lead = /^[;,=@]*/.exec(written)![0].length;
       const drive = /^[A-Za-z]:/.test(value.slice(lead));
-      const nameEnd = ends.find((end) => end >= lead && !(drive && value[end] === '/'));
-      tokens.push({ kind: 'word', value, start, atRunTime: /%[^%\s]+%/.test(written), lead, nameEnd });
+      const end = ends.find((at) => at.value >= lead && !(drive && value[at.value] === '/'));
+      const atRunTime = /%[^%\s]+%/.test(written);
+      const ending = { nameEnd: end?.value, textEnd: end?.text };
+      tokens.push({ kind: 'word', value, text: written, start, atRunTime, lead, ...ending });
     }
   }
   return tokens;
@@ -124,6 +132,10 @@ const commandName = (word: Token): string => word.value.slice(word.lead ?? 0, wo
 /** The rest of a command's first word after its name, cmd's first argument: user for net,user, /query for sc/query */
 const afterName = (word: Token): string =>
   word.nameEnd === undefined ? '' : word.value.slice(word.nameEnd).replace(/^[;,=]+/, '');
+
+/** The same rest as written, without the ; , = (and its ^) the name ends at */
+const writtenAfterName = (word: Token): string =>
+  word.textEnd === undefined ? '' : word.text.slice(word.textEnd).replace(/^(\^?[;,=])+/, '');
 
 class CmdReader {
   private position = 0;
@@ -184,12 +196,12 @@ class CmdReader {
 
   /**
    * Whether the words so far are a whole if condition, a for clause up to its
-   * "do", or an "else", so the next token starts the command that runs.
+   * "do", an "else" or a "call", so the next token starts the command that runs.
    * parens: how many of the words' ( are not closed yet.
    */
   private startsCommandAfter(words: Token[], parens: number): boolean {
     const first = commandName(words[0]).toLowerCase();
-    if (first === 'else') return words.length === 1;
+    if (first === 'else' || first === 'call') return words.length === 1;
     if (first === 'for') {
       return words.length > 1 && parens === 0 && words[words.length - 1].value.toLowerCase() === 'do';
     }
@@ -218,6 +230,10 @@ class CmdReader {
       words: [
         ...firstWords.map((word) => (first.atRunTime ? null : word)),
         ...words.slice(1).map((word) => (word.atRunTime ? null : word.value)),
+      ],
+      written: [
+        ...(rest ? [first.text.slice(0, first.textEnd), writtenAfterName(first)] : [first.text]),
+        ...words.slice(1).map((word) => word.text),
       ],
       start: first.start,
       nameAtRunTime: first.atRunTime,
