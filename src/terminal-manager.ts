@@ -4,7 +4,7 @@ import { DEFAULT_COMMAND_TIMEOUT, MAX_PROCESS_WAIT_MS } from './config.js';
 import { configManager, type ServerConfig } from './config-manager.js';
 import {capture} from "./utils/capture.js";
 import { analyzeProcessState, STATE_DETECTION_TAIL_CHARS, type ProcessState } from './utils/process-detection.js';
-import { getCommandEnvironment, getCommandShell, getShellSpawnArgs, type ShellSpawnConfig } from './utils/shell.js';
+import { getCommandShell, getShellEnvironment, getShellSpawnArgs, type ShellSpawnConfig } from './utils/shell.js';
 import { terminateProcessTree } from './utils/process-tree.js';
 
 /** A child process's output pipes. */
@@ -167,10 +167,7 @@ export class TerminalManager {
     // Get the appropriate spawn configuration for the shell, with login flags where appropriate
     const spawnConfig: ShellSpawnConfig = getShellSpawnArgs(shellToUse, enhancedCommand);
     const spawnOptions: any = {
-      env: {
-        ...getCommandEnvironment(),  // PATHEXT and ProgramData repaired on Windows
-        TERM: 'xterm-256color'  // Better terminal compatibility
-      },
+      env: getShellEnvironment(),  // PATHEXT and ProgramData repaired on Windows, and TERM for better terminal compatibility
       windowsHide: true  // Prevent visible console windows on Windows
     };
 

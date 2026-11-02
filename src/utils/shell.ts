@@ -134,6 +134,15 @@ export function getCommandEnvironment(): NodeJS.ProcessEnv {
 }
 
 /**
+ * The environment of the shell start_process runs a command in: the
+ * command environment, with TERM for better terminal compatibility. The
+ * PowerShell helper starts with it too, so the user's profile sees the same.
+ */
+export function getShellEnvironment(): NodeJS.ProcessEnv {
+  return { ...getCommandEnvironment(), TERM: 'xterm-256color' };
+}
+
+/**
  * The shell used when the user hasn't configured one.
  * Windows: Windows PowerShell, falling back to %ComSpec%.
  * macOS/Linux: $SHELL, falling back to the OS default shell.
