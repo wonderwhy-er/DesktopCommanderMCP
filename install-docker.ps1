@@ -16,7 +16,7 @@ $script:DockerArgs = @()
 $script:ClaudeDesktopFolders = @(
     "$env:LOCALAPPDATA\Programs\Claude",
     "$env:PROGRAMFILES\Claude",
-    "$env:PROGRAMFILES(x86)\Claude",
+    "${env:ProgramFiles(x86)}\Claude",
     "$env:APPDATA\Claude",
     "$env:USERPROFILE\AppData\Local\Programs\Claude"
 )
@@ -442,7 +442,7 @@ function Find-ClaudeExecutable {
     $searchDirs = @(
         "$env:LOCALAPPDATA\Programs",
         "$env:PROGRAMFILES",
-        "$env:PROGRAMFILES(x86)"
+        "${env:ProgramFiles(x86)}"
     )
     
     foreach ($dir in $searchDirs) {
