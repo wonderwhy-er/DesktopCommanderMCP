@@ -7,7 +7,8 @@
  * every 5 seconds the device looks again, and sends what it holds as soon as the
  * address is set. The queue holds at most 100 events (the oldest go first) and an
  * event for at most 10 minutes, so a server that never names an address costs a
- * bounded amount of memory, and the retry stops once the queue is empty.
+ * bounded amount of memory, and the retry stops once the queue is empty. Events go
+ * out one at a time, in the order they came, so a slow one is never overtaken.
  *
  * https.request is replaced, as in test-transport-telemetry.js, so nothing leaves
  * this machine. The clock and the retry timer are Node's fake timers, except in
@@ -148,6 +149,45 @@ const cases = [
     },
   },
   {
+    name: 'nothing is sent twice',
+    run: async () => {
+      observe('call-a');
+      observe('call-b');
+      observe('call-c');
+      await advance(RETRY_MS * 2);
+      process.env.DC_TELEMETRY_URL = ADDRESS;
+      await advance(RETRY_MS);
+      observe('call-d');
+      await advance(RETRY_MS * 3);
+      assert.deepEqual(sent, ['call-a', 'call-b', 'call-c', 'call-d']);
+    },
+  },
+  {
+    name: 'a slow first event is sent before the later ones, which wait for it',
+    run: async () => {
+      process.env.DC_TELEMETRY_URL = ADDRESS;
+      // The first event's lookup of the known paths doesn't answer until the test lets it
+      let letFirstGo;
+      const firstHeld = new Promise((resolve) => { letFirstGo = resolve; });
+      let firstLookup = true;
+      configManager.getValue = async (key) => {
+        if (key === 'allowedDirectories' && firstLookup) {
+          firstLookup = false;
+          await firstHeld;
+        }
+        return key === 'telemetryEnabled' ? true : undefined;
+      };
+      observe('call-slow');
+      observe('call-fast-1');
+      observe('call-fast-2');
+      await settle();
+      assert.deepEqual(sent, [], 'no later event goes ahead of the first');
+      letFirstGo();
+      await settle();
+      assert.deepEqual(sent, ['call-slow', 'call-fast-1', 'call-fast-2']);
+    },
+  },
+  {
     name: 'a held event does not keep the process from exiting',
     real: true,
     run: async () => {
@@ -157,11 +197,11 @@ const cases = [
         const { observeTransport } = await import(${JSON.stringify(transport)});
         observeTransport({ stage: 'operation_start', callId: 'call-exit', deviceId: 'device-1', toolName: 'read_file', operation: 'result_write' });`;
       const child = spawn(process.execPath, ['--input-type=module', '-e', script], { stdio: 'ignore', env: { ...process.env, HOME: home, USERPROFILE: home } });
-      const exited = new Promise((resolve) => child.once('exit', () => resolve(true)));
+      const exited = new Promise((resolve) => child.once('exit', (code, signal) => resolve(code === 0 && signal === null)));
       const gaveUp = new Promise((resolve) => setTimeout(() => resolve(false), 3000));
       const ended = await Promise.race([exited, gaveUp]);
       if (!ended) child.kill();
-      assert.equal(ended, true, 'the process is still running 3 seconds after the event, with the retry timer pending');
+      assert.equal(ended, true, 'the process failed, or is still running 3 seconds after the event with the retry timer pending');
     },
   },
 ];
@@ -193,6 +233,7 @@ export default async function runTests() {
         failures++;
         console.error(`🔴 FAIL  ${name}\n     ${error.message.split('\n')[0]}`);
       } finally {
+        configManager.getValue = async (key) => key === 'telemetryEnabled' ? true : undefined;
         // Whatever the case left held is sent or aged out before the next case
         process.env.DC_TELEMETRY_URL = ADDRESS;
         if (!real) await advance(HOLD_MS * 2);
