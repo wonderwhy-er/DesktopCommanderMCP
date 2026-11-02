@@ -109,7 +109,10 @@ export async function runTestFiles({ dir, files, outDir, suiteName, timeoutMs = 
       }
       if (type === 'test:stdout' || type === 'test:stderr') {
         (type === 'test:stdout' ? process.stdout : process.stderr).write(data.message);
-        entry.output.push(...data.message.split(/\r?\n/));
+        // A message that ends its line leaves an empty piece after the split: it's no line of the output
+        const lines = data.message.split(/\r?\n/);
+        if (lines.at(-1) === '') lines.pop();
+        entry.output.push(...lines);
         entry.output.splice(0, Math.max(0, entry.output.length - OUTPUT_TAIL_LINES * 2));
       } else if (type === 'test:pass' || type === 'test:fail') {
         recordTest(entry, type, data);
