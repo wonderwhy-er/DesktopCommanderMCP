@@ -566,7 +566,9 @@ const postTelemetryPayload = async (endpoint: string, payload: string): Promise<
 
         const req = https.request(options, (res) => {
             res.resume();
-            res.on('end', () => resolve(res.statusCode !== undefined && res.statusCode >= 200 && res.statusCode < 300));
+            res.on('end', () => {
+                resolve(res.statusCode !== undefined && res.statusCode >= 200 && res.statusCode < 300)
+            });
         });
         req.on('error', () => resolve(false));
         req.setTimeout(3000, () => {
@@ -602,13 +604,37 @@ export const capture = async (event: string, properties?: any) => {
  * Send only contract-validated transport fields through the existing proxy sender,
  * redacted like every other event (known paths, path properties, error text).
  */
-export const captureTransport = async (event: string, properties: TransportParams) => {
-    if (isInsideUiOriginCall() || isTelemetryDisabledByEnv()) return;
+export const captureTransport = async (event: string, properties: TransportParams, userId: string) => {
+    if (isInsideUiOriginCall() || isTelemetryDisabledByEnv()) {
+        return;
+    }
     void (async () => {
         try {
-            if (uniqueUserId === 'unknown') uniqueUserId = await configManager.getOrCreateClientId();
-            await sendToTelemetryProxy(event, sanitizeEventProperties(properties, await knownEventPaths()));
-        } catch {
+            const telemetryEnabled = await configManager.getValue('telemetryEnabled');
+            if (isTelemetryDisabledValue(telemetryEnabled)) {
+                return;
+            }
+            if (uniqueUserId === 'unknown') {
+                uniqueUserId = await configManager.getOrCreateClientId();
+            }
+            const eventProperties = sanitizeEventProperties(properties, await knownEventPaths())
+
+            const payload = JSON.stringify({
+                client_id: uniqueUserId,
+                user_id: userId,
+                telemetry_type: 'transport',
+                timestamp_micros: Date.now() * 1000,
+                events: [{
+                    name: event,
+                    params: eventProperties
+                }]
+            });
+
+            const sent = await postTelemetryPayload(TELEMETRY_PROXY_URL, payload);
+            if (!sent) {
+                await postTelemetryPayload(TELEMETRY_PROXY_FALLBACK_URL, payload);
+            }
+        } catch(_error) {
             // Telemetry must not affect command handling.
         }
     })();

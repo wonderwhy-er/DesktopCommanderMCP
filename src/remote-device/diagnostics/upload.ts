@@ -1,5 +1,5 @@
 import fs from 'fs';
-import path from 'path';
+import { getRemoteDeviceConfigPath } from '../remote-utils.js';
 
 /**
  * Sends the diagnostics zip to Desktop Commander's diagnostics Worker, which
@@ -19,10 +19,10 @@ const ID_SHAPED = /^[A-Za-z0-9_-]{1,64}$/;
 /** The longest piece of the Worker's error message that is shown. */
 const MAX_MESSAGE_CHARS = 200;
 
-/** The signed-in user's id from ~/.desktop-commander-device/device.json, or null. */
+/** The signed-in user's id from the selected environment's device.json, or null. */
 export function savedUserId(home: string): string | null {
     try {
-        const config = JSON.parse(fs.readFileSync(path.join(home, '.desktop-commander-device', 'device.json'), 'utf8'));
+        const config = JSON.parse(fs.readFileSync(getRemoteDeviceConfigPath(home), 'utf8'));
         const token = config?.session?.access_token;
         if (typeof token !== 'string') return null;
         const { sub } = JSON.parse(Buffer.from(token.split('.')[1] ?? '', 'base64url').toString('utf8'));
