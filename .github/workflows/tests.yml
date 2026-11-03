@@ -282,7 +282,7 @@ jobs:
       sha: ${{ needs.platforms.outputs.sha }}
       base: ${{ needs.platforms.outputs.base }}
     secrets:
-      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
 
   comment:
     name: comment
