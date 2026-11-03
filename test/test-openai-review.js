@@ -19,12 +19,194 @@ const reply = (output, rest = {}) => ({
   status: 200,
   json: async () => ({ status: 'completed', output, ...rest }),
 });
+const rejected = (code, headers = {}, status = 429, fields = {}) => ({
+  ok: false,
+  status,
+  headers: new Headers(headers),
+  json: async () => ({
+    error: { type: 'rate_limit_error', code, param: 'input', message: 'secret test-key', ...fields },
+  }),
+});
+
+test('a transient limit waits for project reset and retries the same operation without repeating reads', async () => {
+  const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'review-retry-test-'));
+  const requests = [];
+  const waits = [];
+  try {
+    fs.mkdirSync(path.join(folder, 'pr'));
+    fs.writeFileSync(path.join(folder, 'pr/a.txt'), 'read once');
+    const result = await askResponses({
+      prompt: 'Review JSON.',
+      key: 'test-key',
+      folder,
+      out: path.join(folder, 'out'),
+      maxTurns: 3,
+      random: () => 0,
+      sleepImpl: async (ms) => waits.push(ms),
+      fetchImpl: async (url, options) => {
+        requests.push({ body: options.body, operation: options.headers['X-Client-Request-Id'] });
+        if (requests.length === 1) return reply([call('read_file', { path: 'pr/a.txt' })]);
+        if (requests.length === 2) {
+          fs.rmSync(path.join(folder, 'pr/a.txt'));
+          return rejected('rate_limit_exceeded', {
+            'retry-after': '2',
+            'x-ratelimit-reset-tokens': '3s',
+            'x-ratelimit-reset-project-tokens': '4s',
+            'x-ratelimit-limit-project-tokens': '60000',
+          });
+        }
+        return reply([message()]);
+      },
+    });
+    assert.equal(result.response, JSON.stringify(answer));
+    assert.deepEqual(waits, [4000]);
+    assert.equal(requests[1].body, requests[2].body);
+    assert.ok(requests[1].operation);
+    assert.equal(requests[1].operation, requests[2].operation);
+    assert.notEqual(requests[0].operation, requests[1].operation);
+    assert.equal(JSON.parse(requests[2].body).input.filter((item) => item.type === 'function_call_output').length, 1);
+    assert.match(JSON.parse(requests[2].body).input.at(-1).output, /read once/);
+    const diagnostics = fs.readFileSync(path.join(folder, 'out/rate-limits.json'), 'utf8');
+    assert.ok(diagnostics.includes('rate_limit_exceeded') && !diagnostics.includes('test-key'));
+    assert.equal(result.stats.models['gpt-6.1-sol'].api.totalRequests, 3);
+  } finally {
+    fs.rmSync(folder, { recursive: true, force: true });
+  }
+});
+
+for (const [name, code, status] of [
+  ['quota', 'insufficient_quota', 429],
+  ['unknown 429', 'unrecognized', 429],
+  ['authentication', 'invalid_api_key', 401],
+]) {
+  test(`${name} errors fail once with sanitized fields and never retry`, async () => {
+    let requests = 0;
+    await assert.rejects(
+      askResponses({
+        prompt: 'Review JSON.',
+        key: 'test-key',
+        folder: os.tmpdir(),
+        sleepImpl: async () => assert.fail('must not sleep'),
+        fetchImpl: async () => {
+          requests += 1;
+          return rejected(code, { 'retry-after': '1' }, status);
+        },
+      }),
+      (error) =>
+        error.message.includes(`HTTP ${status}`) &&
+        !error.message.includes('test-key') &&
+        error.message.includes(name === 'unknown 429' ? 'unknown' : code),
+    );
+    assert.equal(requests, 1);
+  });
+}
+
+test('a provider delay beyond the deadline is reported and never shortened or retried', async () => {
+  let requests = 0;
+  await assert.rejects(
+    askResponses({
+      prompt: 'Review JSON.',
+      key: 'test-key',
+      folder: os.tmpdir(),
+      timeoutMs: 50,
+      sleepImpl: async () => assert.fail('must not sleep'),
+      fetchImpl: async () => {
+        requests += 1;
+        return rejected('rate_limit_exceeded', { 'retry-after': '60' });
+      },
+    }),
+    /rate_limit_exceeded.*deadline|deadline.*rate_limit_exceeded/,
+  );
+  assert.equal(requests, 1);
+});
+
+test('HTTP-date Retry-After is respected and waiting remains cancelable by the overall deadline', async () => {
+  const waits = [];
+  let requests = 0;
+  const after = new Date(Date.now() + 5000).toUTCString();
+  await askResponses({
+    prompt: 'Review JSON.',
+    key: 'test-key',
+    folder: os.tmpdir(),
+    random: () => 0,
+    sleepImpl: async (ms) => waits.push(ms),
+    fetchImpl: async () => {
+      requests += 1;
+      return requests === 1 ? rejected('slow_down', { 'retry-after': after }) : reply([message()]);
+    },
+  });
+  assert.ok(waits[0] >= 3000 && waits[0] <= 5000);
+  await assert.rejects(
+    askResponses({
+      prompt: 'Review JSON.',
+      key: 'test-key',
+      folder: os.tmpdir(),
+      timeoutMs: 30,
+      random: () => 0,
+      sleepImpl: (ms, signal) =>
+        new Promise((resolve, reject) =>
+          signal.addEventListener('abort', () => reject(new Error('aborted')), { once: true }),
+        ),
+      fetchImpl: async () => rejected('rate_limit_exceeded', { 'retry-after': '0.001' }),
+    }),
+    /within/,
+  );
+});
+
+test('transient retries consume the existing request budget and use exponential backoff', async () => {
+  let requests = 0;
+  const waits = [];
+  await assert.rejects(
+    askResponses({
+      prompt: 'Review JSON.',
+      key: 'test-key',
+      folder: os.tmpdir(),
+      maxTurns: 3,
+      random: () => 0,
+      sleepImpl: async (ms) => waits.push(ms),
+      fetchImpl: async () => {
+        requests += 1;
+        return rejected('rate_limit_exceeded');
+      },
+    }),
+    /request budget/,
+  );
+  assert.equal(requests, 3);
+  assert.deepEqual(waits, [1000, 2000]);
+});
+
+test('error fields and rate headers cannot echo a credential into failure artifacts', async () => {
+  const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'review-error-test-'));
+  try {
+    await assert.rejects(
+      askResponses({
+        prompt: 'Review JSON.',
+        key: 'test-key',
+        folder,
+        out: folder,
+        fetchImpl: async () =>
+          rejected('test-key', { 'retry-after': 'test-key', 'x-ratelimit-remaining-tokens': 'test-key' }, 429, {
+            type: 'test-key',
+            param: 'test-key',
+          }),
+      }),
+      (error) => !error.message.includes('test-key'),
+    );
+    const diagnostics = fs.readFileSync(path.join(folder, 'rate-limits.json'), 'utf8');
+    assert.ok(!diagnostics.includes('test-key'));
+    assert.ok(!fs.readFileSync(path.join(folder, 'answer.json'), 'utf8').includes('test-key'));
+  } finally {
+    fs.rmSync(folder, { recursive: true, force: true });
+  }
+});
 
 test('CI review posting requires an explicit repository opt-in after artifact checks', () => {
   const root = fileURLToPath(new URL('../', import.meta.url));
   const workflow = fs.readFileSync(path.join(root, '.github/workflows/review.yml'), 'utf8');
-  assert.ok(workflow.includes("if: inputs.check != 'text' && vars.REVIEW_POST_ENABLED == 'true'"),
-    'Posting requires explicit repository opt-in.');
+  assert.ok(
+    workflow.includes("if: inputs.check != 'text' && vars.REVIEW_POST_ENABLED == 'true'"),
+    'Posting requires explicit repository opt-in.',
+  );
 });
 
 test('every workflow sparse checkout can run the request command without API modules or credentials', () => {

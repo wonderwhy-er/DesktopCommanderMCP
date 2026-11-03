@@ -223,6 +223,7 @@ async function run(range, ...options) {
     'diff.patch',
     'answer.json',
     'session.jsonl',
+    'rate-limits.json',
   ]) {
     fs.rmSync(path.join(out, file), { force: true });
   }

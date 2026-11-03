@@ -1,6 +1,8 @@
 /** Bounded, API-key-only Responses loop. Authentication never uses a local agent login. */
 import fs from 'node:fs';
 import path from 'node:path';
+import { randomUUID } from 'node:crypto';
+import { setTimeout as delay } from 'node:timers/promises';
 import { readTool, readTools } from './review-tools.js';
 
 function reviewState({ prompt, key, model, effort, token, endpoint, out }) {
@@ -38,6 +40,7 @@ function reviewState({ prompt, key, model, effort, token, endpoint, out }) {
     metrics,
     stats: { models: { [model]: metrics } },
     used: 0,
+    limits: [],
     history: [{ role: 'user', content: prompt }],
     session: [],
     controller: new AbortController(),
@@ -53,16 +56,164 @@ function countUsage(metrics, usage = {}) {
   metrics.tokens.total += usage.total_tokens ?? 0;
 }
 
+const ERROR_CODES = new Set([
+  'rate_limit_exceeded',
+  'slow_down',
+  'insufficient_quota',
+  'insufficient_credits',
+  'invalid_api_key',
+  'organization_spend_limit_exceeded',
+  'project_spend_limit_exceeded',
+  'organization_usage_limit_exceeded',
+  'billing_hard_limit_reached',
+  'model_not_found',
+  'server_is_overloaded',
+]);
+const ERROR_TYPES = new Set([
+  'rate_limit_error',
+  'insufficient_quota',
+  'invalid_request_error',
+  'authentication_error',
+  'service_unavailable_error',
+  'server_error',
+  'tokens',
+  'requests',
+  'project_tokens',
+]);
+const ERROR_PARAMS = new Set([
+  'input',
+  'model',
+  'max_output_tokens',
+  'reasoning',
+  'reasoning.effort',
+  'tools',
+  'tool_choice',
+  'store',
+  'include',
+  'parallel_tool_calls',
+  'text',
+  'text.format',
+]);
+
+function errorField(value, allowed, redact) {
+  if (value === null || value === undefined) return null;
+  if (typeof value !== 'string') return 'unknown';
+  if (redact(value) !== value) return '<redacted>';
+  return allowed.has(value) ? value : 'unknown';
+}
+
+function milliseconds(value, retryAfter) {
+  if (typeof value !== 'string' || value.length > 80) return null;
+  if (retryAfter && /^\d+(\.\d+)?$/.test(value)) return Number(value) * 1000;
+  const units = { ms: 1, s: 1000, m: 60_000, h: 3_600_000, d: 86_400_000 };
+  const parts = [...value.matchAll(/(\d+(?:\.\d+)?)(ms|s|m|h|d)/g)];
+  if (parts.length && parts.map((part) => part[0]).join('') === value) {
+    return parts.reduce((total, part) => total + Number(part[1]) * units[part[2]], 0);
+  }
+  if (retryAfter && /^(Mon|Tue|Wed|Thu|Fri|Sat|Sun), .{20} GMT$/.test(value)) {
+    const when = Date.parse(value);
+    if (Number.isFinite(when)) return Math.max(0, when - Date.now());
+  }
+  return null;
+}
+
+function rateHeaders(response, redact) {
+  const headers = {};
+  const waits = [];
+  for (const scope of ['requests', 'tokens', 'project-tokens']) {
+    for (const kind of ['limit', 'remaining', 'reset']) {
+      const name = `x-ratelimit-${kind}-${scope}`;
+      const value = response.headers?.get(name);
+      if (!value) continue;
+      if (redact(value) !== value) {
+        headers[name] = '<redacted>';
+        continue;
+      }
+      const reset = kind === 'reset' ? milliseconds(value, false) : null;
+      if (Number.isFinite(reset) && reset >= 0) {
+        headers[name] = value;
+        waits.push(reset);
+      } else if (kind !== 'reset' && /^\d{1,15}$/.test(value)) headers[name] = Number(value);
+    }
+  }
+  const value = response.headers?.get('retry-after');
+  if (value && redact(value) !== value) headers['retry-after'] = '<redacted>';
+  else {
+    const wait = milliseconds(value, true);
+    if (Number.isFinite(wait) && wait >= 0) {
+      headers['retry-after'] = value;
+      waits.push(wait);
+    }
+  }
+  return { headers, minimumDelayMs: waits.length ? Math.max(...waits) : null };
+}
+
+async function rateError(response, state, operation) {
+  let fields = {};
+  try {
+    fields = (await response.json())?.error ?? {};
+  } catch {
+    /* A non-JSON provider error is unknown and is never automatically retried. */
+  }
+  const rates = rateHeaders(response, state.redact);
+  const diagnostic = {
+    status: response.status,
+    operation,
+    attempt: state.metrics.api.totalRequests,
+    type: errorField(fields.type, ERROR_TYPES, state.redact),
+    code: errorField(fields.code, ERROR_CODES, state.redact),
+    param: errorField(fields.param, ERROR_PARAMS, state.redact),
+    ...rates,
+  };
+  state.limits.push(diagnostic);
+  state.save('rate-limits.json', JSON.stringify(state.limits, null, 2) + '\n');
+  return diagnostic;
+}
+
+function limitFailure(diagnostic, reason = '') {
+  return new Error(
+    `OpenAI Responses stopped (HTTP ${diagnostic.status}): ${JSON.stringify(diagnostic)}${reason ? `; ${reason}` : ''}. No review was written.`,
+  );
+}
+
+async function sendRequest(options, state, request) {
+  const operation = request.headers['X-Client-Request-Id'];
+  for (let retry = 0; ; retry += 1) {
+    if (state.metrics.api.totalRequests >= options.maxTurns) throw new Error('OpenAI review request budget exhausted.');
+    const requested = Date.now();
+    state.metrics.api.totalRequests += 1;
+    const response = await options.fetchImpl(options.endpoint, request);
+    state.metrics.api.totalLatencyMs += Date.now() - requested;
+    if (response.ok) return response;
+    const diagnostic = await rateError(response, state, operation);
+    const transient =
+      response.status === 429 &&
+      ['rate_limit_exceeded', 'slow_down'].includes(diagnostic.code) &&
+      ['rate_limit_error', 'tokens', 'requests', 'project_tokens', 'invalid_request_error'].includes(diagnostic.type);
+    if (!transient) throw limitFailure(diagnostic);
+    if (state.metrics.api.totalRequests >= options.maxTurns) throw limitFailure(diagnostic, 'request budget exhausted');
+    const baseline = diagnostic.minimumDelayMs ?? Math.min(60_000, 1000 * 2 ** retry);
+    const wait = baseline + Math.floor(Math.max(0, Math.min(1, options.random())) * 250);
+    if (wait >= options.timeoutMs - (Date.now() - state.started))
+      throw limitFailure(diagnostic, 'provider reset exceeds remaining deadline');
+    diagnostic.retryDelayMs = wait;
+    state.save('rate-limits.json', JSON.stringify(state.limits, null, 2) + '\n');
+    await options.sleepImpl(wait, state.controller.signal);
+  }
+}
+
 async function requestResponse(options, state) {
-  const { endpoint, key, model, effort, shell, calls, timeoutMs, fetchImpl } = options;
+  const { key, model, effort, shell, calls, timeoutMs } = options;
   if (Date.now() - state.started >= timeoutMs) state.controller.abort();
-  const requested = Date.now();
-  state.metrics.api.totalRequests += 1;
-  const response = await fetchImpl(endpoint, {
+  const response = await sendRequest(options, state, {
     method: 'POST',
     redirect: 'error',
     signal: state.controller.signal,
-    headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
+    headers: {
+      Authorization: `Bearer ${key}`,
+      'Content-Type': 'application/json',
+      'X-Client-Request-Id': randomUUID(),
+    },
     body: JSON.stringify({
       model,
       reasoning: { effort },
@@ -76,9 +227,6 @@ async function requestResponse(options, state) {
       text: { format: { type: 'json_object' } },
     }),
   });
-  state.metrics.api.totalLatencyMs += Date.now() - requested;
-  // Never include a server's error body, which could echo authorization headers.
-  if (!response.ok) throw new Error(`OpenAI Responses stopped (HTTP ${response.status}): no review was written.`);
   const body = await response.json();
   const encoded = JSON.stringify(body);
   if (state.redact(encoded) !== encoded)
@@ -137,6 +285,8 @@ export async function askResponses(given) {
     timeoutMs: 12 * 60 * 1000,
     shell: false,
     fetchImpl: fetch,
+    random: Math.random,
+    sleepImpl: (ms, signal) => delay(ms, null, { signal }),
     endpoint: 'https://api.openai.com/v1/responses',
     ...given,
   };
