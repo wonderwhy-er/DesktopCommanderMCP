@@ -2,7 +2,7 @@
 # (workflow_call) once its test jobs are done, for a push to a PR with the label
 # `review`, adding that label, or a maintainer's `/review` comment, with the run's
 # results and coverage. On demand it runs alone, with no tests (gh workflow run
-# review.yml -f commit=<sha> -f base=<sha or branch>). Gemini CLI reads the PR's
+# review.yml -f commit=<sha> -f base=<sha or branch>). OpenAI Responses reads the PR's
 # code with read-only tools and answers with findings, by the rules in
 # .github/review-prompt.md, through test/ci-review.js run: the same script as
 # `npm run review -- A..B` on a machine. A last job posts the findings as one review
@@ -26,7 +26,7 @@ on:
         type: string
         required: true
     secrets:
-      GEMINI_API_KEY:
+      OPENAI_API_KEY:
         required: false
   # On demand, for anyone with write access; the maintainer check still applies.
   # The open PR whose head the commit is gets the review; with none, the job summary.
@@ -100,12 +100,12 @@ jobs:
     if: needs.request.outputs.review == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    # The Gemini key is used here, on the PR's code: so the token only reads, no
+    # The OpenAI key is used here, on the PR's code: so the token only reads, no
     # other secret is named, and the model has read-only file tools, no shell, no
     # web and no GitHub tools (test/ci-review.js run). Our script and prompt are
     # main's on a comment's or on-demand run; on a push or a label they're the PR's
     # own, as for the tests (a fork PR gets no secret). Writing is the post job's.
-    # The script stops Gemini CLI after 12 minutes, inside this job's 15.
+    # The script stops OpenAI Responses after 12 minutes, inside this job's 15.
     # Reads only: actions: read is for a text check's gh run view
     permissions:
       contents: read
@@ -124,7 +124,8 @@ jobs:
             /.github/text-check-prompt.md
             /.github/writing-style.md
             /test/ci-review.js
-            /test/ci-review-budget.js
+            /test/helpers/openai-review.js
+            /test/helpers/review-tools.js
             /test/check-coverage-report.js
             /test/helpers/node-test-runner.js
             /test/helpers/ci-platforms.js
@@ -160,10 +161,11 @@ jobs:
           pattern: coverage-*
           path: ci
       # Without the secret it stops at once and fails, so the review never passes unseen
-      - name: Review with Gemini
+      - name: Review with OpenAI
         env:
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          GEMINI_MODEL: ${{ vars.GEMINI_MODEL }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          REVIEW_MODEL: ${{ vars.REVIEW_MODEL }}
+          REVIEW_REASONING_EFFORT: ${{ vars.REVIEW_REASONING_EFFORT }}
           # For the PR's title and description; the model never gets it
           GH_TOKEN: ${{ github.token }}
           PR: ${{ needs.request.outputs.pr }}
@@ -175,7 +177,7 @@ jobs:
           text=()
           if [[ "$CHECK" == text ]]; then text=(--text pr); fi
           node test/ci-review.js run "$BASE_SHA..$HEAD_SHA" --repo pr --out review --tests ci "${text[@]}"
-      # review.json, review.md, the diff and Gemini CLI's own JSON; also when the review
+      # review.json, review.md, the diff and OpenAI Responses's own JSON; also when the review
       # failed, so a stopped run's answer.json and session.jsonl show what it spent
       - name: Upload the review
         if: always()
@@ -189,8 +191,8 @@ jobs:
   post:
     name: post
     needs: [request, review]
-    # A text check posts nothing: its job summary has it
-    if: inputs.check != 'text'
+    # Posting starts only after the operator enables it; text checks always stay in artifacts.
+    if: inputs.check != 'text' && vars.REVIEW_POST_ENABLED == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     # Writes the review: our script (main's on a comment's or on-demand run, the
