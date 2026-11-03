@@ -84,17 +84,48 @@ function testWhichLibuvNeedsACopy() {
 }
 
 async function testCopyRunsTheRest(script) {
-  const child = await runNode([script, 'exit', '3'], { env: scriptEnv({ DC_TEST_USER_VALUE: 'kept' }) });
+  const args = ['exit', '3', 'remote', 'user value', '--desktop-commander-threadpool-launcher-pid=101'];
+  const child = await runNode([script, ...args], { env: scriptEnv({ DC_TEST_USER_VALUE: 'kept' }) });
   const lines = printed(child.stdout);
   assert.strictEqual(lines.length, 1, `only the copy should run the code after the call, got:\n${child.stdout}${child.stderr}`);
   const [copy] = lines;
   assert.strictEqual(child.status, 3, `the script should exit with the copy's exit code, got ${child.status}:\n${child.stderr}`);
   assert.notStrictEqual(copy.parentPid, process.pid, 'the code after the call should run in a copy, started by the script, not by this test');
   assert.strictEqual(copy.size, '7', 'the copy should have UV_THREADPOOL_SIZE in its environment');
-  assert.deepStrictEqual(copy.args, ['exit', '3'], 'the copy should get the same arguments');
+  assert.deepStrictEqual(copy.args, args, 'the copy should get all application arguments, including marker-shaped values');
   assert.strictEqual(copy.userValue, 'kept', 'the copy should get the rest of the environment');
   assert.strictEqual(copy.launcherVariable, false, 'the copy should drop the launcher variable, so the commands it starts are not taken for copies');
   console.log('✓ the copy runs the rest of the script with the size, the same arguments and environment, and its exit code is the script\'s');
+}
+
+async function testCopyPreservesStdio(dir) {
+  const script = path.join(dir, 'stdio.mjs');
+  fs.writeFileSync(script, `
+import { setThreadpoolSize } from ${JSON.stringify(MODULE_URL)};
+setThreadpoolSize('7', false);
+process.stderr.write('copy stderr\\n');
+process.stdin.pipe(process.stdout);
+`);
+  const launcher = spawn(process.execPath, [script], { env: scriptEnv(), stdio: ['pipe', 'pipe', 'pipe'] });
+  let stdout = '';
+  let stderr = '';
+  launcher.stdout.setEncoding('utf8').on('data', (chunk) => { stdout += chunk; });
+  launcher.stderr.setEncoding('utf8').on('data', (chunk) => { stderr += chunk; });
+  const timer = setTimeout(() => launcher.kill(), 15_000);
+  try {
+    const closed = new Promise((resolve, reject) => {
+      launcher.once('close', resolve);
+      launcher.once('error', reject);
+    });
+    launcher.stdin.end('client request\n');
+    assert.strictEqual(await closed, 0, stderr);
+    assert.strictEqual(stdout, 'client request\n');
+    assert.strictEqual(stderr, 'copy stderr\n');
+    console.log('✓ the copy inherits stdin, stdout and stderr through its launcher');
+  } finally {
+    clearTimeout(timer);
+    launcher.kill();
+  }
 }
 
 async function testSizeAlreadySet(script) {
@@ -137,6 +168,7 @@ export default async function runTests() {
   try {
     const script = writeScript(dir);
     await testCopyRunsTheRest(script);
+    await testCopyPreservesStdio(dir);
     await testSizeAlreadySet(script);
     await testNoCopyUnderADebugger(script);
     await testCopyEndsWithLauncher(script);
