@@ -42,7 +42,7 @@ export interface ClientInfo {
 
 type CorruptConfigPhase = RecoveryPhase;
 interface CorruptConfigRecoveryTelemetry extends RecoveryEvent {
-  parse_error_kind: 'truncated' | 'invalid_json';
+  parse_error_kind?: 'truncated' | 'invalid_json' | null;
   config_age_bucket: '<1s' | '<1m' | '<1h' | '>=1h' | 'unknown';
   temp_file_count: number;
   persisted_version: string;
@@ -65,14 +65,12 @@ export function isTelemetryDisabledValue(value: unknown): boolean {
 }
 
 function extractRecoverableStringArray(text: string, key: string): string[] | null {
-  const marker = new RegExp(`(?:^|[,{])\\s*"${key}"\\s*:\\s*\\[`);
-  const match = marker.exec(text);
-  if (!match) return null;
-  const start = match.index + match[0].lastIndexOf('[');
+  let objectDepth = 0;
+  let arrayDepth = 0;
   let inString = false;
   let escaped = false;
-  let depth = 0;
-  for (let i = start; i < text.length; i++) {
+
+  for (let i = 0; i < text.length; i++) {
     const char = text[i];
     if (inString) {
       if (escaped) escaped = false;
@@ -80,15 +78,67 @@ function extractRecoverableStringArray(text: string, key: string): string[] | nu
       else if (char === '"') inString = false;
       continue;
     }
-    if (char === '"') { inString = true; continue; }
-    if (char === '[') depth++;
-    else if (char === ']' && --depth === 0) {
-      try {
-        const value = JSON.parse(text.slice(start, i + 1));
-        return Array.isArray(value) && value.every((item) => typeof item === 'string') ? value : null;
-      } catch {
-        return null;
+
+    if (char === '"') {
+      if (objectDepth === 1 && arrayDepth === 0) {
+        const start = i;
+        let tokenEscaped = false;
+        for (i++; i < text.length; i++) {
+          if (tokenEscaped) tokenEscaped = false;
+          else if (text[i] === '\\') tokenEscaped = true;
+          else if (text[i] === '"') break;
+        }
+        if (i >= text.length) return null;
+        let parsedKey: unknown;
+        try {
+          parsedKey = JSON.parse(text.slice(start, i + 1));
+        } catch {
+          return null;
+        }
+        let valueStart = i + 1;
+        while (/\s/.test(text[valueStart] ?? '')) valueStart++;
+        if (text[valueStart] === ':') {
+          valueStart++;
+          while (/\s/.test(text[valueStart] ?? '')) valueStart++;
+          if (parsedKey === key && text[valueStart] === '[') {
+            const arrayStart = valueStart;
+            let depth = 0;
+            let arrayInString = false;
+            let arrayEscaped = false;
+            for (let j = arrayStart; j < text.length; j++) {
+              const arrayChar = text[j];
+              if (arrayInString) {
+                if (arrayEscaped) arrayEscaped = false;
+                else if (arrayChar === '\\') arrayEscaped = true;
+                else if (arrayChar === '"') arrayInString = false;
+                continue;
+              }
+              if (arrayChar === '"') arrayInString = true;
+              else if (arrayChar === '[') depth++;
+              else if (arrayChar === ']' && --depth === 0) {
+                try {
+                  const value = JSON.parse(text.slice(arrayStart, j + 1));
+                  return Array.isArray(value) && value.every((item) => typeof item === 'string') ? value : null;
+                } catch {
+                  return null;
+                }
+              }
+            }
+            return null;
+          }
+        }
+        inString = false;
+        continue;
       }
+      inString = true;
+    } else if (char === '{') {
+      objectDepth++;
+    } else if (char === '}') {
+      objectDepth--;
+    } else if (char === '[') {
+      arrayDepth++;
+    } else if (char === ']') {
+      arrayDepth--;
     }
   }
   return null;
@@ -293,11 +343,12 @@ class ConfigManager {
     } catch (error: any) {
       if (error?.code !== 'ENOENT') throw error;
       const defaults = this.getDefaultConfig();
-      defaults['welcomeOnboardingEligible'] = false;
-      defaults['pendingWelcomeOnboarding'] = false;
+      defaults.blockedCommands = ['*'];
+      defaults.allowedDirectories = [path.dirname(this.configPath)];
+      defaults.welcomeOnboardingEligible = false;
+      defaults.pendingWelcomeOnboarding = false;
+      const telemetry = await this.recoveryTelemetry(null, phase, '', false, false, { configBytes: null, mtimeMs: null });
       await this.writeConfigAtomically(defaults);
-      this.config = { ...defaults, version: VERSION };
-      const telemetry = await this.recoveryTelemetry(null, phase, '', false, false);
       return { config: defaults, telemetry };
     }
 
@@ -308,46 +359,63 @@ class ConfigManager {
       ? this.config.blockedCommands : null;
     const inMemoryAllowed = Array.isArray(this.config.allowedDirectories) && this.config.allowedDirectories.every((item) => typeof item === 'string')
       ? this.config.allowedDirectories : null;
-    const blocked = inMemoryBlocked ?? extractRecoverableStringArray(text, 'blockedCommands');
-    const allowed = inMemoryAllowed ?? extractRecoverableStringArray(text, 'allowedDirectories');
+    const blocked = extractRecoverableStringArray(text, 'blockedCommands') ?? inMemoryBlocked;
+    const allowed = extractRecoverableStringArray(text, 'allowedDirectories') ?? inMemoryAllowed;
 
-    let backupCreated = false;
+    const recovered = buildRecoveredConfig(this.getDefaultConfig(), this.initialized ? this.config : null, text);
+    if (clientId) recovered.clientId = clientId;
+    if (telemetryWasDisabled) recovered.telemetryEnabled = false;
+    recovered.blockedCommands = blocked === null ? ['*'] : [...blocked];
+    recovered.allowedDirectories = allowed === null ? [path.dirname(this.configPath)] : [...allowed];
+    recovered.welcomeOnboardingEligible = false;
+    recovered.pendingWelcomeOnboarding = false;
+
+    let backupPath: string | null = null;
     if (existsSync(this.configPath)) {
-      const backupPath = `${this.configPath}.corrupt.${Date.now()}.${process.pid}`;
+      backupPath = `${this.configPath}.corrupt.${Date.now()}.${process.pid}`;
       await fs.rename(this.configPath, backupPath);
-      backupCreated = true;
     }
-    const config = this.getDefaultConfig();
-    if (clientId) config.clientId = clientId;
-    if (telemetryWasDisabled) config.telemetryEnabled = false;
-    config.blockedCommands = blocked === null ? ['*'] : [...blocked];
-    config.allowedDirectories = allowed === null ? [path.dirname(this.configPath)] : [...allowed];
-    config.welcomeOnboardingEligible = false;
-    config.pendingWelcomeOnboarding = false;
-    await this.writeConfigAtomically(config);
-    this.config = { ...config, version: VERSION };
-    console.error(`Recovered corrupt config during ${phase}; using defaults${backupCreated ? ' and preserved the corrupt file' : ''}.`);
+    try {
+      await this.writeConfigAtomically(recovered);
+    } catch (writeError) {
+      if (backupPath) {
+        try {
+          await fs.rename(backupPath, this.configPath);
+        } catch (restoreError) {
+          console.error('Failed to restore corrupt config after recovery write failed:', restoreError);
+        }
+      }
+      throw writeError;
+    }
+    console.error(`Recovered corrupt config during ${phase}; using defaults${backupPath ? ' and preserved the corrupt file' : ''}.`);
     return {
-      config,
-      telemetry: { ...forensics, backup_created: backupCreated, recovered_by_other_process: false },
+      config: recovered,
+      telemetry: { ...forensics, backup_created: backupPath !== null, recovered_by_other_process: false },
     };
   }
 
-  private async recoveryTelemetry(error: SyntaxError | null, phase: CorruptConfigPhase, text: string, backupCreated: boolean, recoveredByOtherProcess: boolean): Promise<CorruptConfigRecoveryTelemetry> {
+  private async recoveryTelemetry(
+    error: SyntaxError | null,
+    phase: CorruptConfigPhase,
+    text: string,
+    backupCreated: boolean,
+    recoveredByOtherProcess: boolean,
+    observed?: { configBytes: number | null; mtimeMs: number | null },
+  ): Promise<CorruptConfigRecoveryTelemetry> {
     const [stat, entries] = await Promise.all([
-      fs.stat(this.configPath).catch(() => null),
+      observed === undefined ? fs.stat(this.configPath).catch(() => null) : Promise.resolve(null),
       fs.readdir(path.dirname(this.configPath)).catch(() => [] as string[]),
     ]);
     const name = path.basename(this.configPath);
-    const age = stat?.mtimeMs ?? null;
-    const ageBucket = age === null ? 'unknown' : this.configAgeBucket(age);
+    const mtimeMs = observed?.mtimeMs ?? stat?.mtimeMs ?? null;
+    const configBytes = observed === undefined ? stat?.size ?? null : observed.configBytes;
     const tempFileCount = entries.filter((entry) => entry.startsWith(`${name}.`) && entry.endsWith('.tmp')).length;
     const persistedVersion = /"version"\s*:\s*"([0-9A-Za-z._+-]{1,32})"/.exec(text)?.[1] ?? 'unknown';
     return {
       phase,
-      parse_error_kind: error ? this.classifyConfigParseError(error, text) : 'invalid_json',
-      config_bytes: stat?.size ?? (text ? Buffer.byteLength(text) : null),
-      config_age_bucket: ageBucket,
+      parse_error_kind: error ? this.classifyConfigParseError(error, text) : null,
+      config_bytes: configBytes,
+      config_age_bucket: this.configAgeBucket(mtimeMs),
       temp_file_count: tempFileCount,
       persisted_version: persistedVersion,
       backup_created: backupCreated,
