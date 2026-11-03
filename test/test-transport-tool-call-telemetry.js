@@ -15,6 +15,8 @@ const DEVICE_ID = 'device-1';
 
 // Every telemetry body this process would send
 const sent = [];
+// Requests whose callback the https.request fake did not get: the code calls https.request(url, options, onResponse)
+const unanswered = [];
 const stagesOf = callId => sent.flatMap(body => body.events)
     .filter(event => event.params?.call_id === callId)
     .map(event => event.name);
@@ -59,6 +61,7 @@ try {
     configManager.getValue = async key => key === 'telemetryEnabled' ? true : undefined;
     configManager.getOrCreateClientId = async () => 'installation-1';
     https.request = (options, onResponse) => {
+        if (typeof onResponse !== 'function') unanswered.push(typeof options);
         const request = new EventEmitter();
         request.setTimeout = () => request;
         request.write = body => { sent.push(JSON.parse(body)); };
@@ -91,6 +94,7 @@ try {
     const works = await handle('call-works');
     assert.deepEqual(works.stages.filter(stage => stage.startsWith('tool_call_')), ['tool_call_completed']);
     assert.deepEqual(works.writes, ['call-works:completed']);
+    assert.deepEqual(unanswered, [], 'every request should reach the fake with its callback');
 } finally {
     https.request = originalRequest;
     syncBuiltinESMExports();
