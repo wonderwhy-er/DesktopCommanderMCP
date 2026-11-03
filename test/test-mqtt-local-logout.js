@@ -8,7 +8,6 @@ import path from 'node:path';
 import { mock } from 'node:test';
 import forge from 'node-forge';
 import lockfile from 'proper-lockfile';
-import { MCPDevice } from '../dist/remote-device/device.js';
 import { RemoteChannel } from '../dist/remote-device/remote-channel.js';
 import { enrollMqttDevice } from '../dist/remote-device/mqtt/mqtt-enrollment.js';
 import { createTestEnv, isTestHome } from './helpers/test-env.js';
@@ -104,7 +103,7 @@ async function runTests() {
       assert.ok(fresh.options.cert !== previous.options.cert, 'a login after logout gets a new certificate');
     });
 
-    await test('enrollment delayed before its lock cannot recreate credentials after logout', async ({ env, home }) => {
+    await test('connector shutdown cancels enrollment waiting for its credential lock', async ({ env, home }) => {
       const reached = deferred();
       const resume = deferred();
       const originalLock = lockfile.lock;
@@ -118,9 +117,12 @@ async function runTests() {
       channel._user = { id: profile.userId };
       channel.deviceId = profile.deviceId;
       channel.getSession = async () => ({ data: { session } });
-      const enrollment = assert.rejects(channel.prepareMqttConfig(() => {}), /Local credentials were removed/);
+      const enrollment = assert.rejects(channel.prepareMqttConfig(() => {
+        if (channel.shuttingDown) throw new Error('Connector is stopping');
+      }), /Connector is stopping/);
       await reached.promise;
       try {
+        await channel.unsubscribe();
         const result = await runLogout(env);
         assert.equal(result.code, 0, result.output);
       } finally {
@@ -128,41 +130,6 @@ async function runTests() {
         await enrollment;
       }
       assertRemoved(home);
-    });
-
-    await test('an old connector cannot enroll or save after logout; a new login can', async ({ env, home }) => {
-      const oldDevice = new MCPDevice();
-      oldDevice.deviceId = profile.deviceId;
-      const channel = oldDevice.remoteChannel;
-      channel._user = { id: profile.userId };
-      channel.deviceId = profile.deviceId;
-      channel.getSession = async () => {
-        const result = await runLogout(env);
-        assert.equal(result.code, 0, result.output);
-        return { data: { session } };
-      };
-      const fetch = mock.method(globalThis, 'fetch', async (_url, request) => issue(request));
-      await assert.rejects(channel.prepareMqttConfig(() => {}), /Local credentials were removed/);
-      channel.getSession = async () => ({ data: { session } });
-      await assert.rejects(channel.prepareMqttConfig(() => {}), /Local credentials were removed/);
-      await oldDevice.savePersistedConfig(session);
-      assertRemoved(home);
-      assert.equal(fetch.mock.callCount(), 0);
-
-      const newDevice = new MCPDevice();
-      newDevice.deviceId = profile.deviceId;
-      await newDevice.savePersistedConfig(session);
-      const newChannel = new RemoteChannel({ serverUrl: profile.serverUrl });
-      newChannel._user = { id: profile.userId };
-      newChannel.deviceId = profile.deviceId;
-      newChannel.getSession = async () => ({ data: { session } });
-      await newChannel.prepareMqttConfig(() => {});
-      assert.equal(fetch.mock.callCount(), 1, 'new login can enroll normally');
-      const config = deviceConfigPath(home);
-      assert.ok(fs.existsSync(config));
-      assert.ok(fs.existsSync(path.join(path.dirname(config), '.mqtt', 'certificate.json')));
-      await oldDevice.savePersistedConfig({ access_token: 'old', refresh_token: 'old' });
-      assert.deepEqual(JSON.parse(fs.readFileSync(config, 'utf8')).session, session);
     });
   } finally {
     if (originalBroker === undefined) delete process.env.MQTT_BROKER_URL;

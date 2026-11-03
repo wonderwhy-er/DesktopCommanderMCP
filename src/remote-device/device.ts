@@ -7,7 +7,6 @@ import { fileURLToPath } from 'url';
 import os from 'os';
 import fs from 'fs/promises';
 import path from 'path';
-import { randomUUID } from 'node:crypto';
 import { createClient } from '@supabase/supabase-js';
 import lockfile from 'proper-lockfile';
 import { captureRemote } from '../utils/capture.js';
@@ -17,7 +16,7 @@ import { observeTransport } from './transport-telemetry.js';
 import { startTerminalTimestamps } from '../utils/terminal-timestamps.js';
 import { VERSION } from '../version.js';
 import { rolloutManager } from './rollouts.js';
-import { getRemoteDeviceConfigPath, getRemoteDeviceLogoutVersion, isBackendLocal } from './remote-utils.js';
+import { getRemoteDeviceConfigPath, isBackendLocal } from './remote-utils.js';
 
 export { getRemoteDeviceConfigPath };
 
@@ -189,12 +188,6 @@ export async function logoutRemoteDevice(
 			await fs.rm(configPath, { force: true });
 			await fs.rm(path.join(folder, "identity.json"), { force: true });
 			await fs.rm(path.join(folder, "certificate.json"), { force: true });
-			// Publish the new version only after no old credentials can be loaded.
-			await writeFileAtomic(
-				path.join(path.dirname(configPath), ".logout"),
-				randomUUID(),
-				{ mode: 0o600 },
-			);
 		} finally {
 			await release();
 		}
@@ -210,7 +203,6 @@ export class MCPDevice {
     private deviceId?: string;
     private isShuttingDown: boolean;
     private configPath: string;
-    private readonly logoutVersion: string | undefined;
     private persistSession: boolean;
     private desktop: DesktopCommanderIntegration;
     /**
@@ -236,7 +228,6 @@ export class MCPDevice {
         this.deviceId = undefined;
         this.isShuttingDown = false;
         this.configPath = getRemoteDeviceConfigPath();
-        this.logoutVersion = getRemoteDeviceLogoutVersion(this.configPath);
         this.remoteChannel = new RemoteChannel({ serverUrl: this.baseServerUrl });
         // Default ON. Off meant a full re-authorization on every start, and each
         // one mints a fresh GoTrue session that nothing ever revokes; the orphaned
@@ -608,11 +599,6 @@ export class MCPDevice {
             // From the check to the write, `remote --logout` waits for this lock
             const release = await lockRemoteDeviceConfig(this.configPath);
             try {
-                if (getRemoteDeviceLogoutVersion(this.configPath) !== this.logoutVersion) {
-                    this.loggedOutLocally = true;
-                    console.log('🔓 Saved Remote MCP device credentials were removed (remote --logout): this run won\'t save credentials again');
-                    return;
-                }
                 // `remote --logout` removes device.json from another process, and
                 // the docs say that removes the saved credentials. Writing them back
                 // at the next rotation or at shutdown would undo it: this run

@@ -149,19 +149,6 @@ async function runTests() {
       + `was still there, exit ${logout?.code}), and the save wrote device.json back: the logout did not stick`);
   });
 
-  await test('logout before the first ever save prevents credentials from being created', async ({ env, home }) => {
-    const device = new MCPDevice();
-    device.configPath = deviceConfigPath(home);
-    device.deviceId = 'device-1';
-    device.remoteChannel.getSession = async () => {
-      const logout = await runLogout(env);
-      assert.equal(logout.code, 0, logout.output);
-      return { data: { session: { access_token: 'a', refresh_token: 'r' } } };
-    };
-    await device.savePersistedConfig();
-    assert.ok(!fs.existsSync(device.configPath), 'the first save must not undo logout');
-  });
-
   await test('logout revokes the device, removes all local credentials, and requires fresh pairing', async ({ standIn, env, home, start }) => {
     const configPath = deviceConfigPath(home);
     const folder = path.join(path.dirname(configPath), '.mqtt');

@@ -102,8 +102,8 @@ The next start requires device identification and browser pairing from scratch, 
 generates a new MQTT key and certificate. Normal restarts reuse the saved credentials.
 
 Use the same `MCP_SERVER_URL` and profile as the running device. Logout waits for
-in-flight enrollment and saves under their existing locks. A non-secret `.logout`
-marker prevents a process started before logout from recreating credentials.
+in-flight enrollment and saves under their existing locks. The backend requests
+shutdown for an online connector; stop an offline or still-starting connector manually.
 
 Logout needs backend connectivity. A failed or unconfirmed revoke returns an error
 and keeps credentials for retry. If the saved session is expired, logout refreshes it
