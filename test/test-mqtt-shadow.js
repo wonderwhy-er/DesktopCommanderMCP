@@ -116,13 +116,13 @@ for (const property of ['shuttingDown', 'sessionLost', 'authGeneration']) {
 {
     const f = fixture();
     f.channel.mqttReady = true;
-    const sources = [];
-    f.channel.onDoorbell = async (_payload, source = 'broadcast') => { sources.push(source); };
+    const deliveries = [];
+    f.channel.onDoorbell = async payload => { deliveries.push(payload); };
     const payload = { call_id: 'call', device_id: 'device', user_id: 'owner' };
     await f.channel.onMqttDoorbell(payload);
-    assert.deepEqual(sources, [], 'MQTT remains observation-only');
+    assert.deepEqual(deliveries, [], 'the MQTT delivery hook does not dispatch tool calls');
     await f.channel.onBroadcastDoorbell(payload);
-    assert.equal(sources.at(-1), 'broadcast');
+    assert.deepEqual(deliveries, [payload]);
     Object.assign(f.channel, { channel: { state: 'joined' }, channelReady: true, mqttReady: false });
     assert.equal(f.channel.isReachable(), true, 'MQTT readiness cannot withdraw healthy Broadcast');
     const observation = observeTransport({ stage: 'received', payload, deviceId: 'device', userId: 'owner', transport: 'mqtt' });

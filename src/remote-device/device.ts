@@ -753,12 +753,8 @@ export class MCPDevice {
         
         console.log(`🔧 Received tool call ${call_id}: ${tool_name} ${JSON.stringify(tool_args)} metadata: ${JSON.stringify(metadata)}`);
 
-        // LOCAL claim first — this is the authoritative guard against executing
-        // a call twice. During the transition both transports deliver every call
-        // to THIS SAME PROCESS, so an in-memory check is sufficient and, unlike
-        // the DB claim below, cannot fail open: a transient REST error made
-        // markCallExecuting return true for both deliveries, which could run a
-        // side-effecting command twice (found in review, 2026-07-24).
+        // Claim locally first so duplicate deliveries cannot execute a call twice
+        // in this process, even if the database claim below fails open.
         if (this.seenCallIds.has(call_id)) {
             console.debug('[DEBUG] Duplicate delivery for call already handled here, skipping:', call_id);
             return;

@@ -73,7 +73,7 @@ export function mqttDoorbellTopic(userId: string, deviceId: string): string {
 	return `dc/mqtt/v1/users/${userId}/devices/${deviceId}/new_call`;
 }
 
-/** A per-device subscription; payload validation precedes all database access. */
+/** A per-device subscription that validates and observes shadow notifications. */
 export class MqttTransport {
 	private client: MqttClient | null = null;
 	private stopped = false;
@@ -236,8 +236,7 @@ export class MqttTransport {
 					return;
 				}
 				observeTransport({ stage: 'received_from_backend', callId:payload.call_id, deviceId: this.deviceId, userId: this.userId, transport:'mqtt' });
-				console.debug("[MQTT] Received doorbell processing notification");
-				// The durable row's deadline is checked during the claim, after receipt observation.
+				console.debug("[MQTT] Observed doorbell notification");
 				void this.onDoorbell(payload).catch(() => {});
 			});
 		});

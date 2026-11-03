@@ -97,7 +97,6 @@ function fixture() {
         channel: { state: 'joined', untrack: async () => {}, unsubscribe: async () => {} },
         client: { from(table) {
             const filters = {};
-            let transportFilter;
             let update;
             let selected = false;
             let claimed = false;
@@ -105,11 +104,6 @@ function fixture() {
                 update(value) { update = value; return query; },
                 select() { selected = true; return query; },
                 eq(key, value) { filters[key] = value; return query; },
-                or(value) {
-                    assert.ok(['metadata->>transport.eq.mqtt_v1', 'metadata->>transport.is.null,metadata->>transport.neq.mqtt_v1'].includes(value));
-                    transportFilter = value;
-                    return query;
-                },
                 gt(key, value) { assert.equal(key, 'timeout_at'); assert.equal(value, 'now'); return query; },
                 order() { return query; },
                 limit(value) { assert.equal(value, 100); return query; },
@@ -119,23 +113,21 @@ function fixture() {
                     return Promise.resolve().then(() => {
                         if (table === 'mcp_devices') { capabilities.push(update.capabilities); return { error: null }; }
                         assert.equal(table, 'mcp_remote_calls');
-                        operations.push({ filters, update, transportFilter });
+                        operations.push({ filters, update });
                         if (!update && !filters.id) {
                             return { data: [...rows.values()].filter(row => row.device_id === filters.device_id &&
                                 row.status === 'pending' && Date.parse(row.timeout_at) > Date.now()), error: null };
                         }
                         const row = rows.get(filters.id);
-                        const matchesTransport = !transportFilter || (transportFilter === 'metadata->>transport.eq.mqtt_v1'
-                            ? row?.metadata?.transport === 'mqtt_v1' : row?.metadata?.transport !== 'mqtt_v1');
                         if (update?.status === 'executing') {
                             assert.equal(filters.device_id, 'device');
                             assert.equal(filters.status, 'pending');
-                            claimed = !!row && matchesTransport && row.status === 'pending' && row.device_id === filters.device_id && Date.parse(row.timeout_at) > Date.now();
+                            claimed = !!row && row.status === 'pending' && row.device_id === filters.device_id && Date.parse(row.timeout_at) > Date.now();
                             if (claimed) Object.assign(row, update);
                             return { data: claimed ? [{ ...row }] : [], error: null };
                         }
                         if (row && update) Object.assign(row, update);
-                        return { data: selected && matchesTransport ? row : null, error: null };
+                        return { data: selected ? row : null, error: null };
                     }).then(resolve, reject);
                 },
             };
@@ -201,14 +193,17 @@ try {
         assert.equal(f.executed.length, executionsBefore + 1, 'Broadcast still executes once');
     }
 
-    f.add('mqtt-selected', 'mqtt_v1');
+    f.add('old-metadata', 'mqtt_v1');
     const beforeMqtt = f.operations.length;
-    await send(bell('mqtt-selected'));
-    await until(() => events.some(event => event.params.call_id === 'mqtt-selected'));
+    await send(bell('old-metadata'));
+    await until(() => events.some(event => event.params.call_id === 'old-metadata'));
     assert.equal(f.operations.length, beforeMqtt);
-    await f.channel.onBroadcastDoorbell(bell('mqtt-selected'));
+    assert.equal(f.rows.get('old-metadata').status, 'pending', 'MQTT only records receipt regardless of stored metadata');
+    await f.channel.onBroadcastDoorbell(bell('old-metadata'));
+    await until(() => f.rows.get('old-metadata').status === 'completed');
     await f.channel.recoverPendingCalls();
-    assert.equal(f.rows.get('mqtt-selected').status, 'pending', 'shadow devices never claim MQTT-selected rows');
+    assert.equal(f.executed.filter(args => args.id === 'old-metadata').length, 1,
+        'Broadcast executes once regardless of transport metadata');
 
     for (const source of ['legacy', 'recovery', 'broadcast']) {
         const id = `result-${source}`;
@@ -315,15 +310,17 @@ try {
     }
     await until(() => !f.channel.mqttReady);
     assert.equal(f.channel.isReachable(), true, 'an MQTT outage does not withdraw healthy Broadcast');
-    f.add('missed-while-disconnected', 'mqtt_v1');
+    f.add('while-mqtt-disconnected');
+    await f.channel.onBroadcastDoorbell(bell('while-mqtt-disconnected'));
+    await until(() => f.rows.get('while-mqtt-disconnected').status === 'completed');
+    f.add('missed-while-disconnected');
     const disconnectedOperations = f.operations.length;
-    await f.channel.onBroadcastDoorbell(bell('missed-while-disconnected'));
-    assert.equal(f.operations.length, disconnectedOperations + 1);
-    assert.equal(f.rows.get('missed-while-disconnected').status, 'pending', 'an MQTT outage cannot switch the stored transport');
     await until(() => f.channel.mqttReady);
     await until(() => f.capabilities.at(-1).transport_mqtt_v1 === true);
-    assert.equal(f.operations.length, disconnectedOperations + 1, 'MQTT reconnect does not recover execution');
+    assert.equal(f.operations.length, disconnectedOperations, 'MQTT reconnect does not recover execution');
     assert.equal(f.rows.get('missed-while-disconnected').status, 'pending');
+    await f.channel.recoverPendingCalls();
+    await until(() => f.rows.get('missed-while-disconnected').status === 'completed');
     f.add('reconnected');
     await send(bell('reconnected'));
     await until(() => events.some(event => event.params.call_id === 'reconnected'));
@@ -335,7 +332,7 @@ try {
     const race = fixture();
     let resolveClaim;
     race.channel.client = { from: () => {
-        const query = { update: () => query, eq: () => query, or: () => query, gt: () => query,
+        const query = { update: () => query, eq: () => query, gt: () => query,
             select: () => new Promise(resolve => { resolveClaim = resolve; }) };
         return query;
     } };

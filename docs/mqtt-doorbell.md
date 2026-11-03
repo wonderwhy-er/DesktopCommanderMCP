@@ -4,16 +4,11 @@ MQTT starts automatically in the background while Broadcast connects. No flag is
 for shadow observation. Enrollment or MQTT failure leaves Broadcast working.
 
 The `MQTT` branch records MQTT receipts without fetching, claiming or executing calls.
-MQTT execution lives on the stacked `codex/mqtt-execution` branch.
+Broadcast handles execution and pending-call recovery for all eligible calls,
+without filtering on `metadata.transport`. MQTT reconnects only restore observation.
 
-The device advertises `transport_mqtt_v1` when MQTT is ready. The backend requires it
-even for shadow publications. This capability does not distinguish the two device
-branches. Pair this branch
-with the backend's shadow branch; an execution backend could otherwise select MQTT calls
-that this device will not execute. Broadcast handles execution and pending-call recovery;
-both reject rows whose stored `metadata.transport` is `mqtt_v1`.
-MQTT reconnects only restore observation. Drain active MQTT execution calls before
-switching an execution device to this branch.
+The device advertises `transport_mqtt_v1` when MQTT is ready so the backend can publish
+shadow notifications. Pair this branch with a backend that keeps Broadcast authoritative.
 `MQTT_TRANSPORT_ENABLED` gates backend MQTT publications and enrollment; when it is off,
 the backend sends no MQTT command.
 
@@ -21,8 +16,6 @@ This receiver accepts the three required identifiers plus the optional legacy
 `IS_MQTT_EXECUTION_ENABLED` boolean for compatibility with existing backend publishers.
 That field is ignored by command handling and omitted from telemetry.
 It rejects packets containing `expires_at`, `notification_id`, `attempt_number`, or any other extra field.
-Older MQTT pilot receivers require different envelopes and must be updated together with the backend:
-disable MQTT execution, drain active calls, update both sides, then re-enable execution.
 Broadcast retains its database-time conditional claim, ambiguous-claim readback and
 recovery, with duplicate suppression. Every valid MQTT receipt is observed, including retries, with
 `transport`, `call_id`, a unique observation ID and a UTC timestamp.

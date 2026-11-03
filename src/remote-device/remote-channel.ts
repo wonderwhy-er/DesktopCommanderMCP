@@ -750,6 +750,7 @@ export class RemoteChannel {
         }
     }
 
+    /** MQTT delivery hook; this branch records receipts without executing calls. */
     private async onMqttDoorbell(payload: MqttDoorbell): Promise<void> {
         if (this.shuttingDown || this.sessionLost || this.handlingSignedOut) {
             return;
@@ -1002,7 +1003,7 @@ export class RemoteChannel {
 
         const { data: pending, error } = await this.client
             .from('mcp_remote_calls')
-            .select('id,device_id,metadata')
+            .select('id,device_id')
             .eq('device_id', this.deviceId)
             .eq('status', 'pending')
             .gt('timeout_at', 'now')
@@ -1027,7 +1028,6 @@ export class RemoteChannel {
         // this loop serializes only the small REST claim operations.
         for (const row of pending) {
             if (!this.isReachable()) break;
-            if (row.metadata?.transport === 'mqtt_v1') continue;
             await this.onDoorbell({
                 call_id: row.id,
                 device_id: row.device_id,
@@ -1070,8 +1070,6 @@ export class RemoteChannel {
         console.debug('[DEBUG] Doorbell received for call:', callId);
 
         if (!this.client) return;
-        // Shadow devices must not claim calls assigned to MQTT execution.
-        const transportFilter = 'metadata->>transport.is.null,metadata->>transport.neq.mqtt_v1';
 
         // Retry on transient failures (a REST blip while the socket stays
         // healthy). This claim is the only way we learn about a call,
@@ -1089,7 +1087,6 @@ export class RemoteChannel {
                 .eq('id', callId)
                 .eq('device_id', this.deviceId)
                 .eq('status', 'pending')
-                .or(transportFilter)
                 .gt('timeout_at', 'now')
                 .select('*');
             if (!error) {
@@ -1129,7 +1126,6 @@ export class RemoteChannel {
             .select('*')
             .eq('id', callId)
             .eq('device_id', this.deviceId)
-            .or(transportFilter)
             .gt('timeout_at', 'now')
             .maybeSingle();
         if (error) {

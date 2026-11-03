@@ -20,7 +20,7 @@ const OTHER_DEVICE_ID = 'device-2';
 function makeClient(rows) {
   const calls = [];
 
-  function matches(row, filters, gtFilters, transportFilter) {
+  function matches(row, filters, gtFilters) {
     for (const [key, value] of Object.entries(filters)) {
       if (row[key] !== value) return false;
     }
@@ -30,8 +30,6 @@ function makeClient(rows) {
       const serverValue = value === 'now' ? new Date(now).toISOString() : value;
       if (!(row[key] > serverValue)) return false;
     }
-    if (transportFilter === 'metadata->>transport.eq.mqtt_v1' && row.metadata?.transport !== 'mqtt_v1') return false;
-    if (transportFilter === 'metadata->>transport.is.null,metadata->>transport.neq.mqtt_v1' && row.metadata?.transport === 'mqtt_v1') return false;
     return true;
   }
 
@@ -42,7 +40,6 @@ function makeClient(rows) {
     let updatePayload = null;
     const filters = {};
     const gtFilters = {};
-    let transportFilter;
     let limitValue = null;
 
     const execute = async () => {
@@ -52,12 +49,11 @@ function makeClient(rows) {
         updatePayload,
         filters: { ...filters },
         gtFilters: { ...gtFilters },
-        transportFilter,
         limit: limitValue,
       });
 
       if (mode === 'update') {
-        const row = rows.find((candidate) => matches(candidate, filters, gtFilters, transportFilter));
+        const row = rows.find((candidate) => matches(candidate, filters, gtFilters));
         if (!row) return { data: [], error: null };
         Object.assign(row, updatePayload);
         return {
@@ -66,11 +62,11 @@ function makeClient(rows) {
         };
       }
 
-      let data = rows.filter((row) => matches(row, filters, gtFilters, transportFilter));
+      let data = rows.filter((row) => matches(row, filters, gtFilters));
       data = data.sort((a, b) => a.created_at.localeCompare(b.created_at));
       if (limitValue !== null) data = data.slice(0, limitValue);
-      if (selectColumns === 'id,device_id,metadata') {
-        data = data.map(({ id, device_id, metadata }) => ({ id, device_id, metadata }));
+      if (selectColumns === 'id,device_id') {
+        data = data.map(({ id, device_id }) => ({ id, device_id }));
       } else {
         data = data.map((row) => ({ ...row }));
       }
@@ -93,11 +89,6 @@ function makeClient(rows) {
       },
       gt(key, value) {
         gtFilters[key] = value;
-        return builder;
-      },
-      or(value) {
-        assert(['metadata->>transport.eq.mqtt_v1', 'metadata->>transport.is.null,metadata->>transport.neq.mqtt_v1'].includes(value));
-        transportFilter = value;
         return builder;
       },
       order() {
@@ -158,15 +149,12 @@ async function runTests() {
     ];
     const { rc, delivered } = makeRemoteChannel(rows);
     await rc.recoverPendingCalls();
-    assert.deepEqual(delivered.map(payload => payload.new.id), ['broadcast', 'legacy']);
-    assert.equal(rows[0].status, 'pending', 'shadow recovery skips MQTT-selected rows');
+    assert.deepEqual(delivered.map(payload => payload.new.id), ['mqtt', 'broadcast', 'legacy'],
+      'recovery claims eligible calls regardless of transport metadata');
+    assert(rows.every(row => row.status === 'executing'));
     rc.mqttReady = true;
-    await Promise.all([
-      rc.recoverPendingCalls(),
-      rc.onMqttDoorbell({ call_id: 'mqtt', device_id: DEVICE_ID, user_id: 'user-1' }),
-    ]);
-    assert.deepEqual(delivered.map(payload => payload.new.id).sort(), ['broadcast', 'legacy']);
-    assert.equal(rows[0].status, 'pending', 'MQTT readiness and packets cannot enable execution on a shadow device');
+    await rc.recoverPendingCalls();
+    assert.equal(delivered.length, 3, 'MQTT readiness does not cause already claimed calls to be delivered again');
   }
   {
     const rows = [
