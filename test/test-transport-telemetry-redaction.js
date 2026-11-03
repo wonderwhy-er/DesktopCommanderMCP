@@ -23,7 +23,7 @@ import { isTestHome } from './helpers/test-env.js';
 const sent = [];
 // Requests whose callback the https.request fake did not get: the code calls https.request(url, options, onResponse)
 const unanswered = [];
-https.request = (options, callback) => {
+https.request = (url, options, callback) => {
   if (typeof callback !== 'function') unanswered.push(typeof options);
   const chunks = [];
   const req = new EventEmitter();

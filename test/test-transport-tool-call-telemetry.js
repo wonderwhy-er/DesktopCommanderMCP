@@ -60,7 +60,7 @@ try {
     process.env.DC_TELEMETRY_URL = 'https://telemetry.desktopcommander.app/mp/collect';
     configManager.getValue = async key => key === 'telemetryEnabled' ? true : undefined;
     configManager.getOrCreateClientId = async () => 'installation-1';
-    https.request = (options, onResponse) => {
+    https.request = (url, options, onResponse) => {
         if (typeof onResponse !== 'function') unanswered.push(typeof options);
         const request = new EventEmitter();
         request.setTimeout = () => request;
