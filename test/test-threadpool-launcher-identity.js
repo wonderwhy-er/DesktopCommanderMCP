@@ -74,6 +74,11 @@ test('an independent nested launcher and its marked child count separately from 
     assert.equal((await count(rows)).running, 2);
 });
 
+test('an unmarked independent server below a marked serving child still counts separately', async () => {
+    const rows = [server(101, 1), server(102, 101, ` ${LAUNCHER_ARGUMENT}101`), server(103, 102)];
+    assert.equal((await count(rows)).running, 2);
+});
+
 test('a marker naming a different parent does not collapse an independent server', async () => {
     assert.equal((await count([server(101, 1), server(102, 101, ` ${LAUNCHER_ARGUMENT}999`)])).running, 2);
 });

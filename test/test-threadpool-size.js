@@ -92,7 +92,8 @@ async function testCopyRunsTheRest(script) {
   assert.strictEqual(child.status, 3, `the script should exit with the copy's exit code, got ${child.status}:\n${child.stderr}`);
   assert.notStrictEqual(copy.parentPid, process.pid, 'the code after the call should run in a copy, started by the script, not by this test');
   assert.strictEqual(copy.size, '7', 'the copy should have UV_THREADPOOL_SIZE in its environment');
-  assert.deepStrictEqual(copy.args, args, 'the copy should get all application arguments, including marker-shaped values');
+  assert.deepStrictEqual(copy.args, args,
+    'the copy should get all application arguments, including marker-shaped values');
   assert.strictEqual(copy.userValue, 'kept', 'the copy should get the rest of the environment');
   assert.strictEqual(copy.launcherVariable, false, 'the copy should drop the launcher variable, so the commands it starts are not taken for copies');
   console.log('✓ the copy runs the rest of the script with the size, the same arguments and environment, and its exit code is the script\'s');
