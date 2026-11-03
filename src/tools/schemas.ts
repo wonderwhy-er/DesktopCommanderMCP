@@ -48,12 +48,18 @@ export const ForceTerminateArgsSchema = z.object({
 
 export const ListSessionsArgsSchema = z.object({});
 
-export const KillProcessArgsSchema = z.object({
+const killProcessArgsShape = {
   // process.kill reads 0 and negative PIDs as process groups: 0 is the server's
   // own (on Windows the server itself), -1 every process the user may signal.
   // A refinement rather than .positive(), so the published schema is unchanged.
-  pid: z.number().refine((pid) => pid > 0, { message: 'Number must be greater than 0' }),
-});
+  pid: z.number(),
+};
+
+export const KillProcessInputArgsSchema = z.object(killProcessArgsShape);
+export const KillProcessArgsSchema = z.object(killProcessArgsShape).refine(
+  ({ pid }) => pid > 0,
+  { message: 'Number must be greater than 0', path: ['pid'] },
+);
 
 // Filesystem tools schemas
 export const ReadFileArgsSchema = z.object({
@@ -63,7 +69,7 @@ export const ReadFileArgsSchema = z.object({
   length: z.number().optional().default(1000),
   sheet: z.string().optional(),  // String only for MCP client compatibility (Cursor doesn't support union types in JSON Schema)
   range: z.string().optional(),
-  options: z.record(z.any()).optional(),
+  options: z.record(z.string(), z.any()).optional(),
   // Whether the call came from the file-preview UI (refresh/navigation) or the
   // LLM. 'ui' calls are excluded from tool-call telemetry; see isUiOriginCall
   // in server.ts.
@@ -99,8 +105,23 @@ export const PdfDeleteOperationSchema = z.object({
 
 export const PdfOperationSchema = z.union([PdfInsertOperationSchema, PdfDeleteOperationSchema]);
 
-export const WritePdfArgsSchema = z.object({
+const PdfContentInputSchema = z.union([z.string(), z.array(PdfOperationSchema)]);
+const writePdfArgsShape = {
   path: z.string(),
+  outputPath: z.string().optional(),
+  options: z.object({}).passthrough().optional(), // Allow passing options to md-to-pdf
+};
+
+// Keep the public MCP schema representable. The runtime schema below still
+// preprocesses JSON-array strings before validating them, while the MCP input
+// contract describes the values callers may send.
+export const WritePdfInputArgsSchema = z.object({
+  ...writePdfArgsShape,
+  content: PdfContentInputSchema,
+});
+
+export const WritePdfArgsSchema = z.object({
+  ...writePdfArgsShape,
   // Preprocess content to handle JSON strings that should be parsed as arrays
   content: z.preprocess(
     (val) => {
@@ -116,10 +137,8 @@ export const WritePdfArgsSchema = z.object({
       // Otherwise return as-is
       return val;
     },
-    z.union([z.string(), z.array(PdfOperationSchema)])
+    PdfContentInputSchema
   ),
-  outputPath: z.string().optional(),
-  options: z.object({}).passthrough().optional(), // Allow passing options to md-to-pdf
 });
 
 export const CreateDirectoryArgsSchema = z.object({
@@ -148,7 +167,7 @@ export const GetFileInfoArgsSchema = z.object({
 // Now supports only: text replacement and range rewrites
 // Removed 'edits' array parameter - location-based surgical edits were complex and unnecessary
 // Range rewrites are more powerful and cover all structured file editing needs
-export const EditBlockArgsSchema = z.object({
+const editBlockArgsShape = {
   file_path: z.string(),
   // Text file string replacement
   old_string: z.string().optional(),
@@ -157,11 +176,17 @@ export const EditBlockArgsSchema = z.object({
   // Structured file range rewrite (Excel, etc.)
   range: z.string().optional(),
   content: z.any().optional(),
-  options: z.record(z.any()).optional(),
+  options: z.record(z.string(), z.any()).optional(),
   // 'ui' when fired by the file-preview UI, else 'llm'. 'ui' calls are
   // excluded from tool-call telemetry; see isUiOriginCall in server.ts.
   origin: z.enum(['ui', 'llm']).optional(),
-}).refine(
+};
+
+// The JSON Schema describes the public fields. The runtime schema below keeps
+// the cross-field validation, which JSON Schema cannot infer from a callback.
+export const EditBlockInputArgsSchema = z.object(editBlockArgsShape);
+
+export const EditBlockArgsSchema = z.object(editBlockArgsShape).refine(
   data => {
     // Helper to check if value is actually provided (not undefined, not empty string)
     const hasValue = (v: unknown) => v !== undefined && v !== '';
@@ -240,7 +265,7 @@ export const GetRecentToolCallsArgsSchema = z.object({
 export const TrackUiEventArgsSchema = z.object({
   event: z.string().min(1).max(80),
   component: z.string().optional().default('file_preview'),
-  params: z.record(z.union([z.string(), z.number(), z.boolean(), z.null()])).optional().default({}),
+  params: z.record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()])).optional().default({}),
 });
 
 /**
@@ -248,7 +273,7 @@ export const TrackUiEventArgsSchema = z.object({
  * about parameters a caller sent that the tool does not support. Keep in sync
  * with the tool definitions in server.ts.
  */
-export const toolArgSchemas: Record<string, z.ZodTypeAny> = {
+export const toolArgSchemas: Record<string, z.ZodType> = {
   get_config: GetConfigArgsSchema,
   set_config_value: SetConfigValueArgsSchema,
   read_file: ReadFileArgsSchema,
@@ -276,3 +301,16 @@ export const toolArgSchemas: Record<string, z.ZodTypeAny> = {
   give_feedback_to_desktop_commander: GiveFeedbackArgsSchema,
   track_ui_event: TrackUiEventArgsSchema,
 };
+
+/** Caller-facing schemas; runtime-only preprocessing/refinements stay in toolArgSchemas. */
+export const toolMcpInputSchemas: Record<string, z.ZodType> = {
+  ...toolArgSchemas,
+  write_pdf: WritePdfInputArgsSchema,
+  edit_block: EditBlockInputArgsSchema,
+  kill_process: KillProcessInputArgsSchema,
+};
+
+/** Convert a tool's caller-facing Zod 4 schema to its MCP JSON Schema form. */
+export function toMcpInputSchema(schema: z.ZodType) {
+  return z.toJSONSchema(schema, { target: 'draft-07', io: 'input' });
+}
