@@ -3,8 +3,10 @@
  * source text display and ensures fallback behavior is predictable.
  *
  * The rendered preview runs inside a nested sandboxed iframe, which is itself inside
- * the MCP app's sandboxed iframe chain. Scripts and external resources (CDNs) are
- * allowed since the sandbox isolation prevents any escape.
+ * the MCP app's sandboxed iframe chain. It inherits the app's Content-Security-Policy
+ * (UI_RESOURCE_CSP in ui/contracts.ts): the page's inline scripts and styles run, but
+ * it can't send anything to another origin or load anything from one (fonts from
+ * UI_FONT_ORIGINS aside).
  */
 import { renderCodeViewer } from './code-viewer.js';
 import { escapeHtml } from './highlighting.js';

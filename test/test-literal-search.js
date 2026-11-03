@@ -2,11 +2,14 @@
  * Test for literal search functionality - testing regex vs literal string matching
  */
 
+import assert from 'assert';
 import path from 'path';
 import fs from 'fs/promises';
 import { fileURLToPath } from 'url';
 import { handleStartSearch, handleGetMoreSearchResults, handleStopSearch } from '../dist/handlers/search-handlers.js';
+import { searchAndWaitForCompletion } from './helpers/search.js';
 import { configManager } from '../dist/config-manager.js';
+import { runIfMain } from './helpers/run-if-main.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -22,48 +25,6 @@ const colors = {
   yellow: '\x1b[33m',
   blue: '\x1b[34m'
 };
-
-/**
- * Helper function to wait for search completion and get all results
- */
-async function searchAndWaitForCompletion(searchArgs, timeout = 10000) {
-  const result = await handleStartSearch(searchArgs);
-  
-  // Extract session ID from result
-  const sessionIdMatch = result.content[0].text.match(/Started .+ session: (.+)/);
-  if (!sessionIdMatch) {
-    throw new Error('Could not extract session ID from search result');
-  }
-  const sessionId = sessionIdMatch[1];
-  
-  try {
-    // Wait for completion by polling
-    const startTime = Date.now();
-    while (Date.now() - startTime < timeout) {
-      const moreResults = await handleGetMoreSearchResults({ sessionId });
-      
-      if (moreResults.content[0].text.includes('✅ Search completed')) {
-        return { initialResult: result, finalResult: moreResults, sessionId };
-      }
-      
-      if (moreResults.content[0].text.includes('❌ ERROR')) {
-        throw new Error(`Search failed: ${moreResults.content[0].text}`);
-      }
-      
-      // Wait a bit before polling again
-      await new Promise(resolve => setTimeout(resolve, 100));
-    }
-    
-    throw new Error('Search timed out');
-  } finally {
-    // Always stop the search session to prevent hanging
-    try {
-      await handleStopSearch({ sessionId });
-    } catch (e) {
-      // Ignore errors when stopping - session might already be completed
-    }
-  }
-}
 
 /**
  * Setup function to prepare literal search test environment
@@ -165,17 +126,22 @@ async function teardown(originalConfig) {
 }
 
 /**
- * Assert function for test validation
- */
-function assert(condition, message) {
-  if (!condition) {
-    throw new Error(`Assertion failed: ${message}`);
-  }
-}
-
-/**
  * Count occurrences of a pattern in text
  */
+/**
+ * Number of fixture lines that contain `text` literally, ignoring case like the
+ * search default (ignoreCase: true): the expected match count for a literal search.
+ */
+async function countFixtureLines(text) {
+  const needle = text.toLowerCase();
+  let count = 0;
+  for (const file of await fs.readdir(LITERAL_SEARCH_TEST_DIR)) {
+    const content = await fs.readFile(path.join(LITERAL_SEARCH_TEST_DIR, file), 'utf8');
+    count += content.split('\n').filter((line) => line.toLowerCase().includes(needle)).length;
+  }
+  return count;
+}
+
 function countOccurrences(text, pattern) {
   return (text.match(new RegExp(pattern, 'g')) || []).length;
 }
@@ -197,9 +163,9 @@ async function testLiteralSearchExactMatches() {
   
   const text1 = result1.content[0].text;
   
-  // Should find exactly 2 occurrences (one in each file: the exact match and in comment)
-  const exactMatches = countOccurrences(text1, 'toast\\.error\\("test"\\)');
-  assert(exactMatches >= 1, `Should find exact matches for 'toast.error("test")', found: ${exactMatches}`);
+  // Only code-patterns.js has the exact call; similar-patterns.ts has toast.errorHandler("test")
+  assert.strictEqual(result1.structuredContent.totalMatches, await countFixtureLines('toast.error("test")'),
+    `Should find exactly the lines containing toast.error("test"), got: ${text1}`);
   
   // Should NOT find the similar but different pattern
   assert(!text1.includes('toast.errorHandler'), 'Should not match similar but different patterns');
@@ -213,28 +179,25 @@ async function testLiteralSearchExactMatches() {
 async function testRegexVsLiteralDifference() {
   console.log(`${colors.yellow}Testing difference between regex and literal search...${colors.reset}`);
   
-  // Test with regex (default behavior) - should interpret dots as wildcard
+  // 'a|b' is "a or b" as a regex (most lines) but one exact line as a literal
   const { finalResult: regexResult } = await searchAndWaitForCompletion({
     path: LITERAL_SEARCH_TEST_DIR,
-    pattern: 'console.log',  // Dot should match any character in regex mode
+    pattern: 'a|b',
     searchType: 'content',
     literalSearch: false  // Explicit regex mode
   });
-  
-  // Test with literal search - should match exact dots
+
   const { finalResult: literalResult } = await searchAndWaitForCompletion({
     path: LITERAL_SEARCH_TEST_DIR,
-    pattern: 'console.log',  // Dot should match literal dot only
-    searchType: 'content', 
+    pattern: 'a|b',
+    searchType: 'content',
     literalSearch: true
   });
-  
-  const regexText = regexResult.content[0].text;
-  const literalText = literalResult.content[0].text;
-  
-  // Both should find console.log, but regex might find more due to dot wildcard behavior
-  assert(regexText.includes('console.log'), 'Regex search should find console.log');
-  assert(literalText.includes('console.log'), 'Literal search should find console.log');
+
+  const regexMatches = regexResult.structuredContent.totalMatches;
+  const literalMatches = literalResult.structuredContent.totalMatches;
+  assert.strictEqual(literalMatches, await countFixtureLines('a|b'), 'Literal search should match only the exact "a|b" line');
+  assert(regexMatches > literalMatches, `Regex search should match more lines than literal (${regexMatches} vs ${literalMatches})`);
   
   console.log(`${colors.green}✓ Regex vs literal difference test passed${colors.reset}`);
 }
@@ -267,11 +230,10 @@ async function testSpecialCharactersLiteralSearch() {
       literalSearch: true
     });
     
-    const text = finalResult.content[0].text;
-    
-    // Should find the pattern or indicate no matches (both are valid for literal search)
-    const hasResults = text.includes(pattern) || text.includes('No matches found') || text.includes('Total results found: 0');
-    assert(hasResults, `Should handle literal search for pattern '${pattern}' (found results or no matches message)`);
+    // Exactly the fixture lines that contain the pattern literally (0 for 'pattern.*')
+    const expected = await countFixtureLines(pattern);
+    assert.strictEqual(finalResult.structuredContent.totalMatches, expected,
+      `Literal search for '${pattern}' should match ${expected} line(s), got: ${finalResult.content[0].text}`);
   }
   
   console.log(`${colors.green}✓ Special characters literal search test passed${colors.reset}`);
@@ -283,19 +245,24 @@ async function testSpecialCharactersLiteralSearch() {
 async function testLiteralSearchDefault() {
   console.log(`${colors.yellow}Testing that literalSearch defaults to false...${colors.reset}`);
   
-  // Search without specifying literalSearch - should default to regex behavior
+  // Without literalSearch, 'a|b' must behave exactly like an explicit regex search
   const { finalResult } = await searchAndWaitForCompletion({
     path: LITERAL_SEARCH_TEST_DIR,
-    pattern: 'console.log',
+    pattern: 'a|b',
     searchType: 'content'
     // literalSearch not specified - should default to false
   });
-  
-  const text = finalResult.content[0].text;
-  
-  // Should work (either find matches or no matches, but not error)
-  const isValidResult = text.includes('console.log') || text.includes('No matches found') || text.includes('Total results found');
-  assert(isValidResult, 'Should handle search with default literalSearch behavior');
+  const { finalResult: explicitRegex } = await searchAndWaitForCompletion({
+    path: LITERAL_SEARCH_TEST_DIR,
+    pattern: 'a|b',
+    searchType: 'content',
+    literalSearch: false
+  });
+
+  assert.strictEqual(finalResult.structuredContent.totalMatches, explicitRegex.structuredContent.totalMatches,
+    'Default search should match the same lines as literalSearch: false');
+  assert(finalResult.structuredContent.totalMatches > await countFixtureLines('a|b'),
+    'Default search should treat | as regex alternation, not a literal character');
   
   console.log(`${colors.green}✓ Literal search default behavior test passed${colors.reset}`);
 }
@@ -316,11 +283,8 @@ async function testOriginalFailingCase() {
   
   const text = finalResult.content[0].text;
   
-  // Should find the exact match
-  assert(text.includes('toast.error("test")') || text.includes('code-patterns.js'), 
-    'Should find the exact pattern that was originally failing');
-    
-  // Verify it contains the file where we know the pattern exists
+  // Should find the exact match, in the file where we know the pattern exists
+  assert.strictEqual(finalResult.structuredContent.totalMatches, 1, `Should find the one exact toast.error("test") line, got: ${text}`);
   assert(text.includes('code-patterns.js'), 'Should find matches in code-patterns.js file');
   
   console.log(`${colors.green}✓ Original failing case test passed${colors.reset}`);
@@ -349,14 +313,10 @@ async function testRegexFailureLiteralSuccess() {
     literalSearch: true   // Use literal mode
   });
   
-  const regexText = regexResult.content[0].text;
-  const literalText = literalResult.content[0].text;
-  
-  // Regex mode should find few/no matches due to special character interpretation
-  const regexMatches = (regexText.match(/toast\.error\("test"\)/g) || []).length;
-  
-  // Literal mode should find the exact matches
-  const literalMatches = (literalText.match(/toast\.error\("test"\)/g) || []).length;
+  // As a regex, ( ) are a group, so the pattern needs `toast?error"test"` and matches nothing;
+  // literal mode finds the exact call
+  const regexMatches = regexResult.structuredContent.totalMatches;
+  const literalMatches = literalResult.structuredContent.totalMatches;
   
   console.log(`  Regex mode found: ${regexMatches} matches`);
   console.log(`  Literal mode found: ${literalMatches} matches`);
@@ -410,12 +370,4 @@ export async function testLiteralSearch() {
 export default testLiteralSearch;
 
 // Run tests if this file is executed directly
-if (import.meta.url === `file://${process.argv[1]}`) {
-  testLiteralSearch().then(() => {
-    console.log('Literal search tests completed successfully.');
-    process.exit(0);
-  }).catch(error => {
-    console.error('Literal search test execution failed:', error);
-    process.exit(1);
-  });
-}
+runIfMain(import.meta.url, testLiteralSearch);

@@ -26,6 +26,7 @@
 
 import assert from 'assert';
 import { JSDOM } from 'jsdom';
+import { exitProcess } from '../dist/utils/exit-process.js';
 
 // jsdom for Tiptap to mount into.
 const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>');
@@ -354,4 +355,4 @@ assertEditDiffIsClean(
 }
 
 console.log('\n' + passed + ' passed, ' + failed + ' failed');
-process.exit(failed > 0 ? 1 : 0);
+exitProcess(failed > 0 ? 1 : 0);

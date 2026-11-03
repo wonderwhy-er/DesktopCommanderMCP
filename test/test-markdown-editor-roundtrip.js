@@ -22,6 +22,7 @@
 
 import assert from 'assert';
 import { JSDOM } from 'jsdom';
+import { runIfMain } from './helpers/run-if-main.js';
 
 // Bootstrap a DOM that Tiptap can mount into. Must run before importing tiptap.
 const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>');
@@ -554,8 +555,8 @@ async function runAllTests() {
   }
   console.log('\n' + passed + ' passed, ' + failed + ' failed');
   if (failed > 0) {
-    process.exit(1);
+    return false;
   }
 }
 
-runAllTests();
+runIfMain(import.meta.url, runAllTests);

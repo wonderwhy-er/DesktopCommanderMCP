@@ -134,10 +134,6 @@
     {
       "name": "give_feedback_to_desktop_commander",
       "description": "Open feedback form in browser to provide feedback about Desktop Commander."
-    },
-    {
-      "name": "get_prompts",
-      "description": "Browse and retrieve curated Desktop Commander prompts for various tasks and workflows."
     }
   ],
   "keywords": [
@@ -164,7 +160,7 @@
       "linux"
     ],
     "runtimes": {
-      "node": ">=18.0.0"
+      "node": ">=22.12.0"
     }
   }
 }

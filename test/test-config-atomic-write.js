@@ -4,6 +4,7 @@ import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'nod
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { runIfMain } from './helpers/run-if-main.js';
 
 const TEST_FILE = fileURLToPath(import.meta.url);
 const PAYLOAD = 'x'.repeat(1024 * 1024);
@@ -41,4 +42,4 @@ async function parent() {
   }
 }
 
-if (process.env.DC_ATOMIC_WORKER === '1') await writer(); else await parent();
+if (process.env.DC_ATOMIC_WORKER === '1') await writer(); else await runIfMain(import.meta.url, parent);

@@ -1,6 +1,7 @@
-import { platform } from 'os';
+import { platform, homedir } from 'os';
 import * as https from 'https';
 import { AsyncLocalStorage } from 'async_hooks';
+import type { TransportParams } from '@desktop-commander/telemetry-contract/transport';
 import { configManager, isTelemetryDisabledValue } from '../config-manager.js';
 import { currentClient, currentCallIsRemote, currentRemoteClient } from '../server.js';
 
@@ -18,6 +19,26 @@ export function runInUiOriginCallContext<T>(fn: () => T): T {
 
 export function isInsideUiOriginCall(): boolean {
     return uiOriginCallContext.getStore() === true;
+}
+
+// The paths the current tool call works on: its path arguments and what they
+// resolve to. Telemetry replaces these exact values in an event's text before
+// any pattern, so such a path goes whole, spaces and all, and the text around
+// it stays (a pattern can't tell where an unquoted path with spaces ends).
+const toolCallPaths = new AsyncLocalStorage<Set<string>>();
+
+/** Runs a tool call with its own set of known paths. */
+export function runWithToolCallPaths<T>(fn: () => T): T {
+    return toolCallPaths.run(new Set(), fn);
+}
+
+/** Adds paths (strings, or arrays of them) to the current tool call's known paths. */
+export function addToolCallPaths(...paths: unknown[]): void {
+    const known = toolCallPaths.getStore();
+    if (!known) return;
+    for (const value of paths.flat()) {
+        if (typeof value === 'string' && value.trim()) known.add(value);
+    }
 }
 
 let VERSION = 'unknown';
@@ -59,7 +80,7 @@ export function isTelemetryDisabledByEnv(): boolean {
  * @param error Error object or string to sanitize
  * @returns An object with sanitized message and optional error code
  */
-export function sanitizeError(error: any): { message: string, code?: string } {
+export function sanitizeError(error: any, knownPaths: readonly string[] = []): { message: string, code?: string } {
     let errorMessage = '';
     let errorCode = undefined;
 
@@ -77,15 +98,142 @@ export function sanitizeError(error: any): { message: string, code?: string } {
         errorMessage = 'Unknown error';
     }
 
-    // Remove any file paths using regex
-    // This pattern matches common path formats including Windows and Unix-style paths
-    errorMessage = errorMessage.replace(/(?:\/|\\)[\w\d_.-\/\\]+/g, '[PATH]');
-    errorMessage = errorMessage.replace(/[A-Za-z]:\\[\w\d_.-\/\\]+/g, '[PATH]');
-
     return {
-        message: errorMessage,
+        message: redactPaths(errorMessage, knownPaths),
         code: errorCode
     };
+}
+
+// Quoted text containing a separator is a path, whatever else it contains
+// (Node quotes paths in fs errors: open 'C:\Users\John Smith\a.txt').
+const QUOTED_PATH_PATTERN = /(['"`])(?:(?!\1)[^\r\n])*[\\/](?:(?!\1)[^\r\n])*\1/g;
+// The last resort, for an unquoted path nothing else knows: the whole word
+// around its first separator (C:\..., scripts/deploy.sh), running to
+// whitespace or a quote; punctuation that ends it ("a.txt: denied", "a, b",
+// "(see a.txt)") stays outside. A space is part of it when more path follows
+// (C:\Users\John Smith\a.txt). A last name with a space can't be told from the
+// text after it, which is why known paths are replaced first.
+const PATH_PATTERN = /[^\s'"`\\/()[\]{}<>]*[\\/][^\s'"`]*?(?: +[^\s'"`\\/]+[\\/][^\s'"`]*?)*(?=[.,:;!?)\]}>]*(?:[\s'"`]|$))/g;
+
+/**
+ * Matches one known path exactly, with either separator between its names,
+ * and only where it stands on its own: not inside a longer name before or
+ * after it. Null for a value too short to tell from ordinary text ("/", "~", "C:\").
+ */
+function knownPathPattern(knownPath: string): RegExp | null {
+    const names = knownPath.trim().split(/[\\/]+/).filter(Boolean);
+    const letters = names.join('');
+    if (/^[A-Za-z]:$/.test(letters) || letters.replace(/[.~]/g, '').length < 2) return null;
+    const source = names.map(name => name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('[\\\\/]+');
+    const leadingSeparator = /^[\\/]/.test(knownPath.trim()) ? '[\\\\/]+' : '';
+    // Before it: the start, a separator, whitespace, a quote or an opening mark.
+    // After it: a separator, whitespace, a quote, a closing mark, clause
+    // punctuation followed by whitespace, or the end.
+    return new RegExp(
+        `(?<![^\\s\\\\/'"\`(\\[=:,])${leadingSeparator}${source}(?=[\\\\/\\s'"\`)\\]]|[.,:;!?](?:\\s|$)|$)`,
+        platform() === 'win32' ? 'gi' : 'g'
+    );
+}
+
+/**
+ * Replaces every file path in a message with [PATH], keeping the text around
+ * it. Known paths go first, each as a whole: the home folder (the part that
+ * identifies the user) and any the caller knows (the event's own path
+ * properties, the tool call's paths, the allowed folders), longest first so a
+ * known folder doesn't cut a known file inside it. Then quoted paths, then
+ * the last-resort pattern.
+ */
+function redactPaths(message: string, knownPaths: readonly string[] = []): string {
+    return redactKnownPaths(message, knownPaths)
+        .replace(QUOTED_PATH_PATTERN, '$1[PATH]$1')
+        .replace(PATH_PATTERN, '[PATH]')
+        .replace(/(?:\[PATH\])+/g, '[PATH]');
+}
+
+/** Only the first step of redactPaths(): the home folder and the given paths, each whole. */
+function redactKnownPaths(message: string, knownPaths: readonly string[] = []): string {
+    const known = [...new Set([homedir(), ...knownPaths])].sort((a, b) => b.length - a.length);
+    for (const knownPath of known) {
+        const pattern = knownPathPattern(knownPath);
+        if (pattern) message = message.replace(pattern, '[PATH]');
+    }
+    return message;
+}
+
+// Properties that carry free text our capture() calls send (error text, a
+// command line): redacted like `error`
+const TEXT_PROPERTY_KEYS = ['message', 'errorMessage', 'errMsg', 'error_message', 'reason', 'command', 'commands'];
+
+// Properties that hold paths: dropped from every event, after their values
+// have been used to redact the event's messages
+const PATH_PROPERTY_KEYS = ['path', 'filePath', 'directory', 'file_path', 'sourcePath', 'destinationPath', 'fullPath', 'rootPath'];
+
+function isPathProperty(key: string): boolean {
+    const lowerKey = key.toLowerCase();
+    return PATH_PROPERTY_KEYS.some(sk => lowerKey.includes(sk)) && lowerKey !== 'fileextension'; // keep fileExtension as it's safe
+}
+
+/** The string values (or strings in array values) of an event's path properties. */
+function pathPropertyValues(properties: any): string[] {
+    if (!properties || typeof properties !== 'object') return [];
+    return Object.keys(properties)
+        .filter(isPathProperty)
+        .flatMap(key => [properties[key]].flat())
+        .filter((value): value is string => typeof value === 'string');
+}
+
+/**
+ * Copies caller-supplied event properties into a telemetry-safe object.
+ * The copy is deep so we never alter objects the caller keeps using (e.g. error
+ * objects that are also returned to the AI). `error` is sanitized from the
+ * ORIGINAL value: an Error's name, message and code are not enumerable, so the
+ * JSON copy reduces it to {} and would report "Unknown error".
+ */
+function sanitizeEventProperties(properties?: any, knownPaths: readonly string[] = []): Record<string, any> {
+    let sanitizedProperties: any;
+    try {
+        sanitizedProperties = properties ? JSON.parse(JSON.stringify(properties)) : {};
+    } catch {
+        // Properties JSON can't copy (circular, BigInt) are dropped; the event itself is still sent
+        sanitizedProperties = {};
+    }
+
+    // The exact paths this event knows: the ones passed in, and its own path
+    // properties (dropped below)
+    const known = [...knownPaths, ...pathPropertyValues(properties)];
+
+    const error = properties?.error;
+    if (error && (typeof error === 'object' || typeof error === 'string')) {
+        const sanitized = sanitizeError(error, known);
+        sanitizedProperties.error = sanitized.message;
+        if (sanitized.code) sanitizedProperties.errorCode = sanitized.code;
+    }
+    // Every other string property (or string in an array property): free text
+    // is redacted like `error`; anything else gets its known absolute paths
+    // replaced, which touches nothing but those paths. A relative known path
+    // ("content") could equal an ordinary value, so it is only used on free text.
+    const knownAbsolute = known.filter(p => /[\\/]/.test(p));
+    for (const key of Object.keys(sanitizedProperties)) {
+        if (key === 'error' || isPathProperty(key)) continue;
+        const redact = TEXT_PROPERTY_KEYS.includes(key)
+            ? (text: string) => redactPaths(text, known)
+            : (text: string) => redactKnownPaths(text, knownAbsolute);
+        const value = sanitizedProperties[key];
+        if (typeof value === 'string') {
+            sanitizedProperties[key] = redact(value);
+        } else if (Array.isArray(value)) {
+            sanitizedProperties[key] = value.map(item => typeof item === 'string' ? redact(item) : item);
+        }
+    }
+
+    // Remove any properties that might contain paths
+    for (const key of Object.keys(sanitizedProperties)) {
+        if (isPathProperty(key)) {
+            delete sanitizedProperties[key];
+        }
+    }
+
+    return sanitizedProperties;
 }
 
 /**
@@ -135,38 +283,7 @@ export const captureBase = async (captureURL: string, event: string, properties?
             clientContext = { ...clientContext, saw_onboarding_page: sawOnboardingPage };
         }
 
-        // Create a deep copy of properties to avoid modifying the original objects
-        // This ensures we don't alter error objects that are also returned to the AI
-        let sanitizedProperties;
-        try {
-            sanitizedProperties = properties ? JSON.parse(JSON.stringify(properties)) : {};
-        } catch (e) {
-            sanitizedProperties = {}
-        }
-
-        // Sanitize error objects if present
-        if (sanitizedProperties.error) {
-            // Handle different types of error objects
-            if (typeof sanitizedProperties.error === 'object' && sanitizedProperties.error !== null) {
-                const sanitized = sanitizeError(sanitizedProperties.error);
-                sanitizedProperties.error = sanitized.message;
-                if (sanitized.code) {
-                    sanitizedProperties.errorCode = sanitized.code;
-                }
-            } else if (typeof sanitizedProperties.error === 'string') {
-                sanitizedProperties.error = sanitizeError(sanitizedProperties.error).message;
-            }
-        }
-
-        // Remove any properties that might contain paths
-        const sensitiveKeys = ['path', 'filePath', 'directory', 'file_path', 'sourcePath', 'destinationPath', 'fullPath', 'rootPath'];
-        for (const key of Object.keys(sanitizedProperties)) {
-            const lowerKey = key.toLowerCase();
-            if (sensitiveKeys.some(sensitiveKey => lowerKey.includes(sensitiveKey)) &&
-                lowerKey !== 'fileextension') { // keep fileExtension as it's safe
-                delete sanitizedProperties[key];
-            }
-        }
+        const sanitizedProperties = sanitizeEventProperties(properties);
 
         // Is MCP installed with DXT
         let isDXT: string = 'false';
@@ -306,11 +423,21 @@ export const captureBase = async (captureURL: string, event: string, properties?
     }
 };
 
+/** The exact paths an event is redacted with first: the current tool call's and the allowed folders. */
+const knownEventPaths = async (): Promise<string[]> => {
+    const allowedDirectories = await configManager.getValue('allowedDirectories');
+    return [
+        ...(toolCallPaths.getStore() ?? []),
+        ...(Array.isArray(allowedDirectories) ? allowedDirectories.filter((dir): dir is string => typeof dir === 'string') : []),
+    ];
+};
+
 /**
  * Build the standard event properties used by the telemetry proxy.
  * Extracted from captureBase so both paths get identical data.
  */
-const buildEventProperties = async (properties?: any) => {
+/** Builds the telemetry payload properties for an event, with paths and errors sanitized. */
+export const buildEventProperties = async (properties?: any) => {
     if (uniqueUserId === 'unknown') {
         uniqueUserId = await configManager.getOrCreateClientId();
     }
@@ -332,30 +459,7 @@ const buildEventProperties = async (properties?: any) => {
         clientContext.saw_onboarding_page = sawOnboardingPage;
     }
 
-    let sanitizedProperties: any;
-    try {
-        sanitizedProperties = properties ? JSON.parse(JSON.stringify(properties)) : {};
-    } catch {
-        sanitizedProperties = {};
-    }
-
-    if (sanitizedProperties.error) {
-        if (typeof sanitizedProperties.error === 'object' && sanitizedProperties.error !== null) {
-            const sanitized = sanitizeError(sanitizedProperties.error);
-            sanitizedProperties.error = sanitized.message;
-            if (sanitized.code) sanitizedProperties.errorCode = sanitized.code;
-        } else if (typeof sanitizedProperties.error === 'string') {
-            sanitizedProperties.error = sanitizeError(sanitizedProperties.error).message;
-        }
-    }
-
-    const sensitiveKeys = ['path', 'filePath', 'directory', 'file_path', 'sourcePath', 'destinationPath', 'fullPath', 'rootPath'];
-    for (const key of Object.keys(sanitizedProperties)) {
-        const lowerKey = key.toLowerCase();
-        if (sensitiveKeys.some(sk => lowerKey.includes(sk)) && lowerKey !== 'fileextension') {
-            delete sanitizedProperties[key];
-        }
-    }
+    const sanitizedProperties = sanitizeEventProperties(properties, await knownEventPaths());
 
     let isDXT = 'false';
     if (process.env.MCP_DXT) isDXT = 'true';
@@ -480,9 +584,8 @@ const postTelemetryPayload = async (endpoint: string, payload: string): Promise<
 // can be silently dropped. If we need delivery guarantees on short-lived paths,
 // expose an awaitable variant or flush-before-exit hook.
 export const capture = async (event: string, properties?: any) => {
-    // Tool calls fired programmatically by the widget UIs must produce zero
-    // telemetry — drop every event raised while serving one.
-    if (isInsideUiOriginCall()) {
+    // Drop UI-origin calls and explicit opt-outs before preparing an event.
+    if (isInsideUiOriginCall() || isTelemetryDisabledByEnv()) {
         return;
     }
     void (async () => {
@@ -494,6 +597,22 @@ export const capture = async (event: string, properties?: any) => {
         }
     })();
 }
+
+/**
+ * Send only contract-validated transport fields through the existing proxy sender,
+ * redacted like every other event (known paths, path properties, error text).
+ */
+export const captureTransport = async (event: string, properties: TransportParams) => {
+    if (isInsideUiOriginCall() || isTelemetryDisabledByEnv()) return;
+    void (async () => {
+        try {
+            if (uniqueUserId === 'unknown') uniqueUserId = await configManager.getOrCreateClientId();
+            await sendToTelemetryProxy(event, sanitizeEventProperties(properties, await knownEventPaths()));
+        } catch {
+            // Telemetry must not affect command handling.
+        }
+    })();
+};
 
 export const capture_call_tool = capture;
 export const capture_ui_event = capture;
