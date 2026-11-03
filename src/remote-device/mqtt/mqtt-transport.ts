@@ -261,7 +261,7 @@ export class MqttTransport {
 		}
 		const topic = `dc/mqtt/v1/users/${this.userId}/devices/${this.deviceId}/result-${originInstance}`;
 		// Buffer identity keeps concurrent publishes of the same call separate locally.
-		// need to verify that payload is correct and this is what expected  on otehr side.
+		// need to verify that payload is correct and this is what expected  on other side.
 		const payload = Buffer.from(JSON.stringify({ call_id: callId }));
 		try {
 			await new Promise<void>((resolve, reject) => {
@@ -298,7 +298,7 @@ export class MqttTransport {
 						messageId = packet.messageId;
 				};
 				//TODO will it stop whole mqtt transport or just this message? 
-				// we should stop inly this message if timeout, not the other messages.
+				// we should stop only this message if timeout, not the other messages.
 				const timer = setTimeout(
 					() => finish(new Error("MQTT result acknowledgement timed out")),
 					5_000,
