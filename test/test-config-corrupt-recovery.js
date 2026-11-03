@@ -26,6 +26,7 @@ async function worker() {
   assert.doesNotThrow(() => JSON.parse(readFileSync(CONFIG_FILE, 'utf8')));
   assert.equal(events.length, 1);
   assert.equal(events[0].phase, 'startup');
+  assert.equal(events[0].parse_error_kind, 'truncated');
   assert.equal(events[0].config_bytes, Buffer.byteLength(firstCorrupt));
   assert.equal(events[0].backup_created, true);
   assert.equal(events[0].recovered_by_other_process, false);
@@ -77,7 +78,7 @@ async function parent() {
   const dir = path.join(home, '.claude-server-commander');
   const configPath = path.join(dir, 'config.json');
   mkdirSync(dir, { recursive: true });
-  writeFileSync(configPath, '{"blockedCommands":["rm","sudo"],"allowedDirectories":["/safe/project"],"telemetryEnabled": true, "clientId": "11111111-1111-4111-8111-111111111111", "version": "0.2.48", "usageStats": {');
+  writeFileSync(configPath, '{"blockedCommands":["rm","sudo"],"allowedDirectories":["/safe/project"],"telemetryEnabled": true, "clientId": "11111111-1111-4111-8111-111111111111", "version": "0.2.4');
   writeFileSync(`${configPath}.999.123.tmp`, 'leftover temp');
 
   const child = fork(TEST_FILE, [], {
