@@ -84,6 +84,9 @@ export async function startRemoteStandIn({
     refreshes: [],
     /** Requests for the device-code flow */
     deviceFlowRequests: 0,
+    revocations: [],
+    revokeStatus: 200,
+    confirmMqttRevocation: true,
     /** Requests this stand-in has no answer for */
     unexpected: [],
     /** Every request, in order: { method, url, apikey }; a websocket upgrade has method UPGRADE */
@@ -295,6 +298,16 @@ export async function startRemoteStandIn({
     }
     if (route === 'GET /device/rollouts') {
       return sessionOfBearer(request) ? [200, { rollouts: standIn.rollouts }] : [401, { error: 'invalid token' }];
+    }
+    if (route === 'POST /device/revoke') {
+      const session = sessionOfBearer(request);
+      if (!session) return [401, { error: 'unauthorized' }];
+      if (JSON.parse(body).device_id !== deviceId) return [404, { error: 'not_found' }];
+      if (standIn.revokeStatus !== 200) return [standIn.revokeStatus, { error: 'revoke_failed' }];
+      if (!standIn.confirmMqttRevocation) return [200, { success: true }];
+      standIn.revocations.push(deviceId);
+      session.revoked = true;
+      return [200, { success: true, mqtt_revoked: true }];
     }
     if (route === 'POST /auth/v1/token' && url.searchParams.get('grant_type') === 'refresh_token') {
       return refresh(JSON.parse(body || '{}').refresh_token);
