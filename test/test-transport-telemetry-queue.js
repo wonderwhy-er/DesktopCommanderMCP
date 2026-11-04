@@ -213,11 +213,13 @@ const cases = [
       const transport = pathToFileURL(path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'dist', 'remote-device', 'transport-telemetry.js')).href;
       const script = `process.env.DESKTOP_COMMANDER_DISABLE_TELEMETRY = '0'; delete process.env.DC_TELEMETRY_URL;
         const { observeTransport } = await import(${JSON.stringify(transport)});
-        observeTransport({ stage: 'operation_start', callId: 'call-exit', deviceId: 'device-1', toolName: 'read_file', operation: 'result_write' });`;
+        observeTransport({ stage: 'operation_start', callId: 'call-exit', deviceId: 'device-1', userId: 'user-1', toolName: 'read_file', operation: 'result_write' });`;
       const child = spawn(process.execPath, ['--input-type=module', '-e', script], { stdio: 'ignore', env: { ...process.env, HOME: home, USERPROFILE: home } });
       const exited = new Promise((resolve) => child.once('exit', (code, signal) => resolve(code === 0 && signal === null)));
-      const gaveUp = new Promise((resolve) => setTimeout(() => resolve(false), 3000));
+      let exitTimeout;
+      const gaveUp = new Promise((resolve) => { exitTimeout = setTimeout(() => resolve(false), 3000); });
       const ended = await Promise.race([exited, gaveUp]);
+      clearTimeout(exitTimeout);
       if (!ended) child.kill();
       assert.equal(ended, true, 'the process failed, or is still running 3 seconds after the event with the retry timer pending');
     },

@@ -562,6 +562,14 @@ const sendToTelemetryProxy = async (event: string, eventProperties: any) => {
 /** Sends to the address as given: http or https by its protocol, with its port and query. */
 const postTelemetryPayload = async (endpoint: string, payload: string): Promise<boolean> => {
     return await new Promise((resolve) => {
+        let settled = false;
+        let deadline: NodeJS.Timeout | undefined;
+        const finish = (sent: boolean) => {
+            if (settled) return;
+            settled = true;
+            if (deadline) clearTimeout(deadline);
+            resolve(sent);
+        };
         const url = new URL(endpoint);
         const client = url.protocol === 'http:' ? http : https;
         const options = {
@@ -575,13 +583,19 @@ const postTelemetryPayload = async (endpoint: string, payload: string): Promise<
         const req = client.request(url, options, (res) => {
             res.resume();
             res.on('end', () => {
-                resolve(res.statusCode !== undefined && res.statusCode >= 200 && res.statusCode < 300)
+                finish(res.statusCode !== undefined && res.statusCode >= 200 && res.statusCode < 300);
             });
+            res.on('error', () => finish(false));
         });
-        req.on('error', () => resolve(false));
+        // Socket inactivity alone does not bound a response that keeps trickling.
+        deadline = setTimeout(() => {
+            req.destroy();
+            finish(false);
+        }, 3000);
+        req.on('error', () => finish(false));
         req.setTimeout(3000, () => {
             req.destroy();
-            resolve(false);
+            finish(false);
         });
         req.write(payload);
         req.end();
@@ -615,7 +629,7 @@ const TRANSPORT_QUEUE_LIMIT = 100;
 /** The longest a transport event is held; after that it is dropped, so the retry ends for a server that never names an address */
 const TRANSPORT_HOLD_MS = 10 * 60 * 1000;
 
-const transportQueue: { event: string; properties: TransportParams; userId: string; queuedAt: number }[] = [];
+const transportQueue: { event: string; properties: TransportParams; userId: string; queuedAt: number; consent: Promise<boolean> }[] = [];
 let transportRetryTimer: NodeJS.Timeout | undefined;
 
 /** Sends one transport event, redacted like every other event (known paths, path properties, error text) */
@@ -641,6 +655,16 @@ const sendTransport = async (event: string, properties: TransportParams, userId:
 
 let transportDraining = false;
 
+const scheduleTransportRetry = () => {
+    if (transportQueue.length > 0 && !process.env.DC_TELEMETRY_URL && !transportRetryTimer) {
+        transportRetryTimer = setTimeout(() => {
+            transportRetryTimer = undefined;
+            void drainTransportQueue();
+        }, TRANSPORT_RETRY_MS);
+        transportRetryTimer.unref?.();
+    }
+};
+
 /**
  * Sends the held transport events once DC_TELEMETRY_URL is set, one at a time and in the order they came, so a
  * slow event is never overtaken and a burst of held events is not sent at once. Without the address they stay
@@ -651,9 +675,17 @@ const drainTransportQueue = async () => {
     if (transportDraining) return;
     transportDraining = true;
     try {
-        while (transportQueue.length > 0 && process.env.DC_TELEMETRY_URL) {
-            const next = transportQueue.shift()!;
-            if (Date.now() - next.queuedAt > TRANSPORT_HOLD_MS) continue;
+        while (transportQueue.length > 0) {
+            const next = transportQueue[0];
+            const enabledWhenRecorded = await next.consent;
+            // Overflow can evict an event while its consent lookup is pending.
+            if (transportQueue[0] !== next) continue;
+            if (!enabledWhenRecorded || Date.now() - next.queuedAt > TRANSPORT_HOLD_MS) {
+                transportQueue.shift();
+                continue;
+            }
+            if (!process.env.DC_TELEMETRY_URL) break;
+            transportQueue.shift();
             await sendTransport(next.event, next.properties, next.userId);
         }
     } finally {
@@ -663,14 +695,11 @@ const drainTransportQueue = async () => {
     while (transportQueue.length > 0 && now - transportQueue[0].queuedAt > TRANSPORT_HOLD_MS) {
         transportQueue.shift();
     }
-    if (transportQueue.length > 0 && !process.env.DC_TELEMETRY_URL && !transportRetryTimer) {
-        transportRetryTimer = setTimeout(() => {
-            transportRetryTimer = undefined;
-            void drainTransportQueue();
-        }, TRANSPORT_RETRY_MS);
-        // A held event never keeps the process alive
-        transportRetryTimer.unref?.();
+    if (transportQueue.length === 0 && transportRetryTimer) {
+        clearTimeout(transportRetryTimer);
+        transportRetryTimer = undefined;
     }
+    scheduleTransportRetry();
 };
 
 /**
@@ -681,8 +710,14 @@ const drainTransportQueue = async () => {
  */
 export const captureTransport = async (event: string, properties: TransportParams, userId: string) => {
     if (isInsideUiOriginCall() || isTelemetryDisabledByEnv()) return;
-    transportQueue.push({ event, properties, userId, queuedAt: Date.now() });
+    // Start consent at observation time, but enqueue synchronously so a slower
+    // lookup cannot let a later event overtake it. A failed lookup grants none.
+    const consent = configManager.getValue('telemetryEnabled')
+        .then(value => !isTelemetryDisabledValue(value)).catch(() => false);
+    transportQueue.push({ event, properties, userId, queuedAt: Date.now(), consent });
     if (transportQueue.length > TRANSPORT_QUEUE_LIMIT) transportQueue.shift();
+    // Keep the five-second clock anchored to observation, not an async lookup.
+    scheduleTransportRetry();
     void drainTransportQueue();
 };
 
