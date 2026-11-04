@@ -73,7 +73,7 @@ function powershellScriptFile(program: string, args: FileWord[]): FileWord | und
         if (['-f', '-fi', '-fil', '-file'].includes(option)) {
             return args[i + 1] === '-' ? undefined : args[i + 1];
         }
-        if (['-version', '-v'].includes(option)) {
+        if ('-version'.startsWith(option)) {
             if (program === 'pwsh' || program === 'pwsh.exe') return undefined;
             i++;
             continue;
