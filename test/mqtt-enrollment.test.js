@@ -62,9 +62,9 @@ async function withFetch(fake, run) {
   globalThis.fetch = fake;
   try { return await run(); } finally { globalThis.fetch = original; }
 }
-async function withWarnings(run) {
+async function withWarnings(run, method = 'warn') {
   const messages = [];
-  const warning = mock.method(console, 'warn', (...args) => messages.push(args));
+  const warning = mock.method(console, method, (...args) => messages.push(args));
   try { return await run(messages); } finally { warning.mock.restore(); }
 }
 
@@ -73,6 +73,14 @@ const mqttFolder = () => path.join(getRemoteDeviceConfigDirectory(), '.mqtt');
 async function cache() {
   const folder = mqttFolder();
   return { folder, identity: JSON.parse(await readFile(path.join(folder, 'identity.json'), 'utf8')), certificate: JSON.parse(await readFile(path.join(folder, 'certificate.json'), 'utf8')) };
+}
+async function assertPrivateFiles(folder) {
+  for (const file of ['identity.json', 'certificate.json']) {
+    const saved = await stat(path.join(folder, file));
+    assert.ok(saved.isFile());
+    assert.ok(saved.size > 0);
+    if (process.platform !== 'win32') assert.equal(saved.mode & 0o777, 0o600);
+  }
 }
 function revoked(url, request, profile, previousDeviceId = DEVICE_ID) {
   assert.equal(url.href, `${profile.serverUrl}/device/mqtt/revoke`);
@@ -86,6 +94,9 @@ function revoked(url, request, profile, previousDeviceId = DEVICE_ID) {
 async function check(name, run) { await run(); passed++; console.log(`PASS ${name}`); }
 
 try {
+  if (process.platform === 'win32') {
+    console.log('NOT CHECKED: Windows credential permissions use inherited ACLs; POSIX modes do not verify them.');
+  }
   await check('local RSA key signs CSR, request contains no key, and restart reuses private credentials without POST', async () => {
     const profile = options();
     let calls = 0;
@@ -114,8 +125,10 @@ try {
       assert.ok(csrPublicKey.equals(createPublicKey(saved.identity.private_key)));
       assert.ok(new X509Certificate(saved.certificate.certificate_pem).checkPrivateKey(createPrivateKey(saved.identity.private_key)));
       assert.deepEqual([saved.identity.backend_origin, saved.identity.user_id, saved.identity.device_id], ['https://staging-mcp.desktopcommander.app', USER_ID, DEVICE_ID]);
-      assert.equal((await stat(saved.folder)).mode & 0o777, 0o700);
-      for (const file of ['identity.json', 'certificate.json']) assert.equal((await stat(path.join(saved.folder, file))).mode & 0o777, 0o600);
+      const folder = await stat(saved.folder);
+      assert.ok(folder.isDirectory());
+      if (process.platform !== 'win32') assert.equal(folder.mode & 0o777, 0o700);
+      await assertPrivateFiles(saved.folder);
       assert.equal(first.options.key.toString(), saved.identity.private_key);
       assert.equal(first.options.cert.toString(), second.options.cert.toString());
       assert.equal(first.options.rejectUnauthorized, true);
@@ -123,45 +136,61 @@ try {
     });
   });
 
-  await check('production, staging and development keep separate credentials and reuse their own cache', async () => {
+  await check('DC_ENV shares one folder; only the same backend origin reuses credentials', async () => {
     const profile = options();
-    const snapshots = new Map();
+    const folder = path.join(testHome, '.desktop-commander-device', '.mqtt');
     const keys = new Set();
     let calls = 0;
+    let enrollments = 0;
+    let previousOrigin;
+    let previousSnapshot;
     try {
-      await withFetch(async (_url, request) => {
+      await withFetch(async (url, request) => {
+        assert.equal(url.pathname, '/device/mqtt/enroll');
+        assert.equal(request.headers.Authorization, `Bearer ${profile.accessToken}`);
+        assert.equal(request.redirect, 'error');
+        assert.ok(!request.body.includes('PRIVATE KEY'));
         calls++;
         return Response.json(issue(JSON.parse(request.body).csr));
       }, async () => {
-        for (const [dcEnv, suffix, serverUrl] of [
-          [undefined, '', 'https://mcp.desktopcommander.app'],
-          ['staging', '-staging', 'https://staging-mcp.desktopcommander.app'],
-          ['development', '-dev', 'http://mcp.localhost:3007'],
-          ['development', '-dev', 'http://mcp.localhost:3007'],
-          ['staging', '-staging', 'https://staging-mcp.desktopcommander.app'],
-          ['production', '', 'https://mcp.desktopcommander.app'],
-          [undefined, '', 'https://mcp.desktopcommander.app'],
+        for (const [dcEnv, serverUrl] of [
+          [undefined, 'https://mcp.desktopcommander.app'],
+          ['production', 'https://mcp.desktopcommander.app'],
+          ['staging', 'https://mcp.desktopcommander.app'],
+          ['staging', 'https://staging-mcp.desktopcommander.app'],
+          ['development', 'http://mcp.localhost:3007'],
+          ['development', 'http://mcp.localhost:3007'],
+          ['staging', 'https://staging-mcp.desktopcommander.app'],
+          ['production', 'https://mcp.desktopcommander.app'],
+          [undefined, 'https://mcp.desktopcommander.app'],
         ]) {
           if (dcEnv === undefined) delete process.env.DC_ENV;
           else process.env.DC_ENV = dcEnv;
 
           const config = await enrollMqttDevice({ ...profile, serverUrl });
-          const folder = path.join(testHome, `.desktop-commander-device${suffix}`, '.mqtt');
+          assert.equal(mqttFolder(), folder);
           const identityText = await readFile(path.join(folder, 'identity.json'), 'utf8');
           const certificateText = await readFile(path.join(folder, 'certificate.json'), 'utf8');
           assert.equal(JSON.parse(identityText).backend_origin, serverUrl);
           assert.equal(JSON.parse(identityText).private_key, config.options.key.toString());
-          if (snapshots.has(suffix)) {
-            assert.deepEqual([identityText, certificateText], snapshots.get(suffix));
+          assert.ok(new X509Certificate(JSON.parse(certificateText).certificate_pem)
+            .checkPrivateKey(createPrivateKey(config.options.key)));
+          await assertPrivateFiles(folder);
+          if (serverUrl === previousOrigin) {
+            assert.deepEqual([identityText, certificateText], previousSnapshot);
           } else {
-            snapshots.set(suffix, [identityText, certificateText]);
+            enrollments++;
+            assert.ok(!keys.has(config.options.key.toString()), 'origin changes never reuse an earlier private key');
             keys.add(config.options.key.toString());
+            if (previousSnapshot) assert.notEqual(certificateText, previousSnapshot[1]);
           }
-          assert.equal(calls, snapshots.size, 'switching back reuses credentials without enrolling again');
+          assert.equal(calls, enrollments, 'only consecutive calls to the same origin reuse enrollment');
+          previousOrigin = serverUrl;
+          previousSnapshot = [identityText, certificateText];
         }
       });
-      assert.equal(calls, 3);
-      assert.equal(keys.size, 3, 'each environment keeps its own private key');
+      assert.equal(calls, 5);
+      assert.equal(keys.size, 5, 'each origin change creates a fresh private key, including return visits');
     } finally {
       delete process.env.DC_ENV;
     }
@@ -237,7 +266,7 @@ try {
         assert.notEqual(JSON.stringify(saved.certificate), previousCertificate);
         assert.ok(new X509Certificate(saved.certificate.certificate_pem).checkPrivateKey(createPrivateKey(saved.identity.private_key)));
         assert.equal(config.options.key.toString(), saved.identity.private_key);
-        for (const file of ['identity.json', 'certificate.json']) assert.equal((await stat(path.join(folder, file))).mode & 0o777, 0o600);
+        await assertPrivateFiles(folder);
         const restarted = await enrollMqttDevice(replacement);
         assert.equal(restarted.options.key.toString(), config.options.key.toString());
         assert.equal(restarted.options.cert.toString(), config.options.cert.toString());
@@ -262,7 +291,7 @@ try {
       const saved = await cache();
       await writeFile(path.join(saved.folder, 'identity.json'), JSON.stringify({ ...saved.identity, ...identityPatch }));
       const requests = [];
-      await withWarnings(async warnings => {
+      await withWarnings(async debugMessages => {
         await withFetch(async (url, request) => {
           requests.push(url.href);
           assert.equal(url.href, `${profile.serverUrl}/device/mqtt/enroll`);
@@ -279,8 +308,12 @@ try {
           assert.ok(new X509Certificate(fresh.certificate.certificate_pem).checkPrivateKey(createPrivateKey(fresh.identity.private_key)));
           await enrollMqttDevice(profile);
         });
-        assert.deepEqual(warnings, [[SKIPPED_REVOCATION_WARNING]]);
-      });
+        assert.deepEqual(debugMessages, [
+          ['Start MQTT enrollment for userId:', USER_ID, 'deviceId:', DEVICE_ID],
+          [SKIPPED_REVOCATION_WARNING],
+          ['Start MQTT enrollment for userId:', USER_ID, 'deviceId:', DEVICE_ID],
+        ]);
+      }, 'debug');
       assert.deepEqual(requests, [`${profile.serverUrl}/device/mqtt/enroll`]);
     }
   });
@@ -550,7 +583,7 @@ try {
     });
     assert.deepEqual(requests, ['/device/mqtt/revoke']);
     assert.deepEqual(JSON.parse(await readFile(identityFile, 'utf8')), { ...mismatchedIdentity, reset_pending: true });
-    assert.equal((await stat(identityFile)).mode & 0o777, 0o600);
+    if (process.platform !== 'win32') assert.equal((await stat(identityFile)).mode & 0o777, 0o600);
     await assert.rejects(stat(certificateFile), { code: 'ENOENT' });
     await withFetch(async (url, request) => {
       requests.push(url.pathname);
