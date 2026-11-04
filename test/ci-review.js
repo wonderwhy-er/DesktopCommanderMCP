@@ -22,6 +22,7 @@ import {
   withUncovered,
 } from './helpers/ci-review.js';
 import { githubApi } from './helpers/github-api.js';
+import { MAX_REVIEW_CONTEXT_BYTES, reviewContextOf, contextReceiptOf } from './helpers/review-context.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const { GITHUB_REPOSITORY: repo, GH_TOKEN: token } = process.env;
@@ -135,7 +136,7 @@ function changeOf(range, repoDir) {
 }
 
 /** The prompt: a text check's (with --text), or the review's */
-function promptFor({ change: { head, base, diff, commits }, pull, tests, text, results }) {
+function promptFor({ change: { head, base, diff, commits }, pull, tests, text, results, context }) {
   const read = (file) => fs.readFileSync(path.join(ROOT, '.github', file), 'utf8');
   const shared = {
     style: read('writing-style.md'),
@@ -145,6 +146,7 @@ function promptFor({ change: { head, base, diff, commits }, pull, tests, text, r
     diff,
     files: filesOf(diff),
     tests,
+    context,
   };
   if (text) {
     return textPromptOf({
@@ -178,11 +180,12 @@ function fitsTheWindow(prompt, diff) {
 }
 
 /** A text check's output: text-check.md and text-check.json, and on GitHub the job summary (it posts nothing) */
-function writeTextCheck({ modelJson, change: { head, base }, text, out }) {
+function writeTextCheck({ modelJson, change: { head, base }, text, out, context }) {
   const answer = textAnswerOf(modelJson.response);
   const markdown = textCheckOf({ answer, file: text.file, headSha: head });
   const { summary, findings, checked } = answer;
-  const check = { head, base, file: text.file, summary, findings, checked, usage: usageOf(modelJson.stats) };
+  const check = { head, base, file: text.file, summary, findings, checked, usage: usageOf(modelJson.stats),
+    ...(context ? { context } : {}) };
   fs.writeFileSync(path.join(out, 'text-check.json'), `${JSON.stringify(check, null, 2)}\n`);
   fs.writeFileSync(path.join(out, 'text-check.md'), `${markdown}\n`);
   if (process.env.GITHUB_STEP_SUMMARY) fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, `${markdown}\n`);
@@ -190,11 +193,11 @@ function writeTextCheck({ modelJson, change: { head, base }, text, out }) {
 }
 
 /** A review's output: review.json, with every finding by its file and line, and review.md */
-function writeReview({ modelJson, change: { head, base, diff }, tests, out }) {
+function writeReview({ modelJson, change: { head, base, diff }, tests, out, context }) {
   const answer = answerOf(modelJson.response);
   const usage = usageOf(modelJson.stats);
   const findings = withUncovered(findingsOf(answer, diff), tests?.uncovered ?? []);
-  const review = { head, base, summary: answer.summary, findings, usage, tests };
+  const review = { head, base, summary: answer.summary, findings, usage, tests, ...(context ? { context } : {}) };
   const markdown = reviewOf({ answer: review, diff, headSha: head, baseSha: base, usage, inline: false, tests }).body;
   fs.writeFileSync(path.join(out, 'review.json'), `${JSON.stringify(review, null, 2)}\n`);
   fs.writeFileSync(path.join(out, 'review.md'), `${markdown}\n`);
@@ -224,10 +227,26 @@ async function run(range, ...options) {
     'answer.json',
     'session.jsonl',
     'rate-limits.json',
+    'review-context.json',
+    'review-context-receipt.json',
   ]) {
     fs.rmSync(path.join(out, file), { force: true });
   }
   const change = changeOf(range, option('--repo', ROOT));
+  const contextFile = option('--context');
+  if (every('--context').length > 1 ||
+      (options.includes('--context') && (!contextFile || contextFile.startsWith('--')))) {
+    throw new Error('Review context: --context needs one file.');
+  }
+  if (contextFile && process.env.REVIEW_CONTEXT_JSON) {
+    throw new Error('Review context: use a file or workflow input, not both.');
+  }
+  if (contextFile && fs.statSync(contextFile).size > MAX_REVIEW_CONTEXT_BYTES) {
+    throw new Error('Review context: input exceeds 48 KiB.');
+  }
+  const rawContext = contextFile ? fs.readFileSync(contextFile, 'utf8') : process.env.REVIEW_CONTEXT_JSON;
+  if (contextFile && !rawContext.trim()) throw new Error('Review context: file is empty.');
+  const context = reviewContextOf(rawContext, change);
   const pull = process.env.PR ? await github('GET', `/repos/${repo}/pulls/${Number(process.env.PR)}`) : {};
   // The run's tests (CI: its artifacts, --tests) or this machine's last coverage run at B
   const ran = option('--tests')
@@ -237,18 +256,24 @@ async function run(range, ...options) {
     platforms: ran.platforms,
     failed: ran.failed,
     // Only files the coverage counts: the rules the coverage check holds the report to (.c8rc.json's files)
-    uncovered: uncoveredOf({ diff: change.diff, lcovs: ran.lcovs, counted: isCounted }),
+    uncovered: ran.lcovs.length ? uncoveredOf({ diff: change.diff, lcovs: ran.lcovs, counted: isCounted }) : null,
   };
   // A text check (--text): each claim in a text against the change, with the results files it cites
   const text = option('--text') && textToCheck(option('--text'), pull);
-  const prompt = promptFor({ change, pull, tests, text, results: text ? resultsOf(every('--results')) : [] });
+  const prompt = promptFor({ change, pull, tests, text, context, results: text ? resultsOf(every('--results')) : [] });
   fitsTheWindow(prompt, change.diff);
 
   const { git, head, diff } = change;
   const modelJson = await askClaudeCode({ prompt, head, git, key, out, diff, shell: Boolean(text) });
+  const contextReceipt = contextReceiptOf(context, prompt);
+  if (contextReceipt) {
+    fs.mkdirSync(out, { recursive: true });
+    fs.writeFileSync(path.join(out, 'review-context.json'), `${JSON.stringify(context, null, 2)}\n`);
+    fs.writeFileSync(path.join(out, 'review-context-receipt.json'), `${JSON.stringify(contextReceipt, null, 2)}\n`);
+  }
   fs.writeFileSync(path.join(out, 'diff.patch'), diff);
-  if (text) writeTextCheck({ modelJson, change, text, out });
-  else writeReview({ modelJson, change, tests, out });
+  if (text) writeTextCheck({ modelJson, change, text, out, context: contextReceipt });
+  else writeReview({ modelJson, change, tests, out, context: contextReceipt });
 }
 
 /** Export the requested head with symlinks as plain files; the model sees only this folder. */
@@ -316,7 +341,7 @@ const [command, ...args] = process.argv.slice(2);
 const commands = { request, run, post };
 if (!commands[command]) {
   console.error(
-    'Usage: npm run review -- <commit A>..<commit B> [--text <file> [--results <file>]...]' +
+    'Usage: npm run review -- <commit A>..<commit B> [--context <file>] [--text <file> [--results <file>]...]' +
       ' | node test/ci-review.js request | post <folder>',
   );
   process.exitCode = 2;

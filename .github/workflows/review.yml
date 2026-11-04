@@ -25,6 +25,10 @@ on:
       base:
         type: string
         required: true
+      context:
+        type: string
+        required: false
+        default: ''
     secrets:
       CLAUDE_CODE_OAUTH_TOKEN:
         required: false
@@ -45,6 +49,11 @@ on:
         default: code
         type: choice
         options: [code, text]
+      context:
+        description: Optional pinned guide and native evidence JSON (48 KiB maximum)
+        type: string
+        required: false
+        default: ''
 
 permissions:
   contents: read
@@ -75,6 +84,7 @@ jobs:
             /test/ci-review.js
             /test/helpers/ci-platforms.js
             /test/helpers/ci-review.js
+            /test/helpers/review-context.js
             /test/check-coverage-report.js
             /test/helpers/node-test-runner.js
             /test/helpers/github-api.js
@@ -131,6 +141,7 @@ jobs:
             /test/helpers/node-test-runner.js
             /test/helpers/ci-platforms.js
             /test/helpers/ci-review.js
+            /test/helpers/review-context.js
             /test/helpers/github-api.js
           sparse-checkout-cone-mode: false
       # The PR's head, by the SHA the request job read, with the history back to its
@@ -174,6 +185,8 @@ jobs:
           HEAD_SHA: ${{ needs.request.outputs.sha }}
           BASE_SHA: ${{ needs.request.outputs.base }}
           CHECK: ${{ inputs.check }}
+          # Data only, validated against resolved target SHAs before a model request.
+          REVIEW_CONTEXT_JSON: ${{ inputs.context }}
         # check=text (on demand): each claim in the PR's description, against the change
         run: |
           text=()
@@ -215,6 +228,7 @@ jobs:
             /test/ci-review.js
             /test/helpers/ci-platforms.js
             /test/helpers/ci-review.js
+            /test/helpers/review-context.js
             /test/check-coverage-report.js
             /test/helpers/node-test-runner.js
             /test/helpers/github-api.js
