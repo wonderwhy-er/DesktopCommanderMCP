@@ -254,7 +254,8 @@ export function usageOf(stats) {
   const sum = (pick) => models.reduce((total, [, model]) => total + (Number(pick(model)) || 0), 0);
   return {
     models: models.map(([name]) => name),
-    requests: sum((model) => model.api?.totalRequests),
+    requests: stats.provider === "claude-code" ? null : sum((model) => model.api?.totalRequests),
+    ...(stats.provider === "claude-code" ? { provider: stats.provider, turns: stats.turns, effort: stats.effort, auth: stats.auth } : {}),
     prompt: sum((model) => model.tokens?.prompt),
     output: sum((model) => model.tokens?.candidates),
     thoughts: sum((model) => model.tokens?.thoughts),
@@ -297,7 +298,7 @@ export function reviewOf({ answer, diff, headSha, baseSha, usage = null, inline 
   const body = [REVIEW_MARKER, `${headline} ${outcome}${untested}.${summary ? ` ${summary}` : ''}`];
   if (rows.length > 0) body.push('', '| Kind | Where | What |', '|---|---|---|', ...rows);
   if (usage) {
-    body.push('', `<sub>${usage.models.map(plain).join(', ')} · ${usage.requests} requests · ${usage.total} tokens`
+    body.push('', `<sub>${usage.models.map(plain).join(', ')} · ${usage.requests === null ? "API request count unavailable" : `${usage.requests} requests`} · ${usage.total} tokens`
       + ` (${usage.prompt} input, ${usage.output} output, ${usage.thoughts ?? 0} thinking)`
       + ` · ${usage.seconds} s in the API</sub>`);
   }
