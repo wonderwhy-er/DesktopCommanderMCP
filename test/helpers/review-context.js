@@ -1,5 +1,6 @@
 /** Bounded supplemental inputs supplied by the workflow's existing trusted caller, not a source of authority. */
 import { createHash } from 'node:crypto';
+import { isDeepStrictEqual } from 'node:util';
 
 export const MAX_REVIEW_CONTEXT_BYTES = 48 * 1024;
 const digest = text => createHash('sha256').update(text).digest('hex');
@@ -110,4 +111,16 @@ export function contextReceiptOf(context, prompt) {
     }),
     providerCompleted: true, modelAcceptanceClaimed: false,
   };
+}
+
+/** Revalidate the published metadata against its validated inputs and the successful run's saved receipt. */
+export function publishedContextOf({ raw, receipt, saved, head, base }) {
+  const context = reviewContextOf(raw, { head, base });
+  if (!context || !object(receipt) || !hash(receipt.promptSha256)) fail('missing input receipt.');
+  const expected = JSON.parse(JSON.stringify(contextReceiptOf(context, '')));
+  expected.promptSha256 = receipt.promptSha256;
+  if (!isDeepStrictEqual(receipt, expected) || !isDeepStrictEqual(saved, expected)) {
+    fail('saved receipt provenance differs.');
+  }
+  return expected;
 }
