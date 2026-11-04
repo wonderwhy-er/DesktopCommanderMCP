@@ -290,18 +290,26 @@ function Build-DockerArgs {
         Write-Info "Mounted folders: $($script:Folders.Count) folders" 
         Write-Info "Container mode: Auto-remove after each use (--rm)"
     }
-}function Find-ClaudeProcess {
+}
+
+function Test-ClaudeDesktopExecutablePath {
+    param([string]$Path)
+
+    $desktopFolders = @("$env:ProgramFiles\WindowsApps\Claude_*", "$env:LOCALAPPDATA\AnthropicClaude") + $script:ClaudeDesktopFolders
+    return [bool]($Path -and ($desktopFolders | Where-Object { $Path -like "$_\*" }))
+}
+
+function Find-ClaudeProcess {
     Write-Info "Looking for Claude Desktop processes..."
 
     # Claude Code also runs as claude.exe (for example from ~\.local\bin), and its sessions must
     # keep running. So a process counts as Claude Desktop only when it runs from a folder Claude
     # Desktop is installed in, the Microsoft Store package's and the classic installer's too.
-    $desktopFolders = @("$env:ProgramFiles\WindowsApps\Claude_*", "$env:LOCALAPPDATA\AnthropicClaude") + $script:ClaudeDesktopFolders
     $foundProcesses = @()
 
     foreach ($proc in Get-Process -Name "claude" -ErrorAction SilentlyContinue) {
         $procPath = try { $proc.Path } catch { $null }
-        if (-not $procPath -or -not ($desktopFolders | Where-Object { $procPath -like "$_\*" })) {
+        if (-not (Test-ClaudeDesktopExecutablePath $procPath)) {
             if ($VerboseOutput) { Write-Info "Not Claude Desktop, left running: $($proc.ProcessName) (PID: $($proc.Id)) $procPath" }
             continue
         }
@@ -449,9 +457,11 @@ function Find-ClaudeExecutable {
         if (Test-Path $dir) {
             if ($VerboseOutput) { Write-Info "Searching in: $dir" }
             try {
-                $found = Get-ChildItem -Path $dir -Recurse -Name "Claude.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+                $found = Get-ChildItem -Path $dir -Recurse -Filter "Claude.exe" -File -ErrorAction SilentlyContinue |
+                    Where-Object { Test-ClaudeDesktopExecutablePath $_.FullName } |
+                    Select-Object -First 1
                 if ($found) {
-                    $fullPath = Join-Path $dir $found
+                    $fullPath = $found.FullName
                     if ($VerboseOutput) { Write-Info "Found Claude executable via search: $fullPath" }
                     return $fullPath
                 }
