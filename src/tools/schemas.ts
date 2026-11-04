@@ -105,7 +105,9 @@ export const PdfDeleteOperationSchema = z.object({
 
 export const PdfOperationSchema = z.union([PdfInsertOperationSchema, PdfDeleteOperationSchema]);
 
-const PdfContentInputSchema = z.union([z.string(), z.array(PdfOperationSchema)]);
+const PdfContentInputSchema = z.union([z.string(), z.array(PdfOperationSchema)]).describe(
+  'Markdown text or an array of PDF operations. A string beginning with "[" that parses as JSON is treated as an operation array; each operation must use the documented insert or delete shape.',
+);
 const writePdfArgsShape = {
   path: z.string(),
   outputPath: z.string().optional(),
@@ -184,7 +186,9 @@ const editBlockArgsShape = {
 
 // The JSON Schema describes the public fields. The runtime schema below keeps
 // the cross-field validation, which JSON Schema cannot infer from a callback.
-export const EditBlockInputArgsSchema = z.object(editBlockArgsShape);
+export const EditBlockInputArgsSchema = z.object(editBlockArgsShape).describe(
+  'Provide either old_string and new_string together, or range and content together. file_path is required for both forms.',
+);
 
 export const EditBlockArgsSchema = z.object(editBlockArgsShape).refine(
   data => {

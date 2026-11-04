@@ -1,3 +1,5 @@
+import { z } from 'zod';
+
 /**
  * Utility for detecting parameters a caller sent that a tool's Zod schema does
  * not accept.
@@ -15,23 +17,31 @@
 
 /**
  * Resolve a Zod schema down to the field map of its underlying object schema,
- * unwrapping wrappers (effects/optional/default/nullable/branded) defensively.
+ * unwrapping public Zod 4 wrappers defensively.
  * Returns null when the schema is not (and does not wrap) a plain object schema,
  * in which case we cannot determine the supported parameters and must not warn.
  */
-function getObjectShape(schema: any): Record<string, unknown> | null {
+function getObjectShape(schema: unknown): Record<string, unknown> | null {
   let current = schema;
-  for (let i = 0; current && current._def && i < 10; i++) {
-    const typeName = current._def.typeName;
-    if (typeName === 'ZodObject') {
-      const shape = typeof current.shape === 'function' ? current.shape() : current.shape;
-      return shape ?? null;
+  for (let i = 0; current && i < 10; i++) {
+    if (current instanceof z.ZodObject) return current.shape;
+    if (current instanceof z.ZodPipe) {
+      // A Zod 4 preprocess is a pipe; its output schema is what validates the
+      // parsed object, matching the Zod 3 ZodEffects.schema behavior.
+      current = current.out;
+    } else if (
+      current instanceof z.ZodOptional
+      || current instanceof z.ZodNullable
+      || current instanceof z.ZodDefault
+      || current instanceof z.ZodCatch
+      || current instanceof z.ZodPrefault
+      || current instanceof z.ZodNonOptional
+      || current instanceof z.ZodReadonly
+    ) {
+      current = current.unwrap();
+    } else {
+      return null;
     }
-    if (typeName === 'ZodEffects') current = current._def.schema;
-    else if (typeName === 'ZodOptional' || typeName === 'ZodNullable' || typeName === 'ZodDefault') {
-      current = typeof current._def.innerType === 'function' ? current._def.innerType() : current._def.innerType;
-    } else if (typeName === 'ZodBranded') current = current._def.type;
-    else return null;
   }
   return null;
 }
