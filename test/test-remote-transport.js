@@ -378,6 +378,19 @@ await test('every claim failing falls back to an unclaimed delivery', async () =
   assert(delivered[0].claimed !== true, 'device.ts must still claim it');
 });
 
+await test('fallback readback delivers pending rows regardless of transport metadata', async () => {
+  for (const transport of [undefined, 'broadcast_v1', 'mqtt_v1']) {
+    const { rc, client } = makeRemoteChannel({ row: { id: 'x', status: 'pending', metadata: { transport } }, failClaims: 3 });
+    rc.mqttReady = true;
+    rc.sleep = async () => {};
+    const delivered = [];
+    rc.onToolCall = payload => delivered.push(payload);
+    await rc.onDoorbell({ call_id: 'x', device_id: DEVICE_ID });
+    assert(client.claims() === 3 && client.attempts() === 1, 'exercise all claim retries and the fallback read');
+    assert(delivered.length === 1, 'fallback must deliver the pending row regardless of transport metadata');
+  }
+});
+
 await test('doorbell with a missing row is a no-op', async () => {
   const { rc } = makeRemoteChannel({ row: null });
   const delivered = [];
