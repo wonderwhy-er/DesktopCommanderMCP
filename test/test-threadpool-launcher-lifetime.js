@@ -30,7 +30,12 @@ function servingCopy({ endpoint = 'lifetime-fixture', parentPid = 101 } = {}) {
         },
         require: (name) => {
             if (name === 'child_process') return {};
-            if (name === 'net') return { createConnection: endpoint => { connections.push(endpoint); return channel; } };
+            if (name === 'net') return {
+                createConnection: endpoint => {
+                    connections.push(endpoint);
+                    return channel;
+                },
+            };
             if (name === './exit-process.js') return { exitProcess: code => exits.push(code) };
             return requireBuiltin(name);
         },
