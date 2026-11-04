@@ -1,7 +1,8 @@
 import path from 'path';
 import {configManager} from './config-manager.js';
 import {capture} from "./utils/capture.js";
-import {getShellType, isShellAvailable, POSIX_SHELLS, programName, type ShellType} from './utils/shell.js';
+import {getShellType, isShellAvailable, programName, type ShellType} from './utils/shell.js';
+import {shellScriptFiles} from './utils/shell-script-files.js';
 import {readPosixCommands} from './utils/posix-commands.js';
 import {readPowerShellCommands} from './utils/powershell-commands.js';
 import {readCmdCommands} from './utils/cmd-commands.js';
@@ -27,12 +28,9 @@ export type CommandCheck =
 export interface UnseenProgram {
   /** What hides it, as the shell reads it (in PowerShell, an alias's target): "eval", "Invoke-Expression", "$tool" or "deploy.sh" */
   what: string;
-  /** True for a script file (bash deploy.sh), false for a program chosen at run time (eval, Invoke-Expression, $tool) */
+  /** True for a script/startup file given to a shell; false for a program chosen at runtime. */
   inFile: boolean;
 }
-
-// POSIX shell options that take the next word as their value, so it isn't the script file
-const POSIX_SHELL_VALUE_OPTIONS = new Set(['-o', '+o', '-O', '+O', '--rcfile', '--init-file']);
 
 class CommandManager {
 
@@ -334,59 +332,33 @@ class CommandManager {
                 unseen.push({ what: cmd.name, inFile: false });
                 continue;
             }
-            const fromFile = this.scriptFile(cmd, shellType);
-            if (fromFile) unseen.push(fromFile);
+            unseen.push(...this.scriptFiles(cmd, shellType));
         }
         return unseen;
     }
 
     /**
-     * What hides the program when a command gives a shell a script file to run
+     * What hides the program when a command gives a shell a script or startup file to run
      * (bash deploy.sh, pwsh -File deploy.ps1, source deploy.sh), or when
      * PowerShell runs one named as the command (./deploy.ps1): the file, or the
      * shell when the file is named only when the command runs ("$SCRIPT").
-     * Undefined when the command runs no script file: a shell given its
-     * commands as text (bash -c '…') or reading its input.
+     * A shell's command text or standard input adds no file. An explicit Bash
+     * startup file can still run beside command text in interactive mode.
      */
-    private scriptFile(cmd: FoundCommand, shellType: ShellType): UnseenProgram | undefined {
+    private scriptFiles(cmd: FoundCommand, shellType: ShellType): UnseenProgram[] {
         const program = programName(cmd.name);
         const args = cmd.words.slice(1);
-        const hidden = (file: string | null | undefined): UnseenProgram | undefined => {
-            if (file === undefined) return undefined;
+        const hidden = (file: string | null): UnseenProgram => {
             return file === null ? { what: cmd.name, inFile: false } : { what: file, inFile: true };
         };
         if (shellType === 'posix' && (program === 'source' || program === '.')) {
-            return hidden(args[0]);
+            return args[0] === undefined ? [] : [hidden(args[0])];
         }
         // PowerShell runs a .ps1 named as the command (./deploy.ps1, & ./deploy.ps1) as a script file
         if (shellType === 'powershell' && /\.ps1$/i.test(cmd.name)) {
-            return hidden(cmd.name);
+            return [hidden(cmd.name)];
         }
-        if (POSIX_SHELLS.has(program)) {
-            for (let i = 0; i < args.length; i++) {
-                const arg = args[i];
-                if (arg === null) return hidden(arg);
-                // -c (fish: --command) takes the commands as text, -s reads them from the input (also in -lc, -ec, ...)
-                if (/^-[a-zA-Z]*[cs]/.test(arg) || arg === '--command') return undefined;
-                if (POSIX_SHELL_VALUE_OPTIONS.has(arg)) {
-                    i++;
-                    continue;
-                }
-                if (arg.startsWith('-') || arg.startsWith('+')) continue;
-                return hidden(arg);
-            }
-            return undefined;
-        }
-        if (getShellType(program) === 'powershell') {
-            for (let i = 0; i < args.length; i++) {
-                const arg = args[i];
-                if (arg === null) continue;
-                // -File, or any start of it PowerShell accepts
-                if (['-f', '-fi', '-fil', '-file'].includes(arg.toLowerCase())) return hidden(args[i + 1]);
-                if (/\.ps1$/i.test(arg)) return hidden(arg);
-            }
-        }
-        return undefined;
+        return shellScriptFiles(program, args).map(hidden);
     }
 
     /**
