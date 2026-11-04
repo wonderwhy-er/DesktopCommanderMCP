@@ -33,19 +33,30 @@ async function handle(callId, { toolThrows = false, saveThrows = false } = {}) {
         },
     };
     device.remoteChannel = {
+        user: { id: 'user-1' },
         markCallExecuting: async () => true,
         updateCallResult: async (id, status) => {
             writes.push(`${id}:${status}`);
             if (status === 'completed' && saveThrows) throw new Error('the result write failed');
         },
     };
-    await device.handleNewToolCall({ new: { id: callId, tool_name: 'read_file', tool_args: {}, device_id: DEVICE_ID } });
+    await device.handleNewToolCall({
+        new: { id: callId, tool_name: 'read_file', tool_args: {}, device_id: DEVICE_ID,
+            metadata: { transport: 'broadcast_v1' } },
+    });
     // Transport events aren't awaited: wait for the one the call ends with, then a little longer for any other
     const last = toolThrows ? 'tool_call_failed' : 'tool_call_completed';
     for (let waited = 0; waited < 3000 && !stagesOf(callId).includes(last); waited += 20) {
         await new Promise(resolve => setTimeout(resolve, 20));
     }
     await new Promise(resolve => setTimeout(resolve, 200));
+    for (const event of sent.flatMap(body => body.events).filter(event => event.params?.call_id === callId)) {
+        assert.equal('IS_MQTT_EXECUTION_ENABLED' in event.params, false);
+    }
+    for (const body of sent.filter(body => body.events.some(event => event.params?.call_id === callId))) {
+        assert.equal(body.telemetry_type, 'transport');
+        assert.equal(body.user_id, 'user-1');
+    }
     return { stages: stagesOf(callId), writes };
 }
 

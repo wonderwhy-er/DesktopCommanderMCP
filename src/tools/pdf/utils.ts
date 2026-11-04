@@ -42,3 +42,14 @@ export function generatePageNumbers(
     // Preallocate array for speed
     return Array.from({ length: count }, (_, i) => safeStart + i);
 }
+
+/**
+ * Close a PDF document opened with unpdf, so pdf.js frees what it holds for it
+ * @param pdfDocument The document, closed through its loading task: unpdf 1.8's
+ * document has no destroy() of its own (1.4's only calls loadingTask.destroy())
+ */
+export async function closePdfDocument(pdfDocument: { loadingTask: { destroy(): Promise<void> } }): Promise<void> {
+    try {
+        await pdfDocument.loadingTask.destroy();
+    } catch (e) { /* Ignore cleanup errors */ }
+}

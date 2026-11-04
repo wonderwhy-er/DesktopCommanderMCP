@@ -1,4 +1,5 @@
 import { LazyPackage } from '../../utils/lazy-package.js';
+import { closePdfDocument } from './utils.js';
 
 export interface ImageInfo {
     /** Object ID within PDF */
@@ -125,11 +126,7 @@ export async function extractImagesFromPdf(
                 await pdfDocument.cleanup(false);
             }
         } catch (e) { /* Ignore cleanup errors */ }
-        try {
-            if (typeof pdfDocument.destroy === 'function') {
-                await pdfDocument.destroy();
-            }
-        } catch (e) { /* Ignore cleanup errors */ }
+        await closePdfDocument(pdfDocument);
     }
 
     return pageResults;

@@ -13,6 +13,7 @@ import { VERSION } from '../../version.js';
 import { deviceLogNames, getDeviceLogDir, cleanLine } from './device-log.js';
 import { redact } from './redact.js';
 import { savedUserId, uploadReport } from './upload.js';
+import { getRemoteDeviceConfigPath } from '../remote-utils.js';
 
 /**
  * `desktop-commander remote --report`: a diagnostics zip a user sends to
@@ -444,7 +445,7 @@ function proxySet(...names: string[]): boolean {
 // --- device state, settings, device log --------------------------------------------------
 
 function deviceState(home: string): DiagnosticsReport['device'] {
-    const file = path.join(home, '.desktop-commander-device', 'device.json');
+    const file = getRemoteDeviceConfigPath(home);
     const state: DiagnosticsReport['device'] = {
         deviceJson: false, parses: false, id: null, session: false,
         accessToken: false, refreshToken: false, savedAt: null,

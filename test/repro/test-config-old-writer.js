@@ -21,16 +21,13 @@
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { fileURLToPath } from 'url';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { LoggingMessageNotificationSchema } from '@modelcontextprotocol/sdk/types.js';
 import { isTestHome } from '../helpers/test-env.js';
 import { closeClient } from '../helpers/close-client.js';
+import { serverTransport } from '../helpers/mcp-server.js';
 import { exitProcess } from '../../dist/utils/exit-process.js';
 
-const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
-const SERVER = path.join(PROJECT_ROOT, 'dist/index.js');
 const RUNS = Number(process.env.REPRO_RUNS || 5);
 /** How long the old version leaves config.json empty per write: about the measured p99 on Windows */
 const EMPTY_MS = 150;
@@ -75,7 +72,7 @@ async function runRepro() {
   for (let run = 1; run <= RUNS; run++) {
     const copiesBefore = corruptCopies().length;
     let log = '';
-    const transport = new StdioClientTransport({ command: process.execPath, args: [SERVER], env: { ...process.env }, stderr: 'pipe' });
+    const transport = serverTransport();
     transport.stderr?.on('data', (chunk) => { log += chunk; });
     const client = new Client({ name: 'desktop-commander-client', version: '1.0.0' }, { capabilities: {} });
     // The server's console.error reaches the client as log notifications

@@ -15,9 +15,10 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { spawnSync } from 'child_process';
-import { psQuote } from './helpers/powershell.js';
+import { installedPowerShells, psQuote } from './helpers/powershell.js';
 import { createStalledReadTarget } from './helpers/stalled-read.js';
 import { runIfMain, skip, SKIPPED } from './helpers/run-if-main.js';
+import { withEnv } from './helpers/test-env.js';
 
 const TEXTS = [
   'C:\\Users\\me\\notes.txt',
@@ -26,14 +27,6 @@ const TEXTS = [
   'costs $HOME and `backtick` and "double" quotes',
   '',
 ];
-
-function findPowerShell() {
-  for (const command of process.platform === 'win32' ? ['powershell.exe', 'pwsh'] : ['pwsh']) {
-    const probe = spawnSync(command, ['-NoProfile', '-NonInteractive', '-Command', '1'], { encoding: 'utf8' });
-    if (probe.status === 0) return command;
-  }
-  return null;
-}
 
 /** The text PowerShell reads from a literal, as UTF-16 code units (safe from console encodings) */
 function readBackInPowerShell(powershell, literal) {
@@ -48,7 +41,7 @@ const codeUnits = (text) => Array.from({ length: text.length }, (_, i) => text.c
 async function psQuoteGivesTheExactText() {
   assert.strictEqual(psQuote("O'Brien"), "'O''Brien'", 'a single quote must be doubled');
   assert.strictEqual(psQuote('a\u2019b'), "'a\u2019\u2019b'", 'PowerShell reads \u2019 as a single quote: it must be doubled too');
-  const powershell = findPowerShell();
+  const [powershell] = installedPowerShells();
   if (!powershell) return skip('psQuote round trip: no PowerShell on this machine');
   for (const text of TEXTS) {
     assert.strictEqual(readBackInPowerShell(powershell, psQuote(text)), codeUnits(text), `PowerShell read ${psQuote(text)} as other text than ${JSON.stringify(text)}`);
@@ -60,18 +53,17 @@ async function fifoInAFolderWithQuotes() {
   const base = fs.mkdtempSync(path.join(os.tmpdir(), 'dc-command-paths-'));
   const folder = path.join(base, 'a "quote" and $HOME');
   fs.mkdirSync(folder);
-  const savedTmpdir = process.env.TMPDIR;
-  process.env.TMPDIR = folder;
   try {
-    const target = await createStalledReadTarget();
-    try {
-      assert.strictEqual(path.dirname(target.path), fs.realpathSync.native(folder), `the FIFO was made at ${target.path}, not in ${folder}`);
-      assert(fs.statSync(target.path).isFIFO(), `${target.path} is not a FIFO`);
-    } finally {
-      target.close();
-    }
+    await withEnv({ TMPDIR: folder }, async () => {
+      const target = await createStalledReadTarget();
+      try {
+        assert.strictEqual(path.dirname(target.path), fs.realpathSync.native(folder), `the FIFO was made at ${target.path}, not in ${folder}`);
+        assert(fs.statSync(target.path).isFIFO(), `${target.path} is not a FIFO`);
+      } finally {
+        target.close();
+      }
+    });
   } finally {
-    if (savedTmpdir === undefined) delete process.env.TMPDIR; else process.env.TMPDIR = savedTmpdir;
     fs.rmSync(base, { recursive: true, force: true });
   }
 }

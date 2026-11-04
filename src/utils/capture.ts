@@ -574,7 +574,9 @@ const postTelemetryPayload = async (endpoint: string, payload: string): Promise<
 
         const req = client.request(url, options, (res) => {
             res.resume();
-            res.on('end', () => resolve(res.statusCode !== undefined && res.statusCode >= 200 && res.statusCode < 300));
+            res.on('end', () => {
+                resolve(res.statusCode !== undefined && res.statusCode >= 200 && res.statusCode < 300)
+            });
         });
         req.on('error', () => resolve(false));
         req.setTimeout(3000, () => {
@@ -613,14 +615,25 @@ const TRANSPORT_QUEUE_LIMIT = 100;
 /** The longest a transport event is held; after that it is dropped, so the retry ends for a server that never names an address */
 const TRANSPORT_HOLD_MS = 10 * 60 * 1000;
 
-const transportQueue: { event: string; properties: TransportParams; queuedAt: number }[] = [];
+const transportQueue: { event: string; properties: TransportParams; userId: string; queuedAt: number }[] = [];
 let transportRetryTimer: NodeJS.Timeout | undefined;
 
 /** Sends one transport event, redacted like every other event (known paths, path properties, error text) */
-const sendTransport = async (event: string, properties: TransportParams) => {
+const sendTransport = async (event: string, properties: TransportParams, userId: string) => {
     try {
+        const endpoint = process.env.DC_TELEMETRY_URL;
+        if (!endpoint || isTelemetryDisabledByEnv()) return;
+        const telemetryEnabled = await configManager.getValue('telemetryEnabled');
+        if (isTelemetryDisabledValue(telemetryEnabled)) return;
         if (uniqueUserId === 'unknown') uniqueUserId = await configManager.getOrCreateClientId();
-        await sendToTelemetryProxy(event, sanitizeEventProperties(properties, await knownEventPaths()));
+        const payload = JSON.stringify({
+            client_id: uniqueUserId,
+            user_id: userId,
+            telemetry_type: 'transport',
+            timestamp_micros: Date.now() * 1000,
+            events: [{ name: event, params: sanitizeEventProperties(properties, await knownEventPaths()) }]
+        });
+        await postTelemetryPayload(endpoint, payload);
     } catch {
         // Telemetry must not affect command handling.
     }
@@ -641,7 +654,7 @@ const drainTransportQueue = async () => {
         while (transportQueue.length > 0 && process.env.DC_TELEMETRY_URL) {
             const next = transportQueue.shift()!;
             if (Date.now() - next.queuedAt > TRANSPORT_HOLD_MS) continue;
-            await sendTransport(next.event, next.properties);
+            await sendTransport(next.event, next.properties, next.userId);
         }
     } finally {
         transportDraining = false;
@@ -666,9 +679,9 @@ const drainTransportQueue = async () => {
  * Only to the address the Remote MCP server gave, never to the built-in production
  * address: an event that arrives before the address is set is held until it is.
  */
-export const captureTransport = async (event: string, properties: TransportParams) => {
+export const captureTransport = async (event: string, properties: TransportParams, userId: string) => {
     if (isInsideUiOriginCall() || isTelemetryDisabledByEnv()) return;
-    transportQueue.push({ event, properties, queuedAt: Date.now() });
+    transportQueue.push({ event, properties, userId, queuedAt: Date.now() });
     if (transportQueue.length > TRANSPORT_QUEUE_LIMIT) transportQueue.shift();
     void drainTransportQueue();
 };

@@ -82,6 +82,58 @@ export function resolveProgramPath(program: string): string {
 }
 
 /**
+ * Standard Windows PATHEXT value, used to repair a corrupted PATHEXT before
+ * running a command.
+ *
+ * On some Windows Claude Desktop / DXT launches the server process inherits a
+ * broken PATHEXT (observed as ".CPL" only). Because commands get the server's
+ * environment, that broken value would propagate into every spawned shell,
+ * stripping ".EXE" and breaking resolution of git / node / python / rg / etc.
+ * (and even full-path .exe invocations under PowerShell). See issue #481.
+ */
+const STANDARD_PATHEXT = '.COM;.EXE;.BAT;.CMD;.VBS;.VBE;.JS;.JSE;.WSF;.WSH;.MSC';
+
+/**
+ * Return a healthy PATHEXT for spawned Windows shells.
+ * - Unset           -> use the standard list.
+ * - Missing ".EXE"  -> corrupted; merge the standard list with whatever was
+ *                      present (preserves any extra extensions, order-stable).
+ * - Otherwise       -> leave the inherited value untouched.
+ */
+function getRepairedPathExt(): string {
+  const current = process.env.PATHEXT;
+  if (!current) return STANDARD_PATHEXT;
+  const exts = current.split(';').map(e => e.trim().toUpperCase()).filter(Boolean);
+  if (!exts.includes('.EXE')) {
+    return [...new Set([...STANDARD_PATHEXT.split(';'), ...exts])].join(';');
+  }
+  return current;
+}
+
+/**
+ * The environment for what Desktop Commander runs for the AI (start_process
+ * commands, node:local code): the server's own, with on Windows what a
+ * client's launch broke or left out put back. PATHEXT is repaired (#481).
+ * ProgramData is set when missing: a client on the MCP SDK's default
+ * environment leaves it out, and Windows OpenSSH (ssh, scp, sftp, ssh-keygen)
+ * exits 255 without a word when it's unset (#702). Windows keeps it on the
+ * system drive, which the SDK's set does pass (SystemDrive, else SystemRoot's
+ * drive); with neither it stays unset.
+ */
+export function getCommandEnvironment(): NodeJS.ProcessEnv {
+  const env = { ...process.env };
+  if (isWindows()) {
+    env.PATHEXT = getRepairedPathExt();
+    // process.env ignores the name's case on Windows; the copy doesn't, so it's read here
+    const drive = process.env.SystemDrive || path.win32.parse(process.env.SystemRoot ?? '').root;
+    if (!process.env.ProgramData && drive) {
+      env.ProgramData = path.win32.join(drive, '\\', 'ProgramData');
+    }
+  }
+  return env;
+}
+
+/**
  * The shell used when the user hasn't configured one.
  * Windows: Windows PowerShell, falling back to %ComSpec%.
  * macOS/Linux: $SHELL, falling back to the OS default shell.
