@@ -118,7 +118,7 @@ function ciReview(args, env, dir) {
       cwd: ROOT,
       // GitHub's own GITHUB_ACTIONS and GITHUB_STEP_SUMMARY reach a case only when it names them
       env: {
-        ...process.env, GITHUB_REPOSITORY: 'o/r', GITHUB_OUTPUT: output, GH_TOKEN: 'token', OPENAI_API_KEY: '', REVIEW_MODEL: '', OPENAI_MODEL: '', REVIEW_REASONING_EFFORT: '', OPENAI_REASONING_EFFORT: '',
+        ...process.env, GITHUB_REPOSITORY: 'o/r', GITHUB_OUTPUT: output, GH_TOKEN: 'token', ANTHROPIC_API_KEY: '', REVIEW_MODEL: '', OPENAI_MODEL: '', REVIEW_REASONING_EFFORT: '', OPENAI_REASONING_EFFORT: '',
         GITHUB_ACTIONS: '', GITHUB_STEP_SUMMARY: '', ...env,
       },
     });
@@ -178,7 +178,7 @@ export default async function run() {
     }
     for (const command of ['git log; rm -rf /', 'git log --output=x.txt', 'git log --format="%H"', 'git log $(id)', 'git push', 'git -C .. log',
       'git show --ext-diff HEAD', 'gh api /user', 'gh pr view 7 -R other/repo', 'gh pr view 7 --repo=other/repo', 'gh pr view 7 --web', 'gh pr merge 7',
-      'gh run rerun 1', 'echo $OPENAI_API_KEY']) {
+      'gh run rerun 1', 'echo $CLAUDE_CODE_OAUTH_TOKEN']) {
       const refused = shell(command);
       assert.ok(refused.decision === 'deny' && /only plain git log, git show, git rev-parse or git merge-base, or gh pr view or gh run view/i.test(refused.reason),
         `refused: ${command}: ${JSON.stringify(refused)}`);
@@ -512,7 +512,7 @@ export default async function run() {
   // The workflow: triggers, and who holds what
   const workflow = readWorkflow('review.yml');
   assert.ok(/^ {2}workflow_call:\n {4}inputs:\n {6}pr:/m.test(workflow) && /^ {6}sha:/m.test(workflow), 'called by tests.yml after its tests, with the PR, head and base');
-  assert.ok(/^ {4}secrets:\n {6}OPENAI_API_KEY:/m.test(workflow), 'and given the key');
+  assert.ok(/^ {4}secrets:\n {6}CLAUDE_CODE_OAUTH_TOKEN:/m.test(workflow), 'and given the key');
   assert.ok(!/^ {2}pull_request:/m.test(workflow) && !/^ {2}issue_comment:/m.test(workflow), 'the PR\'s events are tests.yml\'s: the review comes after their tests');
   assert.ok(/^ {2}workflow_dispatch:\n {4}inputs:\n {6}commit:/m.test(workflow) && /^ {6}base:/m.test(workflow), 'on demand, with commit and base');
   const requestJob = jobLines(workflow, 'request');
@@ -522,7 +522,7 @@ export default async function run() {
   const reviewJob = jobLines(workflow, 'review');
   assert.deepStrictEqual(blockUnder(reviewJob, 'permissions'), ['contents: read', 'pull-requests: read', 'actions: read'],
     'the job with the key can\'t write; it reads runs, for a text check\'s gh run view');
-  assert.deepStrictEqual([...new Set(reviewJob.join('\n').match(/secrets\.\w+/g))], ['secrets.OPENAI_API_KEY'], 'and holds no other secret');
+  assert.deepStrictEqual([...new Set(reviewJob.join('\n').match(/secrets\.\w+/g))], ['secrets.CLAUDE_CODE_OAUTH_TOKEN'], 'and holds no other secret');
   const steps = reviewJob.map((line) => line.trim());
   const prCheckout = steps.indexOf('path: pr');
   assert.ok(prCheckout > 0 && steps.slice(prCheckout - 5, prCheckout + 4).includes('ref: ${{ needs.request.outputs.sha }}'), 'the PR\'s head, by SHA, into pr/');
@@ -534,11 +534,11 @@ export default async function run() {
   assert.ok(steps.includes('CHECK: ${{ inputs.check }}') && steps.includes('if [[ "$CHECK" == text ]]; then text=(--text pr); fi'), 'check=text: the PR\'s description');
   assert.ok(steps.includes('pattern: results-*') && steps.includes('pattern: coverage-*') && steps.includes('path: ci'), 'the run\'s results and coverage, downloaded as data');
   // The script's own files, checked out sparsely: every file run reads (the review found the text check's prompt missing)
-  for (const file of ['/.github/review-prompt.md', '/.github/text-check-prompt.md', '/.github/writing-style.md', '/test/helpers/openai-review.js',
+  for (const file of ['/.github/review-prompt.md', '/.github/text-check-prompt.md', '/.github/writing-style.md', '/test/helpers/claude-review.js',
     '/test/check-coverage-report.js', '/test/helpers/node-test-runner.js']) {
     assert.ok(steps.includes(file), `the review job checks out ${file}`);
   }
-  assert.ok(steps.includes('OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}'));
+  assert.ok(steps.includes('ANTHROPIC_API_KEY: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}'));
   assert.ok(steps.includes('name: review') && steps.includes('path: review/'), 'the review artifact');
   const upload = steps.indexOf('- name: Upload the review');
   assert.ok(upload > 0 && steps.slice(upload, steps.findIndex((line, i) => i > upload && line.startsWith('- '))).includes('if: always()'),
