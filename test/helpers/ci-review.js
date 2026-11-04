@@ -2,7 +2,7 @@
  * The AI review's parts that need no network (test/ci-review.js, .github/workflows/review.yml):
  * - the prompt: the repo's rules (.github/review-prompt.md), then this review's
  *   commits and files, and the PR's title and description as quoted data;
- * - the model's answer: JSON with a summary and findings, each a kind (real bug,
+ * - the model's answer: JSON with a summary and findings, each a kind (bug,
  *   nitpick, handled elsewhere, not checked), a file, a line and a text;
  * - the review GitHub gets: event COMMENT, a finding on a line the diff shows as
  *   a comment on that line, every other one in the summary with its file and line.
@@ -16,14 +16,19 @@ import { contextPart } from './review-context.js';
 export const REVIEW_MARKER = '<!-- ai-review -->';
 // The kinds a finding is sorted into, in the order a review lists them, as it shows them, with their plural
 const KINDS = [
-  ['real bug', 'Real bug', 'real bugs'],
+  ['bug', 'Bug', 'bugs'],
   ['not covered', 'Not covered', 'not covered'],
   ['nitpick', 'Nitpick', 'nitpicks'],
   ['handled elsewhere', 'Handled elsewhere', 'handled elsewhere'],
   ['not checked', 'Not checked', 'not checked'],
   ['unsorted', 'Unsorted', 'unsorted'],
 ];
-const kindOf = (kind) => (KINDS.find(([name]) => name === String(kind ?? '').trim().toLowerCase()) ?? KINDS.at(-1));
+const kindOf = (kind) => {
+  const label = String(kind ?? '').trim().toLowerCase();
+  // Historical model envelopes retain bug severity when their old label is read.
+  const name = label === 'real bug' ? 'bug' : label;
+  return KINDS.find(([current]) => current === name) ?? KINDS.at(-1);
+};
 const commit = (sha) => `\`${plain(sha ?? '').slice(0, 7)}\``;
 
 /** Text on one line, as the writing style's tables and comments want it */
@@ -282,7 +287,7 @@ export function reviewOf({ answer, diff, headSha, baseSha, usage = null, inline 
       comments.push({ path: file, line, side: 'RIGHT', body: `**${label}:** ${oneLine(quiet(text))}` });
     }
   }
-  // The table: the kind's order first (real bugs lead), the model's order within a kind
+  // The table: the kind's order first (bugs lead), the model's order within a kind
   const rows = findings.map((finding, index) => ({ ...finding, index, rank: KINDS.indexOf(kindOf(finding.kind)) }))
     .sort((a, b) => a.rank - b.rank || a.index - b.index)
     .map(({ kind, file, line, text }) => {
