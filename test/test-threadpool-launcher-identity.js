@@ -69,6 +69,24 @@ test('a marked child counts with its recognized launcher and keeps the earliest 
     assert.equal(observed.since, new Date(101000).toISOString());
 });
 
+test('a reused launcher PID with a later start does not hide an independent server', async () => {
+    const observed = await count([
+        { ...server(101, 1), startedAt: 300000 },
+        { ...server(102, 101, ` ${LAUNCHER_ARGUMENT}101`), startedAt: 200000 },
+    ]);
+    assert.equal(observed.running, 2);
+    assert.equal(observed.since, new Date(200000).toISOString());
+});
+
+test('a launcher with an unknown start keeps its marked child start', async () => {
+    const observed = await count([
+        { ...server(101, 1), startedAt: NaN },
+        { ...server(102, 101, ` ${LAUNCHER_ARGUMENT}101`), startedAt: 200000 },
+    ]);
+    assert.equal(observed.running, 1);
+    assert.equal(observed.since, new Date(200000).toISOString());
+});
+
 test('an independent nested launcher and its marked child count separately from the serving parent', async () => {
     const rows = [server(101, 1), server(102, 101), server(103, 102, ` ${LAUNCHER_ARGUMENT}102`)];
     assert.equal((await count(rows)).running, 2);
@@ -105,6 +123,14 @@ test('bootstrap appends exactly one marker after the original script arguments',
         `${LAUNCHER_ARGUMENT}101`]);
     assert.equal(invocation.options.env.DESKTOP_COMMANDER_THREADPOOL_LAUNCHER_PID, '101');
     assert.equal(invocation.options.stdio, 'inherit');
+});
+
+test('an unrelated inherited launcher marker still configures the Windows pool', () => {
+    const observed = bootstrap({ env: { DESKTOP_COMMANDER_THREADPOOL_LAUNCHER_PID: '999' } });
+    assert.notEqual(observed.invocation, null);
+    assert.equal(observed.process.env.UV_THREADPOOL_SIZE, '16');
+    assert.equal(observed.monitored, false);
+    assert.equal(observed.invocation.options.env.DESKTOP_COMMANDER_THREADPOOL_LAUNCHER_PID, '101');
 });
 
 test('the child consumes only its exact trailing marker and removes inherited launcher identity', () => {
