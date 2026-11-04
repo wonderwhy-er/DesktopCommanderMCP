@@ -55,7 +55,7 @@ export async function runTestFiles({ dir, files, outDir, suiteName, timeoutMs = 
     lastEvent: undefined,
     fileDuration: undefined,
     tests: [],
-    output: [],
+    output: '',
     ended: false,
   }));
   const entryFor = (file) => file && entries.find((entry) => sameFile(entry.path, path.resolve(dir, file)));
@@ -109,11 +109,8 @@ export async function runTestFiles({ dir, files, outDir, suiteName, timeoutMs = 
       }
       if (type === 'test:stdout' || type === 'test:stderr') {
         (type === 'test:stdout' ? process.stdout : process.stderr).write(data.message);
-        // A message that ends its line leaves an empty piece after the split: it's no line of the output
-        const lines = data.message.split(/\r?\n/);
-        if (lines.at(-1) === '') lines.pop();
-        entry.output.push(...lines);
-        entry.output.splice(0, Math.max(0, entry.output.length - OUTPUT_TAIL_LINES * 2));
+        // Keep the unfinished line: stream messages do not mark line boundaries.
+        entry.output = `${entry.output}${data.message}`.split('\n').slice(-OUTPUT_TAIL_LINES * 2).join('\n');
       } else if (type === 'test:pass' || type === 'test:fail') {
         recordTest(entry, type, data);
         if (isFileEvent(data, entry)) finish(entry);
@@ -178,7 +175,7 @@ function toResult(entry, runDir) {
     duration: Math.round(entry.fileDuration ?? measured),
     skipped,
     tests: entry.tests,
-    outputTail: success ? undefined : entry.output.join('\n').trimEnd().split('\n').slice(-OUTPUT_TAIL_LINES).join('\n'),
+    outputTail: success ? undefined : entry.output.replace(/\r\n/g, '\n').trimEnd().split('\n').slice(-OUTPUT_TAIL_LINES).join('\n'),
   };
 }
 
