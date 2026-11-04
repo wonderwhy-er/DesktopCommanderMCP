@@ -62,9 +62,9 @@ async function withFetch(fake, run) {
   globalThis.fetch = fake;
   try { return await run(); } finally { globalThis.fetch = original; }
 }
-async function withWarnings(run) {
+async function withWarnings(run, method = 'warn') {
   const messages = [];
-  const warning = mock.method(console, 'warn', (...args) => messages.push(args));
+  const warning = mock.method(console, method, (...args) => messages.push(args));
   try { return await run(messages); } finally { warning.mock.restore(); }
 }
 
@@ -291,7 +291,7 @@ try {
       const saved = await cache();
       await writeFile(path.join(saved.folder, 'identity.json'), JSON.stringify({ ...saved.identity, ...identityPatch }));
       const requests = [];
-      await withWarnings(async warnings => {
+      await withWarnings(async debugMessages => {
         await withFetch(async (url, request) => {
           requests.push(url.href);
           assert.equal(url.href, `${profile.serverUrl}/device/mqtt/enroll`);
@@ -308,8 +308,12 @@ try {
           assert.ok(new X509Certificate(fresh.certificate.certificate_pem).checkPrivateKey(createPrivateKey(fresh.identity.private_key)));
           await enrollMqttDevice(profile);
         });
-        assert.deepEqual(warnings, [[SKIPPED_REVOCATION_WARNING]]);
-      });
+        assert.deepEqual(debugMessages, [
+          ['Start MQTT enrollment for userId:', USER_ID, 'deviceId:', DEVICE_ID],
+          [SKIPPED_REVOCATION_WARNING],
+          ['Start MQTT enrollment for userId:', USER_ID, 'deviceId:', DEVICE_ID],
+        ]);
+      }, 'debug');
       assert.deepEqual(requests, [`${profile.serverUrl}/device/mqtt/enroll`]);
     }
   });
