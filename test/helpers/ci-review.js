@@ -251,8 +251,8 @@ export function findingsOf(answer, diff) {
 }
 
 /**
- * Requests, tokens (thinking apart: it is billed as output) and API seconds from Gemini CLI's own stats
- * (--output-format json), every model added up; null without them
+ * Requests, tokens (thinking apart: it is billed as output) and API seconds from the review runner's
+ * normalized provider stats, every model added up; null without them
  */
 export function usageOf(stats) {
   const models = Object.entries(stats?.models ?? {});

@@ -62,7 +62,8 @@ export async function askClaude({ prompt, key, folder, out, calls = 8, maxTurns 
   const secrets = [key, readOptions.token, ...Object.entries(environment)
     .filter(([name, value]) => /KEY|TOKEN|SECRET|PASSWORD/i.test(name) && value?.length >= 8)
     .map(([, value]) => value)].filter(Boolean);
-  const redact = (text) => [...new Set(secrets)].reduce((value, secret) => value.split(secret).join('<redacted>'), String(text));
+  const redact = (text) => [...new Set(secrets)]
+    .reduce((value, secret) => value.split(secret).join('<redacted>'), String(text));
   if (redact(prompt) !== prompt) throw new Error('Review input contains a credential: no request was sent.');
   const save = (name, value) => {
     if (!out) return;
@@ -88,10 +89,14 @@ export async function askClaude({ prompt, key, folder, out, calls = 8, maxTurns 
     try {
       const { id, method, params = {} } = JSON.parse(raw);
       if (id === undefined) { response.writeHead(202).end(); return; }
-      let result;
-      if (method === 'initialize') result = { protocolVersion: '2025-03-26', capabilities: { tools: {} }, serverInfo: { name: 'review', version: '1' } };
-      else if (method === 'ping') result = {};
-      else if (method === 'tools/list') result = { tools: tools.map(({ name, description, parameters }) => ({ name, description, inputSchema: parameters })) };
+      let methodResponse;
+      if (method === 'initialize') methodResponse = {
+        protocolVersion: '2025-03-26', capabilities: { tools: {} }, serverInfo: { name: 'review', version: '1' },
+      };
+      else if (method === 'ping') methodResponse = {};
+      else if (method === 'tools/list') methodResponse = {
+        tools: tools.map(({ name, description, parameters }) => ({ name, description, inputSchema: parameters })),
+      };
       else if (method === 'tools/call') {
         const allowed = tools.some((tool) => tool.name === params.name);
         const output = used++ >= calls ? 'Tool budget reached: report what remains not checked.'
@@ -99,13 +104,16 @@ export async function askClaude({ prompt, key, folder, out, calls = 8, maxTurns 
             : await readTool({ ...readOptions, folder, name: params.name, args: params.arguments });
         const failed = /^(Read denied|Read failed|Tool denied|Tool budget)/.test(output);
         if (!failed) successful++;
-        result = { content: [{ type: 'text', text: redact(output) }], isError: failed };
-        session.push({ name: params.name, arguments: params.arguments, result });
+        methodResponse = { content: [{ type: 'text', text: redact(output) }], isError: failed };
+        session.push({ name: params.name, arguments: params.arguments, result: methodResponse });
       } else {
-        response.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ jsonrpc: '2.0', id, error: { code: -32601, message: 'Method denied' } }));
+        response.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({
+          jsonrpc: '2.0', id, error: { code: -32601, message: 'Method denied' },
+        }));
         return;
       }
-      response.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ jsonrpc: '2.0', id, result }));
+      response.writeHead(200, { 'Content-Type': 'application/json' })
+        .end(JSON.stringify({ jsonrpc: '2.0', id, result: methodResponse }));
     } catch { response.writeHead(400).end(); }
   });
   try {
@@ -139,18 +147,24 @@ export async function askClaude({ prompt, key, folder, out, calls = 8, maxTurns 
       fs.writeFileSync(path.join(out, 'cli-stderr.txt'), redact(done.stderr));
     }
     let answer;
-    try { answer = JSON.parse(done.stdout); } catch { throw new Error('Claude Code returned no valid result: review not done.'); }
+    try { answer = JSON.parse(done.stdout); } catch {
+      throw new Error('Claude Code returned no valid result: review not done.');
+    }
     save('answer.json', answer);
     if (done.code !== 0 || answer.is_error || answer.subtype !== 'success' || !answer.result?.trim())
       throw new Error('Claude Code did not complete the review; inspect the redacted answer artifact.');
-    if (redact(answer.result) !== answer.result) throw new Error('Claude Code answer contained a credential: review not done.');
+    if (redact(answer.result) !== answer.result)
+      throw new Error('Claude Code answer contained a credential: review not done.');
     if (successful === 0) throw new Error('Claude Code read no source: review not done.');
     const models = Object.entries(answer.modelUsage ?? {});
-    if (models.length !== 1 || models[0][0] !== CLAUDE_MODEL) throw new Error('Claude Code effective model did not match the pinned Haiku model.');
+    if (models.length !== 1 || models[0][0] !== CLAUDE_MODEL)
+      throw new Error('Claude Code effective model did not match the pinned Haiku model.');
     const usage = models[0][1];
-    const input = (usage.inputTokens ?? 0) + (usage.cacheReadInputTokens ?? 0) + (usage.cacheCreationInputTokens ?? 0);
+    const input = (usage.inputTokens ?? 0) + (usage.cacheReadInputTokens ?? 0)
+      + (usage.cacheCreationInputTokens ?? 0);
     const output = usage.outputTokens ?? 0;
-    return { response: answer.result, stats: { provider: "claude-code", turns: answer.num_turns, effort: "medium", auth: "api_key", models: { [CLAUDE_MODEL]: {
+    return { response: answer.result, stats: {
+      provider: "claude-code", turns: answer.num_turns, effort: "medium", auth: "api_key", models: { [CLAUDE_MODEL]: {
       api: { totalLatencyMs: Date.now() - started },
       tokens: { prompt: input, candidates: output, thoughts: 0, total: input + output },
     } }, tools: { totalCalls: used, totalSuccess: successful } } };
@@ -160,7 +174,8 @@ export async function askClaude({ prompt, key, folder, out, calls = 8, maxTurns 
   } finally {
     if (out) {
       fs.mkdirSync(out, { recursive: true });
-      fs.writeFileSync(path.join(out, 'session.jsonl'), session.map((entry) => redact(JSON.stringify(entry))).join('\n') + '\n');
+      fs.writeFileSync(path.join(out, 'session.jsonl'),
+        session.map((entry) => redact(JSON.stringify(entry))).join('\n') + '\n');
     }
     server.closeAllConnections();
     await new Promise((resolve) => server.close(resolve));
