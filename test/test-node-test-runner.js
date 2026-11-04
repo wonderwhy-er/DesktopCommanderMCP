@@ -87,6 +87,26 @@ export default async function run() {
     assert.ok(junit.includes('name="skipped: no python"'), 'JUnit: the skipped check as its own entry');
     const tap = fs.readFileSync(path.join(outDir, 'results.tap'), 'utf8');
     assert.strictEqual((tap.match(/^not ok /gm) ?? []).length, 1, 'TAP: one file not ok');
+    fs.writeFileSync(path.join(dir, 'fragmented.mjs'), [
+      "process.stdout.write('first');",
+      "setTimeout(() => process.stdout.write(' second\\r'), 50);",
+      "setTimeout(() => process.stdout.write('\\n'), 100);",
+      "setTimeout(() => process.stderr.write('third'), 150);",
+      "setTimeout(() => { process.stderr.write(' fourth\\n'); process.exitCode = 7; }, 200);",
+    ].join('\n'));
+    fs.writeFileSync(path.join(dir, 'fragment-run.mjs'), [
+      `import { runTestFiles } from ${JSON.stringify(runner)};`,
+      "const [dir, outDir] = process.argv.slice(2);",
+      "await runTestFiles({ dir, files: ['./fragmented.mjs'], outDir, suiteName: 'fragments' });",
+    ].join('\n'));
+    const fragmentOut = path.join(dir, 'fragment-out');
+    const fragmented = spawnSync(process.execPath, [path.join(dir, 'fragment-run.mjs'), dir, fragmentOut], { cwd: dir, env, encoding: 'utf8', timeout: 120_000 });
+    assert.strictEqual(fragmented.status, 0, `${fragmented.stdout}${fragmented.stderr}`);
+    const fragmentResult = JSON.parse(fs.readFileSync(path.join(fragmentOut, 'results.json'), 'utf8')).files[0];
+    assert.strictEqual(fragmentResult.exitCode, 7);
+    assert.strictEqual(fragmentResult.outputTail, 'first second\nthird fourth', 'chunks do not create line breaks, including a split CRLF');
+    const fragmentJunit = fs.readFileSync(path.join(fragmentOut, 'junit.xml'), 'utf8');
+    assert.ok(fragmentJunit.includes('first second\nthird fourth</failure>'), 'JUnit preserves the same failure text as JSON');
     console.log('✓ a run of test files: JUnit, JSON and TAP, a failure\'s output, a skipped check');
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
