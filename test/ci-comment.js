@@ -75,6 +75,8 @@ function testResults(os, own) {
   const unreadable = [];
   for (const dir of dirs) {
     for (const part of fs.readdirSync(dir)) {
+      // A suite self-test can leave repro output outside the unit-only selection.
+      if (ranTests === 'test' && part !== 'suite') continue;
       const file = path.join(dir, part, 'results.json');
       if (!fs.existsSync(file)) continue;
       let data;
