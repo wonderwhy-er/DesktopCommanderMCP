@@ -437,9 +437,16 @@ async function desktopCommanderMcp(): Promise<DiagnosticsReport['desktopCommande
         const launcherPid = tokens.at(-1) === `${LAUNCHER_PID_ARGUMENT}${parentPid}` ? parentPid : null;
         return [{ pid, parentPid, startedAt, launcherPid }];
     });
-    const serverPids = new Set(servers.map((p) => p.pid));
-    const counted = servers.filter((p) => p.launcherPid === null || !serverPids.has(p.launcherPid));
-    const starts = counted.map((p) => p.startedAt).filter((t) => !Number.isNaN(t));
+    const serversByPid = new Map(servers.map((p) => [p.pid, p]));
+    const counted = servers.filter((p) => {
+        const launcher = p.launcherPid === null ? undefined : serversByPid.get(p.launcherPid);
+        if (!launcher) return true;
+        // A process that started later cannot have launched this child; its PID was reused.
+        return Number.isFinite(launcher.startedAt) && Number.isFinite(p.startedAt) &&
+            launcher.startedAt > p.startedAt;
+    });
+    // A grouped child may have the only known start time when its launcher has no timestamp.
+    const starts = servers.map((p) => p.startedAt).filter(Number.isFinite);
     return {
         running: counted.length,
         since: starts.length ? new Date(Math.min(...starts)).toISOString() : null,

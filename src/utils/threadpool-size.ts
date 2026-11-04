@@ -49,11 +49,11 @@ export function processEnvReachesThreadpool(platform: string = process.platform,
  */
 export function setThreadpoolSize(size: string, envReachesThreadpool: boolean = processEnvReachesThreadpool()): void {
   const launcherPid = process.env[LAUNCHER_PID_VARIABLE];
-  if (launcherPid) {
-    // Remove only our appended argument; the application keeps every argument its caller supplied.
-    if (process.argv.at(-1) === `${LAUNCHER_PID_ARGUMENT}${launcherPid}`) process.argv.pop();
-    // The commands and servers the copy starts are not copies
-    delete process.env[LAUNCHER_PID_VARIABLE];
+  // Descendants inherit the environment, so the marker must also identify our parent and appended argument.
+  delete process.env[LAUNCHER_PID_VARIABLE];
+  if (launcherPid === String(process.ppid) &&
+      process.argv.at(-1) === `${LAUNCHER_PID_ARGUMENT}${launcherPid}`) {
+    process.argv.pop();
     exitWithLauncher(Number(launcherPid));
     return;
   }
