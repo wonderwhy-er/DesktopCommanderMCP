@@ -14,7 +14,8 @@ import type { CommandReading, FoundCommand } from './command-reading.js';
  *   and sc/query run net and sc), but a name with a drive letter keeps its /
  *   (C:/Windows/System32/sc.exe);
  * - a word with %VAR% in it is known only at run time;
- * - if and for run the command after their condition or after "do".
+ * - if and for run the command after their condition or after "do";
+ * - for /f also runs its single-quoted set (back-quoted with usebackq).
  * cmd has no functions, so none are listed.
  */
 
@@ -129,7 +130,7 @@ class CmdReader {
   private position = 0;
   readonly commands: FoundCommand[] = [];
 
-  constructor(private readonly tokens: Token[]) {}
+  constructor(private readonly tokens: Token[], private readonly text: string) {}
 
   /** Reads commands and the operators between them, up to the end, or up to the ) that closes a group */
   readList(inGroup: boolean): void {
@@ -163,6 +164,7 @@ class CmdReader {
     let parens = 0;
     while (this.position < this.tokens.length) {
       const token = this.tokens[this.position];
+      if (token.kind === 'open' && parens === 0 && this.readForSet(words)) continue;
       if (token.kind === 'op') break;
       if (token.kind === 'close' && parens === 0 && inGroup) break;
       if (token.kind === 'redirect') {
@@ -180,6 +182,66 @@ class CmdReader {
       this.position++;
     }
     if (words.length > 0 && !this.startsCommandAfter(words, parens)) this.addCommand(words);
+  }
+
+  /** A FOR /F quoted set is a command or literal, not part of the outer list. */
+  private readForSet(words: Token[]): boolean {
+    if (words.length === 0 || commandName(words[0]).toLowerCase() !== 'for'
+      || words[words.length - 1].value.toLowerCase() !== 'in') return false;
+    const rest = afterName(words[0]);
+    // Comma/equal/semicolon may separate FOR from /F; an attached slash cannot.
+    if (rest && !';,='.includes(words[0].value[words[0].nameEnd!])) return false;
+    const args = [...(rest ? [rest] : []), ...words.slice(1).map(word => word.value)];
+    if (args[0]?.toLowerCase() !== '/f') return false;
+    const usebackq = /(?:^|\s)usebackq(?:\s|$)/i.test(args[1] ?? '');
+    const open = this.tokens[this.position];
+    let start = open.start + 1;
+    while (/[ \t]/.test(this.text[start] ?? '') && start < this.text.length) start++;
+    const quote = this.text[start];
+    const isCommand = quote === (usebackq ? '`' : "'");
+    const isLiteral = quote === (usebackq ? "'" : '"') || (usebackq && quote === '"');
+    if (!isCommand && !isLiteral) return false;
+
+    // Keep the raw span: tokenization removes quotes and splits the inner operators.
+    let end = start + 1;
+    let depth = 0;
+    let inQuotes = false;
+    let close = -1;
+    for (; end < this.text.length; end++) {
+      const char = this.text[end];
+      if (isCommand && char === '^' && !inQuotes) { end++; continue; }
+      if (isCommand && char === '"') inQuotes = !inQuotes;
+      if (!inQuotes && depth === 0 && char === quote) {
+        let next = end + 1;
+        while (/[ \t]/.test(this.text[next] ?? '') && next < this.text.length) next++;
+        if (this.text[next] === ')') { close = next; break; }
+      }
+      if (isCommand && !inQuotes) {
+        if (char === '(') depth++;
+        if (char === ')') depth--;
+      }
+    }
+    if (close < 0) throw new Error('a for /f quoted set is not closed');
+    if (isCommand) {
+      // cmd consumes one caret-escape layer before passing the command to its child.
+      let command = '';
+      const offsets: number[] = [];
+      inQuotes = false;
+      for (let i = start + 1; i < end; i++) {
+        const char = this.text[i];
+        if (char === '"') inQuotes = !inQuotes;
+        if (char === '^' && !inQuotes && i + 1 < end) i++;
+        offsets.push(i);
+        command += this.text[i];
+      }
+      const reader = new CmdReader(tokenize(command), command);
+      reader.readList(false);
+      this.commands.push(...reader.commands.map(found => ({ ...found, start: offsets[found.start] })));
+    }
+    // Retain a balanced placeholder so the existing DO/body/group logic still applies.
+    words.push(open, { kind: 'close', value: ')', start: close, atRunTime: false });
+    while (this.position < this.tokens.length && this.tokens[this.position].start <= close) this.position++;
+    return true;
   }
 
   /**
@@ -227,7 +289,7 @@ class CmdReader {
 
 /** Reads a command for cmd */
 export async function readCmdCommands(command: string): Promise<CommandReading> {
-  const reader = new CmdReader(tokenize(command));
+  const reader = new CmdReader(tokenize(command), command);
   try {
     reader.readList(false);
   } catch (error) {
