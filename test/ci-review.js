@@ -1,4 +1,4 @@
-/** Frozen-head code review and text checks through OpenAI Responses. See .github/review-api.md. */
+/** Frozen-head code review and text checks through Claude Code. See .github/review-api.md. */
 import { spawnSync } from 'child_process';
 import fs from 'fs';
 import os from 'os';
@@ -204,11 +204,11 @@ function writeReview({ modelJson, change: { head, base, diff }, tests, out }) {
 
 async function run(range, ...options) {
   // The key before anything else: without one, no work and no pass
-  const key = process.env.OPENAI_API_KEY;
+  const key = process.env.ANTHROPIC_API_KEY;
   if (!key) {
     throw new Error(
-      'No OpenAI API key, so nothing was reviewed. On your machine, set OPENAI_API_KEY; ' +
-        "in CI, add the repository's OPENAI_API_KEY secret.",
+      'No Anthropic API key, so nothing was reviewed. On your machine, set ANTHROPIC_API_KEY; ' +
+        "in CI, add the repository's CLAUDE_CODE_OAUTH_TOKEN secret.",
     );
   }
   const option = (name, fallback) => (options.includes(name) ? options[options.indexOf(name) + 1] : fallback);
@@ -245,15 +245,15 @@ async function run(range, ...options) {
   fitsTheWindow(prompt, change.diff);
 
   const { git, head, diff } = change;
-  const modelJson = await askOpenAI({ prompt, head, git, key, out, diff, shell: Boolean(text) });
+  const modelJson = await askClaudeCode({ prompt, head, git, key, out, diff, shell: Boolean(text) });
   fs.writeFileSync(path.join(out, 'diff.patch'), diff);
   if (text) writeTextCheck({ modelJson, change, text, out });
   else writeReview({ modelJson, change, tests, out });
 }
 
 /** Export the requested head with symlinks as plain files; the model sees only this folder. */
-async function askOpenAI({ prompt, head, git, key, out, diff, shell }) {
-  const { askResponses } = await import('./helpers/openai-review.js');
+async function askClaudeCode({ prompt, head, git, key, out, diff, shell }) {
+  const { askClaude } = await import('./helpers/claude-review.js');
   const folder = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'dc-review-')));
   try {
     fs.mkdirSync(path.join(folder, 'review'));
@@ -266,15 +266,13 @@ async function askOpenAI({ prompt, head, git, key, out, diff, shell }) {
       index,
     );
     fs.rmSync(index.GIT_INDEX_FILE);
-    return await askResponses({
+    return await askClaude({
       prompt,
       key,
       folder,
       out,
       shell,
-      model: process.env.REVIEW_MODEL || process.env.OPENAI_MODEL || 'gpt-6.1-sol',
-      effort: process.env.REVIEW_REASONING_EFFORT || process.env.OPENAI_REASONING_EFFORT || 'medium',
-      endpoint: process.env.REVIEW_OPENAI_URL || 'https://api.openai.com/v1/responses',
+      cli: process.env.REVIEW_CLAUDE_CLI || "claude",
       calls: shell ? TEXT_TOOL_CALLS : TOOL_CALLS,
       maxTurns: MAX_TURNS,
       timeoutMs: TIMEOUT_MS,

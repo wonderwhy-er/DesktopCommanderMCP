@@ -282,7 +282,7 @@ jobs:
       sha: ${{ needs.platforms.outputs.sha }}
       base: ${{ needs.platforms.outputs.base }}
     secrets:
-      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
 
   comment:
     name: comment
