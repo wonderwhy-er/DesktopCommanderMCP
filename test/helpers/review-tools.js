@@ -130,23 +130,23 @@ function shellRead({ args, folder, shell, gitDir, repo, token, timeoutMs }) {
 export async function readTool(options) {
   const { folder, name, args = {} } = options;
   try {
-    let result;
-    if (name === 'run_shell_command') result = shellRead(options);
+    let toolText;
+    if (name === 'run_shell_command') toolText = shellRead(options);
     else if (name === 'read_file') {
       const file = inside(folder, args.path);
       if (fs.statSync(file).size > 2 * 1024 * 1024) return 'Read denied: file exceeds 2 MiB.';
       const start = Math.max(1, Number(args.start_line) || 1);
       const end = Math.min(start + 499, Number(args.end_line) || start + 499);
-      result = fs
+      toolText = fs
         .readFileSync(file, 'utf8')
         .split('\n')
         .slice(start - 1, end)
         .map((line, at) => `${start + at}: ${line}`)
         .join('\n');
-    } else if (name === 'list_directory') result = fs.readdirSync(inside(folder, args.path ?? 'pr')).join('\n');
+    } else if (name === 'list_directory') toolText = fs.readdirSync(inside(folder, args.path ?? 'pr')).join('\n');
     else if (name === 'glob' || name === 'grep_search') {
       const files = filesUnder(folder, args.path ?? 'pr');
-      if (name === 'glob') result = files.filter((file) => globPattern(args.pattern ?? '**').test(file)).join('\n');
+      if (name === 'glob') toolText = files.filter((file) => globPattern(args.pattern ?? '**').test(file)).join('\n');
       else {
         const rows = [];
         let bytes = 0;
@@ -164,10 +164,10 @@ export async function readTool(options) {
             });
           if (rows.length >= 200) break;
         }
-        result = rows.join('\n');
+        toolText = rows.join('\n');
       }
-    } else result = 'Tool denied: unknown or write-capable tool.';
-    return String(result).slice(0, LIMIT);
+    } else toolText = 'Tool denied: unknown or write-capable tool.';
+    return String(toolText).slice(0, LIMIT);
   } catch (error) {
     return `Read denied: ${error.message}`.slice(0, LIMIT);
   }
