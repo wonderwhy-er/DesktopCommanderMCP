@@ -5,6 +5,10 @@ import path from 'node:path';
 import vm from 'node:vm';
 import { test } from 'node:test';
 import ts from 'typescript';
+import { EventEmitter } from 'node:events';
+import { createRequire } from 'node:module';
+
+const requireBuiltin = createRequire(import.meta.url);
 
 const LAUNCHER_ARGUMENT = '--desktop-commander-threadpool-launcher-pid=';
 const ENTRY = path.resolve('fixture-package', 'dist', 'index.js');
@@ -36,7 +40,7 @@ async function count(processes) {
     return context.desktopCommanderMcp();
 }
 
-function bootstrap({ env = {}, args = [], pid = 101, parentPid = 1 } = {}) {
+function bootstrap({ env = {}, args = [], pid = 101, parentPid = 1, binds = true } = {}) {
     const observed = { invocation: null, monitored: false };
     const childProcess = {
         pid, ppid: parentPid, env: { ...env }, argv: ['node', ENTRY, ...args],
@@ -50,7 +54,17 @@ function bootstrap({ env = {}, args = [], pid = 101, parentPid = 1 } = {}) {
                 return { status: 0 };
             } };
             if (name === './exit-process.js') return { exitProcess: () => {} };
-            throw new Error(`Unexpected dependency: ${name}`);
+            if (name === 'net') return {
+                createServer: () => ({ on() {}, listen() {}, close() {}, listening: binds }),
+                createConnection: () => {
+                    observed.monitored = true;
+                    const channel = new EventEmitter();
+                    channel.unref = channel.resume = channel.destroy = () => {};
+                    return channel;
+                },
+            };
+            if (name === 'fs') return { unlinkSync() {} };
+            return requireBuiltin(name);
         },
         setInterval: () => { observed.monitored = true; return { unref() {} }; }, clearInterval: () => {},
     });
@@ -136,9 +150,12 @@ test('an unrelated inherited launcher marker still configures the Windows pool',
 test('the child consumes only its exact trailing marker and removes inherited launcher identity', () => {
     const marker = `${LAUNCHER_ARGUMENT}101`;
     const observed = bootstrap({ pid: 102, parentPid: 101,
-        env: { DESKTOP_COMMANDER_THREADPOOL_LAUNCHER_PID: '101' }, args: ['remote', '--report', marker, marker] });
+        env: { DESKTOP_COMMANDER_THREADPOOL_LAUNCHER_PID: '101',
+            DESKTOP_COMMANDER_THREADPOOL_LAUNCHER_CHANNEL: 'lifetime-fixture' },
+        args: ['remote', '--report', marker, marker] });
     assert.deepEqual(observed.process.argv.slice(2), ['remote', '--report', marker]);
     assert.equal(observed.process.env.DESKTOP_COMMANDER_THREADPOOL_LAUNCHER_PID, undefined);
+    assert.equal(observed.process.env.DESKTOP_COMMANDER_THREADPOOL_LAUNCHER_CHANNEL, undefined);
     assert.equal(observed.monitored, true);
 });
 
@@ -152,4 +169,11 @@ test('a nonmatching or nontrailing application argument survives child bootstrap
 test('without launcher environment even an exact-looking application argument survives', () => {
     const args = [`${LAUNCHER_ARGUMENT}101`];
     assert.deepEqual(bootstrap({ env: { UV_THREADPOOL_SIZE: '16' }, args }).process.argv.slice(2), args);
+});
+
+test('an unavailable lifetime endpoint falls back without starting a copy', () => {
+    const observed = bootstrap({ binds: false });
+    assert.equal(observed.invocation, null);
+    assert.equal(observed.process.env.UV_THREADPOOL_SIZE, '16');
+    assert.equal(observed.monitored, false);
 });

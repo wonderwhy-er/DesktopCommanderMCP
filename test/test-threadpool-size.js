@@ -36,6 +36,11 @@ function writeScript(dir) {
   const script = path.join(dir, 'set-size.mjs');
   fs.writeFileSync(script, `
 import { setThreadpoolSize } from ${JSON.stringify(MODULE_URL)};
+const pidProbeAlwaysAlive = Boolean(process.env[${JSON.stringify(LAUNCHER_PID_VARIABLE)}]);
+if (pidProbeAlwaysAlive) {
+  const kill = process.kill.bind(process);
+  process.kill = (pid, signal) => signal === 0 ? true : kill(pid, signal);
+}
 setThreadpoolSize('7', false);
 console.log(JSON.stringify({
   pid: process.pid,
@@ -44,6 +49,7 @@ console.log(JSON.stringify({
   launcherVariable: process.env[${JSON.stringify(LAUNCHER_PID_VARIABLE)}] !== undefined,
   args: process.argv.slice(2),
   userValue: process.env.DC_TEST_USER_VALUE,
+  pidProbeAlwaysAlive,
 }));
 const [mode, code] = process.argv.slice(2);
 if (mode === 'wait') setInterval(() => {}, 1000);
@@ -153,6 +159,7 @@ async function testCopyEndsWithLauncher(script) {
   try {
     await waitUntil(() => stdout.includes('\n'), 15_000, 'the copy prints its process ID');
     copyPid = printed(stdout)[0].pid;
+    assert.strictEqual(printed(stdout)[0].pidProbeAlwaysAlive, true, 'the serving copy simulates a reused live PID');
     assert.notStrictEqual(copyPid, launcher.pid, 'the script should have started a copy');
     launcher.kill();
     await waitUntil(() => !isRunning(copyPid), 10_000, `the copy (${copyPid}) exits after the launcher (${launcher.pid}) was killed`);

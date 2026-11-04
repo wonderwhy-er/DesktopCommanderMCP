@@ -1,4 +1,9 @@
 import { spawnSync } from 'child_process';
+import { createConnection, createServer } from 'net';
+import { randomUUID } from 'crypto';
+import { unlinkSync } from 'fs';
+import { tmpdir } from 'os';
+import { join, dirname, basename } from 'path';
 import { exitProcess } from './exit-process.js';
 
 /**
@@ -22,8 +27,8 @@ export const LAUNCHER_PID_VARIABLE = 'DESKTOP_COMMANDER_THREADPOOL_LAUNCHER_PID'
 /** Kept in the OS command line so diagnostics can distinguish a copy from an independent nested server. */
 export const LAUNCHER_PID_ARGUMENT = '--desktop-commander-threadpool-launcher-pid=';
 
-/** How often the copy checks that the process that started it still runs */
-const LAUNCHER_CHECK_MS = 1000;
+/** A unique OS endpoint belongs to the original launcher, even if its PID is reused. */
+const LAUNCHER_CHANNEL_VARIABLE = 'DESKTOP_COMMANDER_THREADPOOL_LAUNCHER_CHANNEL';
 
 /** Whether libuv sees a UV_THREADPOOL_SIZE set in process.env: everywhere but on Windows with a libuv before 1.52 */
 export function processEnvReachesThreadpool(platform: string = process.platform, uvVersion: string = process.versions.uv): boolean {
@@ -49,12 +54,14 @@ export function processEnvReachesThreadpool(platform: string = process.platform,
  */
 export function setThreadpoolSize(size: string, envReachesThreadpool: boolean = processEnvReachesThreadpool()): void {
   const launcherPid = process.env[LAUNCHER_PID_VARIABLE];
+  const launcherChannel = process.env[LAUNCHER_CHANNEL_VARIABLE];
   // Descendants inherit the environment, so the marker must also identify our parent and appended argument.
   delete process.env[LAUNCHER_PID_VARIABLE];
+  delete process.env[LAUNCHER_CHANNEL_VARIABLE];
   if (launcherPid === String(process.ppid) &&
       process.argv.at(-1) === `${LAUNCHER_PID_ARGUMENT}${launcherPid}`) {
     process.argv.pop();
-    exitWithLauncher(Number(launcherPid));
+    exitWithLauncher(launcherChannel);
     return;
   }
   if (process.env.UV_THREADPOOL_SIZE === size) return;
@@ -64,11 +71,14 @@ export function setThreadpoolSize(size: string, envReachesThreadpool: boolean = 
   const debugging = [...process.execArgv, process.env.NODE_OPTIONS ?? ''].some((option) => option.includes('--inspect'));
   if (envReachesThreadpool || debugging) return;
 
+  const lifetime = launcherLifetime();
+  if (!lifetime) return;
   const copyArgs = [...process.execArgv, ...process.argv.slice(1), `${LAUNCHER_PID_ARGUMENT}${process.pid}`];
   const copy = spawnSync(process.execPath, copyArgs, {
     stdio: 'inherit',
-    env: { ...process.env, [LAUNCHER_PID_VARIABLE]: String(process.pid) },
+    env: { ...process.env, [LAUNCHER_PID_VARIABLE]: String(process.pid), [LAUNCHER_CHANNEL_VARIABLE]: lifetime.endpoint },
   });
+  lifetime.close();
   if (copy.error) return;
   // process.exit(), not exitProcess(): this process must stop here, without
   // running the rest of its code; the copy has run it
@@ -80,17 +90,52 @@ export function setThreadpoolSize(size: string, envReachesThreadpool: boolean = 
  * server by ending the process it started; without this, the copy, which does
  * the server's work, would keep running.
  */
-function exitWithLauncher(pid: number): void {
-  const timer = setInterval(() => {
-    try {
-      // Signal 0 only checks that the process still runs
-      process.kill(pid, 0);
-    } catch (error) {
-      // EPERM: it runs, under another user
-      if ((error as NodeJS.ErrnoException).code !== 'ESRCH') return;
-      clearInterval(timer);
-      exitProcess(1);
-    }
-  }, LAUNCHER_CHECK_MS);
-  timer.unref();
+function exitWithLauncher(endpoint: string | undefined): void {
+  if (!endpoint) {
+    exitProcess(1);
+    return;
+  }
+  const channel = createConnection(endpoint);
+  let ended = false;
+  const finish = () => {
+    if (ended) return;
+    ended = true;
+    channel.destroy();
+    removeLifetimeEndpoint(endpoint);
+    exitProcess(1);
+  };
+  channel.once('end', finish);
+  channel.once('error', finish);
+  channel.unref();
+  channel.resume();
+}
+
+/** Binding happens before spawnSync blocks; the OS closes this endpoint when its owner dies. */
+function launcherLifetime(): { endpoint: string; close: () => void } | undefined {
+  const name = `dc-tp-${randomUUID()}`;
+  const endpoint = process.platform === 'win32' ? `\\\\.\\pipe\\${name}` : join(tmpdir(), name);
+  const server = createServer();
+  // A failed bind falls back without a copy; no asynchronous error may crash that fallback.
+  server.on('error', () => {});
+  server.listen(endpoint);
+  const close = () => {
+    server.close();
+    removeLifetimeEndpoint(endpoint);
+  };
+  if (!server.listening) {
+    close();
+    return undefined;
+  }
+  return { endpoint, close };
+}
+
+/** A killed Unix launcher cannot unlink its socket; its copy removes only our temporary socket name. */
+function removeLifetimeEndpoint(endpoint: string): void {
+  if (process.platform === 'win32' || dirname(endpoint) !== tmpdir() ||
+      !/^dc-tp-[0-9a-f-]{36}$/.test(basename(endpoint))) return;
+  try {
+    unlinkSync(endpoint);
+  } catch {
+    // The launcher may already have removed it; cleanup must not prevent the copy from exiting.
+  }
 }
