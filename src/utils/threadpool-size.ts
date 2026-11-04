@@ -55,11 +55,11 @@ export function processEnvReachesThreadpool(platform: string = process.platform,
 export function setThreadpoolSize(size: string, envReachesThreadpool: boolean = processEnvReachesThreadpool()): void {
   const launcherPid = process.env[LAUNCHER_PID_VARIABLE];
   const launcherChannel = process.env[LAUNCHER_CHANNEL_VARIABLE];
-  // Descendants inherit the environment, so the marker must also identify our parent and appended argument.
+  // A complete private channel/argument pair survives reparenting; PID-only inherited markers still need our parent.
   delete process.env[LAUNCHER_PID_VARIABLE];
   delete process.env[LAUNCHER_CHANNEL_VARIABLE];
-  if (launcherPid === String(process.ppid) &&
-      process.argv.at(-1) === `${LAUNCHER_PID_ARGUMENT}${launcherPid}`) {
+  if (launcherPid && process.argv.at(-1) === `${LAUNCHER_PID_ARGUMENT}${launcherPid}` &&
+      (launcherPid === String(process.ppid) || launcherChannel)) {
     process.argv.pop();
     exitWithLauncher(launcherChannel);
     return;
@@ -76,7 +76,11 @@ export function setThreadpoolSize(size: string, envReachesThreadpool: boolean = 
   const copyArgs = [...process.execArgv, ...process.argv.slice(1), `${LAUNCHER_PID_ARGUMENT}${process.pid}`];
   const copy = spawnSync(process.execPath, copyArgs, {
     stdio: 'inherit',
-    env: { ...process.env, [LAUNCHER_PID_VARIABLE]: String(process.pid), [LAUNCHER_CHANNEL_VARIABLE]: lifetime.endpoint },
+    env: {
+      ...process.env,
+      [LAUNCHER_PID_VARIABLE]: String(process.pid),
+      [LAUNCHER_CHANNEL_VARIABLE]: lifetime.endpoint,
+    },
   });
   lifetime.close();
   if (copy.error) return;
