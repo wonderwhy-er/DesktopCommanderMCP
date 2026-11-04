@@ -124,7 +124,9 @@ jobs:
       actions: read
 
     steps:
-      # The script and prompt from this run's workflow ref, not the reviewed head below.
+      # Runner scripts and prompts use the event's checkout: a PR merge ref on pull_request,
+      # the default branch on issue_comment, or the selected workflow ref on workflow_dispatch.
+      # The product head below is pinned separately and read as data.
       - name: Checkout
         uses: actions/checkout@v7
         with:
