@@ -29,11 +29,9 @@ function runWorker(home) {
       },
       stdio: ['ignore', 'inherit', 'inherit', 'ipc'],
     });
-    // Settles only once the worker has exited, so its home can then be removed
-    const exited = new Promise((done) => child.once('exit', done));
     const timer = setTimeout(() => {
       child.kill('SIGTERM');
-      exited.then(() => reject(new Error('timeout waiting for concurrent corrupt-config worker')));
+      reject(new Error('timeout waiting for concurrent corrupt-config worker'));
     }, TIMEOUT_MS);
 
     child.on('message', (message) => {
