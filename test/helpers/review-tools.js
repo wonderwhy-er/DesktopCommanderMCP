@@ -29,18 +29,20 @@ function filesUnder(folder, dir, found = []) {
   return found;
 }
 
-const globPattern = (pattern) =>
-  new RegExp(
-    `^${String(pattern)
-      .split('**')
-      .map((part) =>
-        part
-          .replace(/[.+^${}()|[\]\\]/g, '\\$&')
-          .replaceAll('*', '[^/]*')
-          .replaceAll('?', '[^/]'),
-      )
-      .join('.*')}$`,
-  );
+function globPattern(pattern) {
+  const parts = String(pattern).split('**');
+  const literal = part => part.replace(/[.+^${}()|[\]\\]/g, '\\$&')
+    .replaceAll('*', '[^/]*').replaceAll('?', '[^/]');
+  let expression = literal(parts[0]);
+  for (let at = 1; at < parts.length; at++) {
+    const part = parts[at];
+    const before = parts[at - 1];
+    // Only a whole **/ component can skip directories; embedded stars retain their prior behavior.
+    const directory = part.startsWith('/') && ((at === 1 && before === '') || before.endsWith('/'));
+    expression += directory ? `(?:[^/]+/)*${literal(part.slice(1))}` : `.*${literal(part)}`;
+  }
+  return new RegExp(`^${expression}$`);
+}
 
 function githubArguments(words) {
   const options = words.slice(2);

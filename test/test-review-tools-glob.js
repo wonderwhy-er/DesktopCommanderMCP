@@ -5,6 +5,10 @@ import path from 'node:path';
 import { test } from 'node:test';
 import { readTool } from './helpers/review-tools.js';
 
+const TYPESCRIPT_FILES = [
+  'pr/[draft].ts', 'pr/a+b.ts', 'pr/a.ts', 'pr/ab.ts', 'pr/long.ts', 'pr/nested/b.ts', 'pr/nested/deep/c.ts',
+];
+
 function fixture(t) {
   const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'review-glob-'));
   const names = ['a.ts', 'ab.ts', 'long.ts', 'a+b.ts', '[draft].ts', 'notes.md', 'upper.TS',
@@ -28,9 +32,7 @@ const glob = async (folder, pattern) => {
 
 test('globstar directory matches include root and nested frozen TypeScript files', async t => {
   const folder = fixture(t);
-  assert.deepEqual(await glob(folder, 'pr/**/*.ts'), [
-    'pr/[draft].ts', 'pr/a+b.ts', 'pr/a.ts', 'pr/ab.ts', 'pr/long.ts', 'pr/nested/b.ts', 'pr/nested/deep/c.ts',
-  ]);
+  assert.deepEqual(await glob(folder, 'pr/**/*.ts'), TYPESCRIPT_FILES);
   assert.deepEqual(await glob(folder, 'pr/**/nested/**/*.ts'), ['pr/nested/b.ts', 'pr/nested/deep/c.ts']);
 });
 
@@ -46,7 +48,7 @@ test('single-star depth, literal metacharacters and other globstar forms retain 
   assert.deepEqual(await glob(folder, 'pr/nested/**'), ['pr/nested/b.ts', 'pr/nested/deep/c.ts', 'pr/nested/notes.md']);
   assert.deepEqual(await glob(folder, 'pr/a**/b.ts'), []);
   assert.deepEqual(await glob(folder, 'pr/a****/b.ts'), []);
-  assert.deepEqual(await glob(folder, 'pr/**.ts'), await glob(folder, 'pr/**/*.ts'));
+  assert.deepEqual(await glob(folder, 'pr/**.ts'), TYPESCRIPT_FILES);
   assert.deepEqual(await glob(folder, 'pr/upper.ts'), []);
 });
 
