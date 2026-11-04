@@ -270,6 +270,22 @@ export function usageOf(stats) {
   };
 }
 
+/** Source pins from the validated input receipt, without treating selected evidence as CI coverage. */
+function suppliedContextLines(context) {
+  const shown = value => oneLine(quiet(plain(value)));
+  return [
+    'Pinned guide and selected native evidence were supplied separately; coverage from that evidence remains unknown.',
+    `Guide source: \`${context.guide.commit}:${context.guide.path}\`; SHA256 \`${context.guide.sha256}\`.`,
+    `Input receipt: prompt SHA256 \`${context.promptSha256}\`; this does not claim model acceptance or CI coverage.`,
+    ...context.evidence.map(({ kind, name, source, sha256, nativeRun }) => {
+      const native = nativeRun ? ` Native run \`${shown(nativeRun.id)}\` (${shown(nativeRun.system)}), `
+        + `head \`${nativeRun.commit}\`, ${nativeRun.state}, exit ${nativeRun.exit}.` : '';
+      return `- ${shown(name)} (${kind}): \`${source.path}\`; source SHA256 \`${source.sha256}\`; `
+        + `supplied text SHA256 \`${sha256}\`.${native}`;
+    }),
+  ];
+}
+
 /**
  * The review for GitHub's API (POST /repos/{repo}/pulls/{pr}/reviews): event COMMENT,
  * on the commit it reviewed. With `inline` off, every finding goes in the summary:
@@ -303,8 +319,7 @@ export function reviewOf({ answer, diff, headSha, baseSha, usage = null, inline 
   const outcome = kindCounts.length > 0 ? kindCounts.join(', ') : 'clean';
   const body = [REVIEW_MARKER, `${headline} ${outcome}${untested}.${summary ? ` ${summary}` : ''}`];
   if (answer.context) {
-    body.push('', 'Pinned guide and selected native evidence were supplied separately; '
-      + 'coverage from that evidence remains unknown.');
+    body.push('', ...suppliedContextLines(answer.context));
   }
   if (rows.length > 0) body.push('', '| Kind | Where | What |', '|---|---|---|', ...rows);
   if (usage) {

@@ -22,7 +22,9 @@ import {
   withUncovered,
 } from './helpers/ci-review.js';
 import { githubApi } from './helpers/github-api.js';
-import { MAX_REVIEW_CONTEXT_BYTES, reviewContextOf, contextReceiptOf } from './helpers/review-context.js';
+import {
+  MAX_REVIEW_CONTEXT_BYTES, reviewContextOf, contextReceiptOf, publishedContextOf,
+} from './helpers/review-context.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const { GITHUB_REPOSITORY: repo, GH_TOKEN: token } = process.env;
@@ -310,15 +312,38 @@ async function askClaudeCode({ prompt, head, git, key, out, diff, shell }) {
   }
 }
 
+function postContext(folder, saved, head, base) {
+  const input = path.join(folder, 'review-context.json');
+  const receiptFile = path.join(folder, 'review-context-receipt.json');
+  const hasInput = fs.existsSync(input);
+  const hasReceipt = fs.existsSync(receiptFile);
+  if (saved.context === undefined && !hasInput && !hasReceipt) return null;
+  if (saved.context === undefined || !hasInput || !hasReceipt) {
+    throw new Error('Review context: supplemental artifacts are missing or undeclared.');
+  }
+  if ([input, receiptFile].some(file => fs.statSync(file).size > MAX_REVIEW_CONTEXT_BYTES)) {
+    throw new Error('Review context: supplemental artifact exceeds 48 KiB.');
+  }
+  let receipt;
+  try { receipt = JSON.parse(fs.readFileSync(receiptFile, 'utf8')); } catch {
+    throw new Error('Review context: saved input receipt is not valid JSON.');
+  }
+  return publishedContextOf({
+    raw: fs.readFileSync(input, 'utf8'), receipt, saved: saved.context, head, base,
+  });
+}
+
 async function post(folder) {
   const saved = JSON.parse(fs.readFileSync(path.join(folder, 'review.json'), 'utf8'));
   const { head, base, summary, findings, usage, tests } = saved;
+  const headSha = sha(head, 'head'), baseSha = sha(base, 'base');
+  const context = postContext(folder, saved, headSha, baseSha);
   const diff = fs.readFileSync(path.join(folder, 'diff.patch'), 'utf8');
   const shown = {
-    answer: { summary, findings },
+    answer: { summary, findings, ...(context ? { context } : {}) },
     diff,
-    headSha: sha(head, 'head'),
-    baseSha: sha(base, 'base'),
+    headSha,
+    baseSha,
     usage,
     tests,
   };
