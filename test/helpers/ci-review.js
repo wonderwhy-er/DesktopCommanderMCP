@@ -10,6 +10,7 @@
 import fs from 'fs';
 import path from 'path';
 import { plain } from './ci-platforms.js';
+import { contextPart } from './review-context.js';
 
 // The review's first line, so it can be told from people's reviews
 export const REVIEW_MARKER = '<!-- ai-review -->';
@@ -306,17 +307,27 @@ export function reviewOf({ answer, diff, headSha, baseSha, usage = null, inline 
 }
 
 /** The prompt's part on the run's tests: where they ran, what failed, the changed lines no test ran, and what to ask */
-function testsPart(tests) {
+function testsPart(tests, context) {
+  if (!tests && context) {
+    return ['No CI test/coverage artifacts were supplied. The pinned native evidence below is supplied test evidence '
+      + 'for its stated selected operations. Assess what it proves at its exact input and platform; '
+      + 'do not call it absent merely because CI artifacts are absent. Coverage remains UNKNOWN.'];
+  }
   if (!tests) {
-    return ['No test results came with this review: no platform\'s tests ran. '
+    return ['No test results came with this review as automated artifacts; this does not establish that no tests ran. '
       + 'Say so in the summary, and write `not checked` for what only a test run could show.'];
   }
   const failedList = tests.failed.map(({ platform, file }) => `${file} (${platform})`).join(', ');
   const failed = tests.failed.length > 0 ? `Failed: ${failedList}.` : 'None failed.';
-  const uncovered = tests.uncovered.length > 0
-    ? ['The changed lines no test ran (the coverage report, every platform together):',
-      ...tests.uncovered.map(({ file, ranges }) => `- ${file}: ${rangesText(ranges)}`)]
-    : ['Every changed line the coverage report counts was run by a test.'];
+  let uncovered;
+  if (tests.uncovered === null) {
+    uncovered = ['Changed-line coverage is UNKNOWN: no coverage artifact was supplied. Do not infer zero uncovered lines.'];
+  } else if (tests.uncovered.length > 0) {
+    uncovered = ['The changed lines no test ran (the coverage report, every platform together):',
+      ...tests.uncovered.map(({ file, ranges }) => `- ${file}: ${rangesText(ranges)}`)];
+  } else {
+    uncovered = ['Every changed line the coverage report counts was run by a test.'];
+  }
   return [`They ran on ${tests.platforms.join(', ')}. ${failed}`, '', ...uncovered, '',
     'Is each new or changed behaviour tested, and does a failing test exist for each fix? '
       + 'Report each range above as a `not covered` finding (its file, its first line, "not covered: <file>:<lines>"), '
@@ -334,6 +345,7 @@ export const fenceFor = (text) => '`'
  */
 export function promptOf({
   template, headSha, baseSha, files, title, description, commits = [], diff = '', calls, style = '', tests = null,
+  context = null,
 }) {
   // Quoted line by line, so the PR's text can't close a block and pass for the rules
   const quote = (text) => String(text || '(none)').slice(0, 20000).split(/\r?\n/).map((line) => `> ${line}`).join('\n');
@@ -341,6 +353,7 @@ export function promptOf({
     template.trimEnd(),
     '',
     ...(style ? ['## Writing style', '', style.trim(), ''] : []),
+    ...contextPart(context),
     '## This review',
     '',
     `Head: ${headSha}`,
@@ -359,7 +372,7 @@ export function promptOf({
     '',
     '## The tests at the head',
     '',
-    ...testsPart(tests),
+    ...testsPart(tests, context),
     '',
     'The diff:',
     '',
@@ -389,7 +402,7 @@ const textKindOf = (kind) => TEXT_KINDS.find(([name]) => name === String(kind ??
  */
 export function textPromptOf({
   template, style = '', file, text, headSha, baseSha, commits = [], diff = '', files, calls,
-  tests = null, results = [],
+  tests = null, results = [], context = null,
 }) {
   const fenced = (body, lang = '') => {
     const ended = body.endsWith('\n') ? body : `${body}\n`;
@@ -401,6 +414,7 @@ export function textPromptOf({
     template.trimEnd(),
     '',
     ...(style ? ['## Writing style', '', style.trim(), ''] : []),
+    ...contextPart(context),
     '## This text check',
     '',
     `Head: ${headSha}`,
@@ -420,7 +434,7 @@ export function textPromptOf({
     '## The tests at the head',
     '',
     // What ran and what failed; the review's coverage asks aren't a text check's
-    ...(tests ? testsPart(tests).slice(0, 1) : testsPart(tests)),
+    ...(tests ? testsPart(tests, context).slice(0, 1) : testsPart(tests, context)),
     '',
     'The diff:',
     '',
