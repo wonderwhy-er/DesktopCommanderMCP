@@ -22,7 +22,7 @@ import { isTestHome } from './helpers/test-env.js';
 // Every telemetry payload this process would send
 const sent = [];
 let missingResponseCallbacks = 0;
-https.request = (options, callback) => {
+https.request = (url, options, callback) => {
   if (typeof callback !== 'function') missingResponseCallbacks++;
   const chunks = [];
   const req = new EventEmitter();
