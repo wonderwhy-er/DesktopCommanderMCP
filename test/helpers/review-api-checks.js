@@ -3,8 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 
-export async function reviewApiChecks({ ciReview, dir, repo, base, head, out, api }) {
-  const source = fs.existsSync(path.join(repo, 'src/server/a.ts')) ? 'src/server/a.ts' : 'src/a.ts';
+export function reviewCliFixture({ dir, source, head }) {
   const state = path.join(dir, 'claude-state.json');
   const observed = path.join(dir, 'claude-observed.json');
   const cli = path.join(dir, 'fake-claude.mjs');
@@ -30,6 +29,12 @@ if(mode==='invalid')answer={summary:'Missing findings.'};
 if(mode==='secret')answer={summary:process.env.ANTHROPIC_API_KEY,findings:[]};
 console.log(JSON.stringify({type:'result',subtype:mode==='incomplete'?'error_max_turns':'success',is_error:mode==='http',num_turns:1,result:JSON.stringify(answer),modelUsage:{'claude-haiku-5-5':{inputTokens:10,outputTokens:5}}}));`;
   fs.writeFileSync(cli, fixture);
+  return { state, observed, cli };
+}
+
+export async function reviewApiChecks({ ciReview, dir, repo, base, head, out, api }) {
+  const source = fs.existsSync(path.join(repo, 'src/server/a.ts')) ? 'src/server/a.ts' : 'src/a.ts';
+  const { state, observed, cli } = reviewCliFixture({ dir, source, head });
   const run = (options = [], env = {}, range = `${base}..${head}`) => ciReview(
     ['run', range, '--repo', repo, '--out', out, ...options],
     { ANTHROPIC_API_KEY: 'local-test-api-key', REVIEW_CLAUDE_CLI: cli, PR: '', ...env }, dir);
