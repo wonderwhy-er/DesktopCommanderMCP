@@ -7,7 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import vm from 'node:vm';
 import { fileURLToPath } from 'node:url';
-import { promptOf, answerOf, findingsOf, withUncovered } from './helpers/ci-review.js';
+import { promptOf, answerOf, findingsOf, withUncovered, reviewOf } from './helpers/ci-review.js';
 import { reviewContextOf, contextReceiptOf, MAX_REVIEW_CONTEXT_BYTES } from './helpers/review-context.js';
 
 // These input tests must never reach Git, gh, a provider, or even a local network service.
@@ -83,6 +83,15 @@ test('failed selected receipts stay failed data; they do not become a clean suit
   const noCoverage = promptOf({ ...options, tests: { platforms: ['selected'], failed: [], uncovered: null } });
   assert.match(noCoverage, /coverage is UNKNOWN/);
   assert.doesNotMatch(noCoverage, /Every changed line.*was run/);
+});
+
+test('the review artifact acknowledges supplied native evidence without changing its no-context result', () => {
+  const render = context => reviewOf({ answer: { summary: 'Scoped result.', findings: [],
+    ...(context ? { context } : {}) }, diff: '', headSha: HEAD, baseSha: BASE, tests: null, inline: false }).body;
+  const supplied = render(contextReceiptOf(context, 'prepared prompt'));
+  assert.doesNotMatch(supplied, /with no test results/);
+  assert.match(supplied, /selected native evidence.*coverage.*unknown/i);
+  assert.match(render(null), /with no test results/);
 });
 
 test('malformed, oversized and credential-shaped context fails without echoing its contents', () => {
