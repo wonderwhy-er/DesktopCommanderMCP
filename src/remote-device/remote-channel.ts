@@ -633,7 +633,7 @@ export class RemoteChannel {
                     throw new Error('Device session changed during MQTT startup; restart the connector');
                 }
             };
-            void this.startMqtt(assertSessionStillActive).catch(() => console.warn('[MQTT] Transport unavailable; Broadcast continues'));
+            void this.startMqtt(assertSessionStillActive).catch(() => console.debug('[MQTT] Transport unavailable; Broadcast continues'));
             await this.createChannel();
 
         } else {
