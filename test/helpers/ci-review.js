@@ -293,10 +293,14 @@ export function reviewOf({ answer, diff, headSha, baseSha, usage = null, inline 
     .map(([, label, plural]) => `${counts.get(label)} ${counts.get(label) === 1 ? label.toLowerCase() : plural}`);
   // The writing style: the result first, on one line with the summary; then a table, one line per finding
   const summary = oneLine(quiet(answer.summary));
-  const untested = tests === null ? ', with no test results' : '';
+  const untested = tests === null && !answer.context ? ', with no test results' : '';
   const headline = `**AI review of ${commit(headSha)} against ${commit(baseSha)}:**`;
   const outcome = kindCounts.length > 0 ? kindCounts.join(', ') : 'clean';
   const body = [REVIEW_MARKER, `${headline} ${outcome}${untested}.${summary ? ` ${summary}` : ''}`];
+  if (answer.context) {
+    body.push('', 'Pinned guide and selected native evidence were supplied separately; '
+      + 'coverage from that evidence remains unknown.');
+  }
   if (rows.length > 0) body.push('', '| Kind | Where | What |', '|---|---|---|', ...rows);
   if (usage) {
     body.push('', `<sub>${usage.models.map(plain).join(', ')} · ${usage.requests === null ? "API request count unavailable" : `${usage.requests} requests`} · ${usage.total} tokens`
