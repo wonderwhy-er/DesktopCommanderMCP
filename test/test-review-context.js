@@ -97,6 +97,14 @@ test('malformed, oversized and credential-shaped context fails without echoing i
   assert.throws(() => reviewContextOf(' '.repeat(MAX_REVIEW_CONTEXT_BYTES + 1), { head: HEAD, base: BASE }), /48 KiB/);
 });
 
+test('JSON escapes cannot put a decoded credential-shaped value into the model input', () => {
+  const copy = structuredClone(context);
+  copy.guide.text = `sk-ant-${'x'.repeat(32)}`;
+  copy.guide.sha256 = digest(copy.guide.text);
+  const raw = JSON.stringify(copy).replace('sk-ant-', '\\u0073k-ant-');
+  assert.throws(() => reviewContextOf(raw, { head: HEAD, base: BASE }), /credential-shaped content/);
+});
+
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const cli = fs.readFileSync(path.join(ROOT, 'test/ci-review.js'), 'utf8');
 function actualFunction(start, end) {
