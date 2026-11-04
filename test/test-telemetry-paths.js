@@ -21,7 +21,9 @@ import { isTestHome } from './helpers/test-env.js';
 
 // Every telemetry payload this process would send
 const sent = [];
+let missingResponseCallbacks = 0;
 https.request = (options, callback) => {
+  if (typeof callback !== 'function') missingResponseCallbacks++;
   const chunks = [];
   const req = new EventEmitter();
   req.write = (data) => { chunks.push(String(data)); return true; };
@@ -125,6 +127,7 @@ async function runTests() {
   };
   try {
     assert.deepStrictEqual(left, found, 'the tests must leave the settings as they found them');
+    assert.strictEqual(missingResponseCallbacks, 0, 'every request fake must receive its response callback');
     console.log('✓ the settings are left as they were found');
   } catch (error) {
     console.error('✗', error.message);
