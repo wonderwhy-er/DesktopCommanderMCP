@@ -7,6 +7,7 @@ const fail = message => { throw new Error(`Review context: ${message}`); };
 const object = value => value && typeof value === 'object' && !Array.isArray(value);
 const hash = value => typeof value === 'string' && /^[0-9a-f]{64}$/.test(value);
 const commit = value => typeof value === 'string' && /^[0-9a-f]{40}$/.test(value);
+const CREDENTIAL = /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----|\b(?:sk-ant-|sk-proj-|gh[pousr]_|github_pat_)[\w-]{16,}/;
 
 function fields(value, allowed) {
   if (!object(value) || Object.keys(value).some(key => !allowed.includes(key))) fail('unexpected fields.');
@@ -50,11 +51,12 @@ export function reviewContextOf(raw, { head, base }) {
   if (raw === undefined || raw === '') return null;
   if (typeof raw !== 'string' || Buffer.byteLength(raw) > MAX_REVIEW_CONTEXT_BYTES) fail('input exceeds 48 KiB.');
   // Never put a token-shaped value into a prompt/artifact, or echo a parser error containing it.
-  if (/-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----|\b(?:sk-ant-|sk-proj-|gh[pousr]_|github_pat_)[\w-]{16,}/.test(raw)) {
+  if (CREDENTIAL.test(raw)) {
     fail('credential-shaped content is not allowed.');
   }
   let context;
   try { context = JSON.parse(raw); } catch { fail('input is not valid JSON.'); }
+  if (CREDENTIAL.test(JSON.stringify(context))) fail('credential-shaped content is not allowed.');
   fields(context, ['version', 'head', 'base', 'guide', 'evidence']);
   if (context.version !== 1 || !commit(context.head) || !commit(context.base) ||
       context.head !== head || context.base !== base) fail('target head/base differs.');
