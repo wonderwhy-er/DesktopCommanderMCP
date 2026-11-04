@@ -9,6 +9,14 @@ const file = (what) => ({ what, inFile: true });
 const runtime = (what) => ({ what, inFile: false });
 
 const cases = [
+  ['PowerShell abbreviated version mode does not execute a trailing file',
+    'pwsh -ver ignored.ps1', []],
+  ['PowerShell short version prefix does not execute a trailing file',
+    'pwsh -ve ignored.ps1', []],
+  ['Windows PowerShell version abbreviation consumes its version before command text',
+    'powershell -Ver 5.1 -Command "Write-Output deploy.ps1"', []],
+  ['Windows PowerShell version abbreviation preserves the actual script file',
+    'powershell -Ver 5.1 -File deploy.ps1', [file('deploy.ps1')]],
   ['Bash clustered POSIX option suppresses startup and is not a script file',
     'bash --rcfile startup.sh -io posix -c "echo ready"', []],
   ['Bash clustered shopt option consumes its value before command text',
