@@ -177,3 +177,26 @@ test('an unavailable lifetime endpoint falls back without starting a copy', () =
     assert.equal(observed.process.env.UV_THREADPOOL_SIZE, '16');
     assert.equal(observed.monitored, false);
 });
+
+test('an unrelated PID-only marker remains unrelated even with its matching application argument', () => {
+    const args = [`${LAUNCHER_ARGUMENT}999`];
+    const observed = bootstrap({ env: { DESKTOP_COMMANDER_THREADPOOL_LAUNCHER_PID: '999' }, args });
+    assert.notEqual(observed.invocation, null);
+    assert.deepEqual(observed.process.argv.slice(2), args);
+    assert.equal(observed.monitored, false);
+});
+
+test('an inherited endpoint needs a matching trailing launcher marker to identify a copy', () => {
+    const args = [`${LAUNCHER_ARGUMENT}101`];
+    const observed = bootstrap({ env: { DESKTOP_COMMANDER_THREADPOOL_LAUNCHER_PID: '999',
+        DESKTOP_COMMANDER_THREADPOOL_LAUNCHER_CHANNEL: 'lifetime-fixture' }, args });
+    assert.notEqual(observed.invocation, null);
+    assert.deepEqual(observed.process.argv.slice(2), args);
+    assert.equal(observed.monitored, false);
+});
+
+test('an inherited endpoint without a launcher PID does not identify a copy', () => {
+    const observed = bootstrap({ env: { DESKTOP_COMMANDER_THREADPOOL_LAUNCHER_CHANNEL: 'lifetime-fixture' } });
+    assert.notEqual(observed.invocation, null);
+    assert.equal(observed.monitored, false);
+});
