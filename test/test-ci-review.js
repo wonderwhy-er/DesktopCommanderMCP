@@ -63,6 +63,7 @@ const STATS = {
     'gemini-x-flash': { api: { totalRequests: 1, totalErrors: 0, totalLatencyMs: 2000 }, tokens: { input: 50, prompt: 50, candidates: 10, total: 60, cached: 0, thoughts: 0, tool: 0 } },
   },
 };
+// Legacy input compatibility: old captured kinds retain severity in current output.
 const FINDINGS = {
   summary: 'Two changes; one bug.',
   findings: [
@@ -259,23 +260,23 @@ export default async function run() {
   assert.strictEqual(review.event, 'COMMENT', 'never APPROVE or REQUEST_CHANGES');
   assert.strictEqual(review.commit_id, HEAD, 'on the commit it reviewed');
   assert.deepStrictEqual(review.comments, [
-    { path: 'src/a.ts', line: 2, side: 'RIGHT', body: '**Real bug:** two is 2 now, but `f(two)` still expects 1: f(2) throws.' },
+    { path: 'src/a.ts', line: 2, side: 'RIGHT', body: '**Bug:** two is 2 now, but `f(two)` still expects 1: f(2) throws.' },
     { path: 'src/a.ts', line: 12, side: 'RIGHT', body: '**Nitpick:** twelve is unused.' },
   ]);
   const body = review.body.split('\n');
   assert.strictEqual(body[0], REVIEW_MARKER);
-  assert.strictEqual(body[1], '**AI review of `0123456` against `fedcba9`:** 2 real bugs, 1 nitpick, 1 handled elsewhere, 1 not checked. Two changes; one bug.',
+  assert.strictEqual(body[1], '**AI review of `0123456` against `fedcba9`:** 2 bugs, 1 nitpick, 1 handled elsewhere, 1 not checked. Two changes; one bug.',
     'one line: the result, then the summary');
   assert.deepStrictEqual(body.slice(2, 10), [
     '',
     '| Kind | Where | What |',
     '|---|---|---|',
-    '| real bug | `src/a.ts:2` | two is 2 now, but `f(two)` still expects 1: f(2) throws. |',
-    '| real bug | `src/other.ts:3` | Ask @\u200bwonderwhy-er. |',
+    '| bug | `src/a.ts:2` | two is 2 now, but `f(two)` still expects 1: f(2) throws. |',
+    '| bug | `src/other.ts:3` | Ask @\u200bwonderwhy-er. |',
     '| nitpick | `src/a.ts:12` | twelve is unused. |',
     '| handled elsewhere | `src/a.ts:30` | The caller checks this, in src/b.ts:4. |',
     '| not checked | `src/gone.ts:1` | Whether anything still imports gone. |',
-  ], 'every finding in one table, one line each, real bugs first, a mention that notifies no one');
+  ], 'every finding in one table, one line each, bugs first, a mention that notifies no one');
   assert.deepStrictEqual(body.slice(10), ['', '<sub>gemini-x-pro, gemini-x-flash · 4 requests · 1360 tokens (1050 input, 210 output, 100 thinking) · 43 s in the API</sub>'],
     'then only the token line: no other prose');
   assert.strictEqual(quiet('mail me@x.org, @serg33v, `@x`'), 'mail me@​x.org, @​serg33v, `@​x`');
@@ -288,7 +289,7 @@ export default async function run() {
   // The first line's one format, agreed with the tool that reads these reviews: it reads
   // "clean" or the counts, in KINDS' words, then only the note ", with no test results", then the summary.
   // Anything else there reads as "not done": a change here goes to that tool's parser first, with an example line
-  const count = '\\d+ (real bugs?|not covered|nitpicks?|handled elsewhere|not checked|unsorted)';
+  const count = '\\d+ (bugs?|not covered|nitpicks?|handled elsewhere|not checked|unsorted)';
   const firstLine = new RegExp(`^\\*\\*AI review of \`[0-9a-f]{7}\` against \`[0-9a-f]{7}\`:\\*\\* (clean|${count}(, ${count})*)(, with no test results)?\\. \\S`);
   const notChecked = reviewOf({ answer: { summary: 'Read part of it.', findings: [{ kind: 'not checked', file: 'src/a.ts', line: 2, text: 'too long to read' }] },
     diff: DIFF, headSha: HEAD, baseSha: BASE, tests: null });
@@ -296,7 +297,7 @@ export default async function run() {
     'a count, then the note');
   const every = reviewOf({ answer: { summary: 'All kinds.', findings: ['real bug', 'real bug', 'not covered', 'nitpick', 'handled elsewhere', 'not checked', 'style']
     .map((kind) => ({ kind, file: 'src/a.ts', line: 2, text: 'x' })) }, diff: DIFF, headSha: HEAD, baseSha: BASE, usage: null });
-  assert.ok(every.body.split('\n')[1].startsWith('**AI review of `0123456` against `fedcba9`:** 2 real bugs, 1 not covered, 1 nitpick, 1 handled elsewhere, 1 not checked, 1 unsorted. All kinds.'),
+  assert.ok(every.body.split('\n')[1].startsWith('**AI review of `0123456` against `fedcba9`:** 2 bugs, 1 not covered, 1 nitpick, 1 handled elsewhere, 1 not checked, 1 unsorted. All kinds.'),
     every.body.split('\n')[1]);
   assert.deepStrictEqual(every.body.split('\n').slice(2, 4), ['', '| Kind | Where | What |'], 'then the table review reads');
   for (const review of [clean, untested, notChecked, every]) assert.match(review.body.split('\n')[1], firstLine, 'the one format review reads');
@@ -354,7 +355,7 @@ export default async function run() {
 
   // The prompt: the repo's rules, the commits, the files, and the PR's own words as data only
   const template = fs.readFileSync(path.join(ROOT, '.github', 'review-prompt.md'), 'utf8');
-  for (const rule of ['real bug', 'nitpick', 'handled elsewhere', 'not checked', 'a test that fails without', 'mirrors the code around it']) {
+  for (const rule of ['bug', 'nitpick', 'handled elsewhere', 'not checked', 'a test that fails without', 'mirrors the code around it']) {
     assert.ok(template.toLowerCase().includes(rule), `the prompt asks for: ${rule}`);
   }
   // One writing style for the PR texts and the review: the file has its rules, and the prompt carries it whole
@@ -466,7 +467,7 @@ export default async function run() {
     assert.strictEqual(scriptRun.code, 0, scriptRun.stderr);
     assert.strictEqual(github.reviews.length, 1, 'one review');
     assert.deepStrictEqual(github.reviews[0], reviewOf({ answer: FINDINGS, diff: DIFF, headSha: HEAD, baseSha: BASE, usage: usageOf(STATS) }));
-    assert.ok(scriptRun.stdout.startsWith(REVIEW_MARKER) && scriptRun.stdout.includes('| real bug | `src/a.ts:2` | two is 2 now'), 'every finding in the job summary');
+    assert.ok(scriptRun.stdout.startsWith(REVIEW_MARKER) && scriptRun.stdout.includes('| bug | `src/a.ts:2` | two is 2 now'), 'every finding in the job summary');
 
     const refusing = await fakeGitHub({ refuseComments: true });
     try {
@@ -474,7 +475,7 @@ export default async function run() {
       assert.strictEqual(scriptRun.code, 0, scriptRun.stderr);
       assert.strictEqual(refusing.reviews.length, 1, 'posted again, without line comments');
       assert.deepStrictEqual(refusing.reviews[0].comments, []);
-      assert.ok(refusing.reviews[0].body.includes('| real bug | `src/a.ts:2` | two is 2 now'), 'every finding in the summary');
+      assert.ok(refusing.reviews[0].body.includes('| bug | `src/a.ts:2` | two is 2 now'), 'every finding in the summary');
     } finally {
       refusing.server.close();
     }
@@ -493,7 +494,7 @@ export default async function run() {
     try {
       scriptRun = await ciReview(['post', out], { ...env, GITHUB_API_URL: down.url }, dir);
       assert.strictEqual(scriptRun.code, 1, 'no review posted: the job fails');
-      assert.ok(scriptRun.stdout.includes('| real bug | `src/a.ts:2` | two is 2 now'), `the job summary has it all the same: ${scriptRun.stdout}`);
+      assert.ok(scriptRun.stdout.includes('| bug | `src/a.ts:2` | two is 2 now'), `the job summary has it all the same: ${scriptRun.stdout}`);
       assert.ok(/: 500/.test(scriptRun.stderr) && !/\n\s+at /.test(scriptRun.stderr), `one plain line: ${scriptRun.stderr}`);
     } finally {
       down.server.close();
