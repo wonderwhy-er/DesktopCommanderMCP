@@ -9,10 +9,9 @@
 name: Tests
 
 on:
-  workflow_call:
-    secrets:
-      CLAUDE_CODE_OAUTH_TOKEN:
-        required: false
+  # Route legacy labels from main; the metadata step defers existing native workflows.
+  pull_request_target:
+    types: [synchronize, reopened, labeled]
   # No opened: GitHub sends a labeled event for each label a new PR has, and each runs
   # its platform, so opened would run every platform a second time
   pull_request:

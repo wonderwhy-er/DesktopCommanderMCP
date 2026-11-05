@@ -123,6 +123,9 @@ export const timedNamesIn = (text) => String(text).split(/\r?\n/).map((line) => 
 export function matrixFor(os, { tests, timed = [] }) {
   if (tests !== 'timed') return { os };
   if (timed.length === 0) return { os: [] };
+  const ids = timed.map(timedId);
+  const duplicate = ids.find((id, index) => ids.indexOf(id) !== index);
+  if (duplicate) throw new Error(`Timed tests share an artifact ID: ${duplicate}`);
   return { include: os.flatMap((image) => timed.map((name) => ({ os: image, timed: name, id: timedId(name) }))) };
 }
 
