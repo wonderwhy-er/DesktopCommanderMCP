@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { before, test } from 'node:test';
+import { spawnSync } from 'node:child_process';
 import { commandManager } from '../dist/command-manager.js';
 import { isTestHome } from './helpers/test-env.js';
 
@@ -95,3 +96,26 @@ for (const [name, command, unseen] of cases) {
     assert.deepEqual(answer.unseen ?? [], unseen);
   });
 }
+
+// A declared non-Windows fixture exercises the actual parser/classifier; no input command runs.
+test('POSIX literal backslashes do not turn filenames into shells or builtins', () => {
+  const managerUrl = new URL('../dist/command-manager.js', import.meta.url).href;
+  const commands = [String.raw`'bin\bash' deploy.sh`, String.raw`'bin\eval' echo ready`,
+    String.raw`'bin\source' deploy.sh`];
+  const script = `
+    Object.defineProperty(process, 'platform', { value: 'linux' });
+    const { commandManager } = await import(${JSON.stringify(managerUrl)});
+    const answers = [];
+    for (const command of ${JSON.stringify(commands)}) {
+      answers.push(await commandManager.checkCommand(command, 'bash'));
+    }
+    console.log(JSON.stringify(answers));
+  `;
+  const child = spawnSync(process.execPath, ['--input-type=module', '-e', script], {
+    encoding: 'utf8', timeout: 30000,
+    env: { ...process.env, DESKTOP_COMMANDER_DISABLE_TELEMETRY: '1', WSL_DISTRO_NAME: '' },
+  });
+  assert.equal(child.status, 0, child.stderr || child.stdout);
+  const answers = JSON.parse(child.stdout.trim().split(/\r?\n/).at(-1));
+  assert.deepEqual(answers, [{ verdict: 'allowed' }, { verdict: 'allowed' }, { verdict: 'allowed' }]);
+});
