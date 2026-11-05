@@ -6,6 +6,7 @@ import path from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { testsOf } from './helpers/ci-review.js';
+import { githubApi } from './helpers/github-api.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const HEAD = 'a'.repeat(40), BASE = 'b'.repeat(40), HARNESS = 'c'.repeat(40);
@@ -80,4 +81,13 @@ test('wrong product, attempt, mixed artifacts and selection refuse prior CI befo
     await assert.rejects(verifyPriorRun({ raw: JSON.stringify(manifest), repo: 'owner/repo', head: HEAD, base: BASE,
       github: apiFixture(options) }), /Review source:/);
   }
+});
+
+test('the existing REST client retains JSON defaults and reads raw job logs only when selected', async t => {
+  const previous = globalThis.fetch;
+  t.after(() => { globalThis.fetch = previous; });
+  globalThis.fetch = async () => ({ ok: true, json: async () => ({ id: 100 }), text: async () => log });
+  const github = githubApi({ api: 'https://offline.invalid', token: 'synthetic-only' });
+  assert.deepEqual(await github('GET', '/run'), { id: 100 });
+  assert.equal(await github('GET', '/logs', null, 'text'), log);
 });

@@ -133,7 +133,7 @@ export function measurementTestsOf(context) {
 }
 
 /** Files in the existing read-only review root; the approved guide never comes from the product checkout. */
-export function reviewFilesOf({ guide, context, tests }) {
+export function reviewFilesOf({ guide, context, tests, lcovs = [] }) {
   const normalized = String(guide).replace(/\r\n/g, '\n');
   if (digest(normalized) !== GUIDE_SHA256 || (context &&
       (context.guide.commit !== GUIDES_COMMIT || context.guide.sha256 !== GUIDE_SHA256))) {
@@ -143,6 +143,7 @@ export function reviewFilesOf({ guide, context, tests }) {
     'review/code-style.md': normalized,
     'review/tests.json': `${JSON.stringify(tests, null, 2)}\n`,
     ...(context?.measurements ? { 'review/coverage.lcov': context.measurements.coverage.text } : {}),
+    ...(tests?.provenance?.origin === 'github-actions' ? { 'review/coverage.lcov': lcovs.join('\n') } : {}),
   };
 }
 

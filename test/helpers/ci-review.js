@@ -334,9 +334,19 @@ export function reviewOf({ answer, diff, headSha, baseSha, usage = null, inline 
 
 /** The prompt's part on the run's tests: where they ran, what failed, the changed lines no test ran, and what to ask */
 function testsPart(tests, context) {
-  const scope = tests?.provenance ? [`Selected native scope: ${oneLine(tests.provenance.scope)}`, '',
-    `Native source attempt ${tests.provenance.attempt.id}: exit ${tests.provenance.attempt.exit}.`,
-    'Lines outside the supplied coverage records remain UNKNOWN; these are not this workflow\'s test results.', ''] : [];
+  let scope = [];
+  if (tests?.provenance?.origin === 'github-actions') {
+    const source = tests.provenance;
+    scope = [`Prior GitHub Actions scope: ${oneLine(source.scope)}`,
+      `Source run ${source.attempt.id}, attempt ${source.attempt.number}; product ${source.productCommit}; workflow ${source.workflowHead}.`,
+      ...source.summaries.map(({ platform, summary }) =>
+        `${platform}: ${summary.files} selected unit files; ${summary.passed} passed, ${summary.failed} failed, ${summary.skippedChecks} skipped checks.`),
+      'The complete selected manifests and provenance are in review/tests.json; these are prior CI results, not native measurements.', ''];
+  } else if (tests?.provenance) {
+    scope = [`Selected native scope: ${oneLine(tests.provenance.scope)}`, '',
+      `Native source attempt ${tests.provenance.attempt.id}: exit ${tests.provenance.attempt.exit}.`,
+      'Lines outside the supplied coverage records remain UNKNOWN; these are not this workflow\'s test results.', ''];
+  }
   if (!tests && context) {
     return ['No CI test/coverage artifacts were supplied. The pinned native evidence below is supplied test evidence '
       + 'for its stated selected operations. Assess what it proves at its exact input and platform; '

@@ -29,6 +29,10 @@ on:
         type: string
         required: false
         default: ''
+      source_run:
+        type: string
+        required: false
+        default: ''
     secrets:
       CLAUDE_CODE_OAUTH_TOKEN:
         required: false
@@ -51,6 +55,11 @@ on:
         options: [code, text]
       context:
         description: Optional pinned guide and native evidence JSON (48 KiB maximum)
+        type: string
+        required: false
+        default: ''
+      source_run:
+        description: Optional pinned prior CI unit-run/attempt/artifact manifest (16 KiB maximum)
         type: string
         required: false
         default: ''
@@ -85,6 +94,7 @@ jobs:
             /test/helpers/ci-platforms.js
             /test/helpers/ci-review.js
             /test/helpers/review-context.js
+            /test/helpers/review-source.js
             /test/check-coverage-report.js
             /test/helpers/node-test-runner.js
             /test/helpers/github-api.js
@@ -145,6 +155,7 @@ jobs:
             /test/helpers/ci-platforms.js
             /test/helpers/ci-review.js
             /test/helpers/review-context.js
+            /test/helpers/review-source.js
             /test/helpers/github-api.js
           sparse-checkout-cone-mode: false
       # The PR's head, by the SHA the request job read, with the history back to its
@@ -164,17 +175,41 @@ jobs:
       # them before calling this. With none (no platform label, or on demand), the review
       # says it had no test results
       - name: The run's results
+        if: inputs.source_run == ''
         continue-on-error: true
         uses: actions/download-artifact@v8
         with:
           pattern: results-*
           path: ci
       - name: The run's coverage
+        if: inputs.source_run == ''
         continue-on-error: true
         uses: actions/download-artifact@v8
         with:
           pattern: coverage-*
           path: ci
+      - name: Verify the prior CI source
+        if: inputs.source_run != ''
+        id: source
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_RUN_JSON: ${{ inputs.source_run }}
+          HEAD_SHA: ${{ needs.request.outputs.sha }}
+          BASE_SHA: ${{ needs.request.outputs.base }}
+        run: node test/ci-review.js source-verify
+      - name: Download the pinned prior CI artifacts
+        if: inputs.source_run != ''
+        uses: actions/download-artifact@v8
+        with:
+          artifact-ids: ${{ steps.source.outputs.artifacts }}
+          run-id: ${{ steps.source.outputs.run }}
+          github-token: ${{ github.token }}
+          path: ci-source
+          merge-multiple: false
+          digest-mismatch: error
+      - name: Stage only the verified unit results and coverage
+        if: inputs.source_run != ''
+        run: node test/ci-review.js source-stage
       # Without the secret it stops at once and fails, so the review never passes unseen
       - name: Install Claude Code 2.1.293
         run: npm install --global @anthropic-ai/claude-code@2.1.293
@@ -232,6 +267,7 @@ jobs:
             /test/helpers/ci-platforms.js
             /test/helpers/ci-review.js
             /test/helpers/review-context.js
+            /test/helpers/review-source.js
             /test/check-coverage-report.js
             /test/helpers/node-test-runner.js
             /test/helpers/github-api.js
