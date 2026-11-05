@@ -13,7 +13,7 @@ function artifact(name,when='old') {
   return {name,id:1,expired:false,created_at:when==='old'?'2026-11-01T10:04:00Z':'2026-11-01T10:14:00Z',workflow_run:{id:42,head_sha:expected.harness}};
 }
 function selection(os='ubuntu-latest',attempt='1',when='old') {
-  return {os,receipt:{attempt,outputs:[{file:'test-results/suite/results.json'},{file:'coverage/coverage-summary.json'}]},expected,
+  return {os,receipt:{attempt,exit:0,outputs:[{file:'test-results/suite/results.json'},{file:'coverage/coverage-summary.json'}]},expected,
     resultName:`results-${os}`,coverageName:`coverage-${os}`,jobs:[job(os,1),job(os,2)],
     artifacts:[artifact(`results-${os}`,when),artifact(`coverage-${os}`,when)]};
 }
@@ -39,6 +39,8 @@ for(const [name,change] of [
   ['wrong run metadata',s=>{s.artifacts[0].workflow_run.id=43;}],
   ['changed runner execution',s=>{s.jobs[1].runner_id=101;}],
   ['producer from a future attempt',s=>{s.jobs.push(job(s.os,4));}],
+  ['receipt relabelled to a retained clone attempt',s=>{s.receipt.attempt='2';}],
+  ['latest job failed after successful execution',s=>{s.jobs=[job(s.os,1,'old','failure')];}],
 ]) test(`publication rejects ${name}`,()=> {
   assert.equal(typeof evidence.artifactAttempt,'function');
   const s=selection();change(s);assert.throws(()=>evidence.artifactAttempt(s));

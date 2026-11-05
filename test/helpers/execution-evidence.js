@@ -21,15 +21,19 @@ export function artifactAttempt({receipt,jobs,artifacts,resultName,coverageName,
   if (!candidates.length || candidates.some(job=>String(job.run_id)!==expected.run || !Number.isSafeInteger(job.run_attempt) || job.run_attempt<1)) throw Error('Missing producer job metadata');
   const latest=latestExecutionJobs(candidates)[0];
   if (latest.run_attempt>Number(expected.attempt)) throw Error('A newer producer attempt exists');
-  const original=candidates.find(job=>String(job.run_attempt)===receipt.attempt);
-  if (!original) throw Error('Original producer attempt is missing');
   const executionKey=job=> {
     const start=Date.parse(job.started_at),end=Date.parse(job.completed_at);
     if (job.status!=='completed' || !Number.isFinite(start) || !Number.isFinite(end) || end<start || !Number.isSafeInteger(job.runner_id) || job.runner_id<1 || !job.runner_name) throw Error('Producer execution metadata is incomplete');
     return JSON.stringify([job.name,start,end,job.runner_id,job.runner_name]);
   };
-  const originalKey=executionKey(original);
-  if (latest!==original && (executionKey(latest)!==originalKey || original.conclusion!=='success' || latest.conclusion!=='success')) throw Error('Latest producer replaced the artifact execution');
+  const latestKey=executionKey(latest);
+  const sameExecution=candidates.filter(job=> {
+    try {return executionKey(job)===latestKey;} catch {return false;}
+  });
+  const original=sameExecution.reduce((first,job)=>job.run_attempt<first.run_attempt?job:first,latest);
+  if (String(original.run_attempt)!==receipt.attempt) throw Error('Latest producer replaced the artifact execution or original attempt is missing');
+  if (latest!==original && (original.conclusion!=='success' || latest.conclusion!=='success')) throw Error('Latest producer replaced the artifact execution');
+  if (receipt.exit===0 && latest.conclusion!=='success') throw Error('Latest producer failed after execution');
   const names=[resultName,...(receipt.outputs?.some(item=>item.file.startsWith('coverage/'))?[coverageName]:[])];
   for (const name of names) {
     const eligible=artifacts.filter(artifact=> {
