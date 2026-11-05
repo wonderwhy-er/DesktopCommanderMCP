@@ -139,7 +139,7 @@ A change to a shared module reaches most tests, because many tests start the who
 
 ## AI review
 
-The hosted review uses Claude Code 2.1.293 with `claude-haiku-5-5`, medium effort and company API-key authentication. `.github/workflows/review.yml` pins its runner scripts and prompts to commit `987fe9d2f8284add28796c794426892044756df0`. It checks out the requested product head separately, by SHA.
+The hosted review uses Claude Code 2.1.293 with `claude-haiku-5-5`, medium effort and company API-key authentication. `.github/workflows/review.yml` pins its runner scripts and prompts to commit `48e9bc6b554c1b82583199fd42c44f221d172e98`. It checks out the requested product head separately, by SHA.
 
 Set the repository secret `CLAUDE_CODE_OAUTH_TOKEN` to the company API key. Despite the secret's historical name, the runner requires first-party API-key authentication. It refuses a different effective model or authentication method. The hosted workflow does not use a Gemini key or model setting.
 
