@@ -7,8 +7,8 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'http';
 import { createRequire } from 'module';
 import { tmpdir, userInfo } from 'os';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'path';
-import type { Browser, LaunchOptions, PuppeteerNode } from 'puppeteer';
 import type { Config as MdToPdfConfig } from 'md-to-pdf/dist/lib/config.js';
+import type { convertMdToPdf } from 'md-to-pdf/dist/lib/md-to-pdf.js';
 import type { PageRange } from './lib/pdf2md.js';
 import { PdfParseResult, pdf2md } from './lib/pdf2md.js';
 import { CONFIG_FILE } from '../../config.js';
@@ -36,13 +36,25 @@ const RENDER_COOKIE_NAME = 'desktop-commander-pdf-render';
 
 const require = createRequire(import.meta.url);
 
+// The converter's third argument uses the Browser from md-to-pdf's own Puppeteer.
+type Browser = NonNullable<NonNullable<Parameters<typeof convertMdToPdf>[2]>['browser']>;
+type LaunchOptions = MdToPdfConfig['launch_options'];
+
+interface MdToPdfDependencies {
+    convertMdToPdf: typeof convertMdToPdf;
+    defaultConfig: MdToPdfConfig;
+    puppeteer: { launch(options?: LaunchOptions): Promise<Browser> };
+    serveHandler: (request: IncomingMessage, response: ServerResponse, config: { public: string; directoryListing: boolean; cleanUrls: boolean }) => Promise<void>;
+    grayMatter: (input: string, options: unknown) => { content: string; data: unknown };
+}
+
 // md-to-pdf, with its own Puppeteer, file server and front matter parser, loaded the
 // way md-to-pdf loads them (they are its dependencies, not Desktop Commander's)
-export const mdToPdfPackage = new LazyPackage('md-to-pdf', 'PDF writing support', () => {
+export const mdToPdfPackage = new LazyPackage<MdToPdfDependencies>('md-to-pdf', 'PDF writing support', () => {
     const requireFromMdToPdf = createRequire(require.resolve('md-to-pdf'));
     const { convertMdToPdf }: typeof import('md-to-pdf/dist/lib/md-to-pdf.js') = require('md-to-pdf/dist/lib/md-to-pdf.js');
     const { defaultConfig }: typeof import('md-to-pdf/dist/lib/config.js') = require('md-to-pdf/dist/lib/config.js');
-    const puppeteer: PuppeteerNode = requireFromMdToPdf('puppeteer');
+    const puppeteer: MdToPdfDependencies['puppeteer'] = requireFromMdToPdf('puppeteer');
     const serveHandler: (request: IncomingMessage, response: ServerResponse, config: { public: string; directoryListing: boolean; cleanUrls: boolean }) => Promise<void> =
         requireFromMdToPdf('serve-handler');
     const grayMatter: (input: string, options: unknown) => { content: string; data: unknown } = requireFromMdToPdf('gray-matter');

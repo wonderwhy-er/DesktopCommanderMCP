@@ -390,12 +390,25 @@ export async function startRemoteStandIn({
       ws.on('message', (data) => {
         let message;
         try { message = JSON.parse(String(data)); } catch { return; }
+        const arrayMessage = Array.isArray(message);
+        if (arrayMessage) {
+          // Realtime v2 text frames are [join_ref, ref, topic, event, payload]; v1 uses objects.
+          // https://supabase.com/docs/guides/realtime/protocol
+          const [join_ref, ref, topic, event] = message;
+          message = { join_ref, ref, topic, event };
+        }
+        let reply;
         if (message.topic === 'phoenix' && message.event === 'heartbeat') {
           standIn.heartbeatsAnswered++;
-          ws.send(JSON.stringify({ topic: 'phoenix', event: 'phx_reply', payload: { status: 'ok', response: {} }, ref: message.ref }));
+          reply = { topic: 'phoenix', event: 'phx_reply', payload: { status: 'ok', response: {} }, ref: message.ref };
         } else if (channel && message.ref) {
           // A join, a presence track, a new access token: accepted, as the realtime server answers them
-          ws.send(JSON.stringify({ topic: message.topic, event: 'phx_reply', payload: { status: 'ok', response: {} }, ref: message.ref, join_ref: message.join_ref }));
+          reply = { topic: message.topic, event: 'phx_reply', payload: { status: 'ok', response: {} }, ref: message.ref, join_ref: message.join_ref };
+        }
+        if (reply) {
+          ws.send(JSON.stringify(arrayMessage
+            ? [reply.join_ref ?? null, reply.ref, reply.topic, reply.event, reply.payload]
+            : reply));
         }
       });
     });
