@@ -91,6 +91,26 @@ async function posts() {
   console.log('✓ one post with Desktop Commander\'s client id, or a new one; the fallback when the proxy refuses');
 }
 
+async function dockerWithoutHostname() {
+  const cases = [
+    { env: { DOCKER_CONTAINER: '1', HOSTNAME: null }, fs: { dockerenv: false } },
+    { env: { HOSTNAME: null }, fs: { dockerenv: true } },
+    { env: { DOCKER_CONTAINER: '1', HOSTNAME: '' }, fs: { dockerenv: false } },
+    { env: { HOSTNAME: '' }, fs: { dockerenv: true } },
+  ];
+  const containerIds = [];
+  for (const options of cases) {
+    const run = await track(options);
+    assert.strictEqual(run.code, 0, run.stderr);
+    const source = sourceOf(run);
+    assert.strictEqual(source.source, 'docker', JSON.stringify(options));
+    containerIds.push(source.details.container_id);
+  }
+  assert.deepStrictEqual(containerIds, ['unknown', 'unknown', 'unknown', 'unknown'],
+    'both Docker detection paths use unknown when HOSTNAME is absent or empty');
+  console.log('✓ Docker: an absent or empty hostname uses the unknown container id');
+}
+
 async function debugOutput() {
   const debugging = [{ DEBUG: 'desktop-commander' }, { DEBUG: '*' }, { NODE_ENV: 'development' }, { DC_DEBUG: 'true' }];
   for (const env of debugging) {
@@ -120,6 +140,7 @@ async function postinstall() {
 
 export default async function run() {
   await sources();
+  await dockerWithoutHostname();
   await posts();
   await debugOutput();
   await postinstall();
