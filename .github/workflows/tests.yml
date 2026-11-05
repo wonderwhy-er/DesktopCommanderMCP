@@ -186,6 +186,8 @@ jobs:
           # (GitHub starts them from the default branch). A PR event: GitHub's merge of
           # the PR with its base.
           ref: ${{ github.event_name != 'pull_request' && needs.platforms.outputs.sha || '' }}
+          # changed:A..B compares commits that can precede the tested commit.
+          fetch-depth: 0
       # A cross-test (tests_from): test/ exactly as that commit has it, on this commit's
       # code, before anything installs or runs
       - name: The tests from tests_from

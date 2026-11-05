@@ -10,11 +10,12 @@ import type { CommandReading, FoundCommand } from './command-reading.js';
  * - > and < with their target (2>&1, >>log.txt) are redirections, not words;
  * - ; , = and @ before a command are skipped, as spaces are (@echo off runs
  *   echo, ;sc and @ sc run sc);
+ * - a command's name ends at ; , = and / outside "…", also after ^ (net,user
+ *   and sc/query run net and sc), but a name with a drive letter keeps its /
+ *   (C:/Windows/System32/sc.exe);
  * - a word with %VAR% in it is known only at run time;
  * - if and for run the command after their condition or after "do";
- * - call runs the command after it (call :label runs a label of a batch file,
- *   which no blockedCommands entry names).
- * cmd has no functions, so none are listed.
+ * - for /f also runs its single-quoted set (back-quoted with usebackq).
  */
 
 interface Token {
@@ -22,13 +23,17 @@ interface Token {
   kind: 'word' | 'op' | 'open' | 'close' | 'redirect';
   /** The word as cmd reads it: quotes and ^ removed */
   value: string;
-  /** The word as written, quotes and ^ included */
+  /** The word as written, quotes and ^ included. */
   text: string;
   start: number;
   /** True when the word has %VAR% in it, so its value is known only at run time */
   atRunTime: boolean;
   /** How many of a word's first characters are ; , = or @ as written: cmd skips them where a command starts */
   lead?: number;
+  /** Where in value a command's name ends, at a ; , = or / outside "…"; undefined when the whole word is the name */
+  nameEnd?: number;
+  /** The same boundary in text, before quotes and escapes are removed. */
+  nameTextEnd?: number;
 }
 
 function tokenize(text: string): Token[] {
@@ -59,6 +64,9 @@ function tokenize(text: string): Token[] {
       const start = i;
       let value = '';
       let inQuotes = false;
+      // Where in value a ; , = or / is outside "…": cmd ends a command's name at the first one
+      const ends: number[] = [];
+      const rawEnds: number[] = [];
       while (i < text.length) {
         const c = text[i];
         if (inQuotes) {
@@ -70,17 +78,29 @@ function tokenize(text: string): Token[] {
           inQuotes = true;
           i++;
         } else if (c === '^' && i + 1 < text.length) {
+          if (';,=/'.includes(text[i + 1])) {
+            ends.push(value.length);
+            rawEnds.push(i - start);
+          }
           value += text[i + 1];
           i += 2;
         } else if (' \t\r\n&|()<>'.includes(c)) {
           break;
         } else {
+          if (';,=/'.includes(c)) {
+            ends.push(value.length);
+            rawEnds.push(i - start);
+          }
           value += c;
           i++;
         }
       }
       const written = text.slice(start, i);
-      tokens.push({ kind: 'word', value, text: written, start, atRunTime: /%[^%\s]+%/.test(written), lead: /^[;,=@]*/.exec(written)![0].length });
+      const lead = /^[;,=@]*/.exec(written)![0].length;
+      const drive = /^[A-Za-z]:/.test(value.slice(lead));
+      const nameEnd = ends.find((end) => end >= lead && !(drive && value[end] === '/'));
+      const nameTextEnd = nameEnd === undefined ? undefined : rawEnds[ends.indexOf(nameEnd)];
+      tokens.push({ kind: 'word', value, text: written, start, atRunTime: /%[^%\s]+%/.test(written), lead, nameEnd, nameTextEnd });
     }
   }
   return tokens;
@@ -111,13 +131,17 @@ function ifConditionLength(words: Token[], i: number): number | undefined {
 const isLead = (word: Token): boolean => word.lead !== undefined && word.lead > 0 && word.lead === word.value.length;
 
 /** The name a command's first word gives, without the ; , = and @ that cmd skips before it (;sc runs sc) */
-const commandName = (word: Token): string => word.value.slice(word.lead ?? 0);
+const commandName = (word: Token): string => word.value.slice(word.lead ?? 0, word.nameEnd);
+
+/** The rest of a command's first word after its name, cmd's first argument: user for net,user, /query for sc/query */
+const afterName = (word: Token): string =>
+  word.nameEnd === undefined ? '' : word.value.slice(word.nameEnd).replace(/^[;,=]+/, '');
 
 class CmdReader {
   private position = 0;
   readonly commands: FoundCommand[] = [];
 
-  constructor(private readonly tokens: Token[]) {}
+  constructor(private readonly tokens: Token[], private readonly text: string) {}
 
   /** Reads commands and the operators between them, up to the end, or up to the ) that closes a group */
   readList(inGroup: boolean): void {
@@ -151,6 +175,7 @@ class CmdReader {
     let parens = 0;
     while (this.position < this.tokens.length) {
       const token = this.tokens[this.position];
+      if (token.kind === 'open' && parens === 0 && this.readForSet(words)) continue;
       if (token.kind === 'op') break;
       if (token.kind === 'close' && parens === 0 && inGroup) break;
       if (token.kind === 'redirect') {
@@ -170,9 +195,69 @@ class CmdReader {
     if (words.length > 0 && !this.startsCommandAfter(words, parens)) this.addCommand(words);
   }
 
+  /** A FOR /F quoted set is a command or literal, not part of the outer list. */
+  private readForSet(words: Token[]): boolean {
+    if (words.length === 0 || commandName(words[0]).toLowerCase() !== 'for'
+      || words[words.length - 1].value.toLowerCase() !== 'in') return false;
+    const rest = afterName(words[0]);
+    // Comma/equal/semicolon may separate FOR from /F; an attached slash cannot.
+    if (rest && !';,='.includes(words[0].value[words[0].nameEnd!])) return false;
+    const args = [...(rest ? [rest] : []), ...words.slice(1).map(word => word.value)];
+    if (args[0]?.toLowerCase() !== '/f') return false;
+    const usebackq = /(?:^|\s)usebackq(?:\s|$)/i.test(args[1] ?? '');
+    const open = this.tokens[this.position];
+    let start = open.start + 1;
+    while (/[ \t]/.test(this.text[start] ?? '') && start < this.text.length) start++;
+    const quote = this.text[start];
+    const isCommand = quote === (usebackq ? '`' : "'");
+    const isLiteral = quote === (usebackq ? "'" : '"') || (usebackq && quote === '"');
+    if (!isCommand && !isLiteral) return false;
+
+    // Keep the raw span: tokenization removes quotes and splits the inner operators.
+    let end = start + 1;
+    let depth = 0;
+    let inQuotes = false;
+    let close = -1;
+    for (; end < this.text.length; end++) {
+      const char = this.text[end];
+      if (isCommand && char === '^' && !inQuotes) { end++; continue; }
+      if (isCommand && char === '"') inQuotes = !inQuotes;
+      if (!inQuotes && depth === 0 && char === quote) {
+        let next = end + 1;
+        while (/[ \t]/.test(this.text[next] ?? '') && next < this.text.length) next++;
+        if (this.text[next] === ')') { close = next; break; }
+      }
+      if (isCommand && !inQuotes) {
+        if (char === '(') depth++;
+        if (char === ')') depth--;
+      }
+    }
+    if (close < 0) throw new Error('a for /f quoted set is not closed');
+    if (isCommand) {
+      // cmd consumes one caret-escape layer before passing the command to its child.
+      let command = '';
+      const offsets: number[] = [];
+      inQuotes = false;
+      for (let i = start + 1; i < end; i++) {
+        const char = this.text[i];
+        if (char === '"') inQuotes = !inQuotes;
+        if (char === '^' && !inQuotes && i + 1 < end) i++;
+        offsets.push(i);
+        command += this.text[i];
+      }
+      const reader = new CmdReader(tokenize(command), command);
+      reader.readList(false);
+      this.commands.push(...reader.commands.map(found => ({ ...found, start: offsets[found.start] })));
+    }
+    // Retain a balanced placeholder so the existing DO/body/group logic still applies.
+    words.push(open, { kind: 'close', value: ')', text: ')', start: close, atRunTime: false });
+    while (this.position < this.tokens.length && this.tokens[this.position].start <= close) this.position++;
+    return true;
+  }
+
   /**
    * Whether the words so far are a whole if condition, a for clause up to its
-   * "do", an "else" or a "call", so the next token starts the command that runs.
+   * "do", or an "else", so the next token starts the command that runs.
    * parens: how many of the words' ( are not closed yet.
    */
   private startsCommandAfter(words: Token[], parens: number): boolean {
@@ -199,11 +284,20 @@ class CmdReader {
     const first = words[0];
     const name = commandName(first);
     if (!name && words.length === 1) return; // "" alone runs nothing
+    const rest = afterName(first);
+    const firstWords = rest ? [name, rest] : [name];
     this.commands.push({
       name,
-      words: words.map((word, index) => (word.atRunTime ? null : index === 0 ? name : word.value)),
-      written: words.map((word) => word.text),
-      wordTexts: words.map((word, index) => (index === 0 ? name : word.value)),
+      words: [
+        ...firstWords.map((word) => (first.atRunTime ? null : word)),
+        ...words.slice(1).map((word) => (word.atRunTime ? null : word.value)),
+      ],
+      written: [
+        first.text.slice(0, first.nameTextEnd),
+        ...(rest ? [first.text.slice(first.nameTextEnd).replace(/^(?:\^?[;,=])+/, '')] : []),
+        ...words.slice(1).map((word) => word.text),
+      ],
+      wordTexts: [...firstWords, ...words.slice(1).map((word) => word.value)],
       start: first.start,
       nameAtRunTime: first.atRunTime,
     });
@@ -212,7 +306,7 @@ class CmdReader {
 
 /** Reads a command for cmd */
 export async function readCmdCommands(command: string): Promise<CommandReading> {
-  const reader = new CmdReader(tokenize(command));
+  const reader = new CmdReader(tokenize(command), command);
   try {
     reader.readList(false);
   } catch (error) {

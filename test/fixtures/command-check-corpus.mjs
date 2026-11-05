@@ -624,4 +624,22 @@ export const CORPUS = [
   { id: 'ctl_net', group: 'control', shell: 'powershell', expect: 'net', command: 'net stop Spooler', note: 'plain net' },
   { id: 'ctl_netexe', group: 'control', shell: 'powershell', expect: process.platform === 'win32' ? 'net' : null, command: 'C:\\Windows\\System32\\net.exe user', note: 'net.exe by path: net on Windows; elsewhere that path names no program, so nothing runs' },
   { id: 'ctl_allow', group: 'control', shell: 'bash', expect: null, command: 'echo "Hello World"', note: 'plainly safe' },
+
+  // Current command-name and FOR /F parsing regressions.
+  { id: 'name_cmd_comma_end', group: 'name', shell: 'cmd', expect: 'net', command: 'net,user', note: 'cmd ends a name at a comma, as at a space, and runs net user' },
+  { id: 'name_cmd_semicolon_end', group: 'name', shell: 'cmd', expect: 'sc', command: 'sc;query', note: 'cmd ends a name at ; and runs sc query' },
+  { id: 'name_cmd_equals_end', group: 'name', shell: 'cmd', expect: 'sc', command: 'sc=query', note: 'cmd ends a name at = and runs sc query' },
+  { id: 'name_cmd_caret_end', group: 'name', shell: 'cmd', expect: 'net', command: 'net^,user', note: 'the name still ends at a comma after ^: cmd runs net user' },
+  { id: 'name_cmd_slash_end', group: 'name', shell: 'cmd', expect: 'sc', command: 'sc/query', note: 'cmd ends a name at / and runs sc /query' },
+  { id: 'name_cmd_end_after_amp', group: 'name', shell: 'cmd', expect: 'net', command: 'echo ok & net,user', note: 'the name after & ends at a comma too' },
+  { id: 'name_cmd_quoted_comma', group: 'name', shell: 'cmd', expect: null, command: '"net,user"', note: 'a comma in quotes is part of the name: cmd looks for a program named net,user' },
+  { id: 'name_cmd_drive_slash', group: 'name', shell: 'cmd', expect: 'sc', command: 'C:/Windows/System32/sc query', note: 'a name with a drive letter keeps its /: cmd runs C:/Windows/System32/sc' },
+  { id: 'name_cmd_drive_comma', group: 'name', shell: 'cmd', expect: 'sc', command: 'C:/Windows/System32/sc,query', note: 'with a drive letter the name still ends at a comma: cmd runs sc query' },
+  { id: 'name_cmd_end_arg', group: 'name', shell: 'cmd', expect: null, command: 'echo,sc', note: 'after the name ends at a comma, the rest is an argument: echo prints sc' },
+  { id: 'cmd_for_f_command', group: 'bypass', shell: 'cmd', expect: 'sc', command: "for /f %i in ('sc stop Spooler') do @echo %i", note: 'declared regression for the quoted command set; never executed' },
+  { id: 'cmd_for_f_options', group: 'bypass', shell: 'cmd', expect: 'net', command: "for /f \"tokens=*\" %%i in ('net user') do @echo %%i", note: 'batch variable and parsing options do not make the command data' },
+  { id: 'cmd_for_f_backq', group: 'bypass', shell: 'cmd', expect: 'sc', command: 'for /f "usebackq" %i in (`sc query`) do @echo %i', note: 'usebackq makes the back-quoted set a command' },
+  { id: 'cmd_for_f_pipe', group: 'bypass', shell: 'cmd', expect: 'sc', command: "for /f %i in ('echo x ^| sc query') do @echo %i", note: 'outer caret is consumed before the child cmd reads its pipeline' },
+  { id: 'cmd_for_f_literal', group: 'case', shell: 'cmd', expect: null, command: 'for /f %i in ("sc query") do @echo %i', note: 'double-quoted default set is literal text' },
+  { id: 'cmd_for_f_backq_literal', group: 'case', shell: 'cmd', expect: null, command: "for /f \"usebackq\" %i in ('sc query') do @echo %i", note: 'single-quoted usebackq set is literal text' },
 ];
