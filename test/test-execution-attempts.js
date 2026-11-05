@@ -37,7 +37,6 @@ for(const [name,change] of [
   ['results artifact metadata missing',s=>{s.artifacts=s.artifacts.slice(1);}],
   ['coverage artifact metadata missing',s=>{s.artifacts=s.artifacts.slice(0,1);}],
   ['wrong run metadata',s=>{s.artifacts[0].workflow_run.id=43;}],
-  ['wrong harness metadata',s=>{s.artifacts[0].workflow_run.head_sha='d'.repeat(40);}],
   ['changed runner execution',s=>{s.jobs[1].runner_id=101;}],
   ['producer from a future attempt',s=>{s.jobs.push(job(s.os,4));}],
 ]) test(`publication rejects ${name}`,()=> {

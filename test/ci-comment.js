@@ -32,7 +32,7 @@ import {
 import { combineCoverage, readFinals } from './combined-coverage.js';
 import { coverageByArea } from './coverage-areas.js';
 import { githubApi } from './helpers/github-api.js';
-import { verifyArtifacts } from './helpers/execution-evidence.js';
+import { artifactAttempt, latestExecutionJobs, verifyArtifacts } from './helpers/execution-evidence.js';
 
 const folder = process.argv[2] ?? 'ci';
 const { GITHUB_REPOSITORY: repo, GH_TOKEN: token, RUN_ID: runId, PR: pr, HEAD_SHA: headSha, TESTS_FROM: testsFrom } = process.env;
@@ -165,7 +165,8 @@ function combinedCoverage() {
 async function runMetadata(key, missing) {
   if (!token || !runId) return [];
   try {
-    return await githubList(`/repos/${repo}/actions/runs/${runId}/${key}`, key);
+    const query=key==='jobs' && process.env.REQUIRE_EXECUTION==='true'?'?filter=all':'';
+    return await githubList(`/repos/${repo}/actions/runs/${runId}/${key}${query}`, key);
   } catch (error) {
     missing.push(key === 'jobs' ? JOBS_METADATA_UNAVAILABLE : `${key} metadata unavailable`);
     console.error(`The run's ${key} metadata wasn't read: ${error.message}`);
@@ -175,7 +176,8 @@ async function runMetadata(key, missing) {
 
 async function main() {
   const missingMetadata = [];
-  const jobs = await runMetadata('jobs', missingMetadata);
+  const executions = await runMetadata('jobs', missingMetadata);
+  const jobs = process.env.REQUIRE_EXECUTION==='true'?latestExecutionJobs(executions):executions;
   const artifacts = await runMetadata('artifacts', missingMetadata);
 
   // The results of each platform this run ran
@@ -191,8 +193,12 @@ async function main() {
       try {
         const dirs=fs.readdirSync(folder).filter(name=>name===`results-${os}` || name.startsWith(`results-${os}-`));
         if (!dirs.length) throw Error('Missing execution results');
-        for (const dir of dirs) verifyArtifacts({results:path.join(folder,dir),coverage:path.join(folder,`coverage-${os}`),
-          expected:{product:headSha,tests:testsFrom || headSha,harness:process.env.HARNESS_SHA,run:String(runId),attempt:process.env.GITHUB_RUN_ATTEMPT || '1'}});
+        for (const dir of dirs) {
+          const expected={product:headSha,tests:testsFrom || headSha,harness:process.env.HARNESS_SHA,run:String(runId),attempt:process.env.GITHUB_RUN_ATTEMPT || '1'};
+          const receipt=readJson(path.join(folder,dir,'execution.json'));
+          const attempt=artifactAttempt({receipt,jobs:executions,artifacts,resultName:dir,coverageName:`coverage-${os}`,os,expected});
+          verifyArtifacts({results:path.join(folder,dir),coverage:path.join(folder,`coverage-${os}`),expected:{...expected,attempt}});
+        }
       } catch(error) {
         invalidExecution=true;
         tests ??= {files:0,passed:0,skipped:0,failed:[],failures:[],notes:[],excluded:0};
