@@ -370,7 +370,7 @@ export default async function run() {
   }
   assert.ok(/one sentence/.test(template) && /one line/.test(template) && /concrete input/.test(template), 'the answer: a one-sentence summary, one-line findings, a concrete input for a real bug');
   // The code style the review checks new code against: named in the prompt, and in the repository
-  assert.ok(template.includes('`.github/code-style.md`') && fs.existsSync(path.join(ROOT, '.github', 'code-style.md')), 'the prompt points to the code style, which is there');
+  assert.ok(template.includes('`review/code-style.md`') && fs.existsSync(path.join(ROOT, '.github', 'code-style.md')), 'the prompt points to the pinned harness guide staged for read-only reads');
   assert.strictEqual((fs.readFileSync(path.join(ROOT, '.github', 'code-style.md'), 'utf8').match(/^\d+\. \*\*/gm) ?? []).length, 13, 'its 13 rules');
   const fenced = `${DIFF}+const md = \`\`\`\`;\n`;
   const prompt = promptOf({

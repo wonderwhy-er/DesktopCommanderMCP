@@ -274,7 +274,9 @@ export function usageOf(stats) {
 function suppliedContextLines(context) {
   const shown = value => oneLine(quiet(plain(value)));
   return [
-    'Pinned guide and selected native evidence were supplied separately; coverage from that evidence remains unknown.',
+    context.measurements
+      ? 'Pinned guide and selected native measurements were supplied separately; coverage outside their records remains unknown.'
+      : 'Pinned guide and selected native evidence were supplied separately; coverage from that evidence remains unknown.',
     `Guide source: \`${context.guide.commit}:${context.guide.path}\`; SHA256 \`${context.guide.sha256}\`.`,
     `Input receipt: prompt SHA256 \`${context.promptSha256}\`; this does not claim model acceptance or CI coverage.`,
     ...context.evidence.map(({ kind, name, source, sha256, nativeRun }) => {
@@ -332,6 +334,25 @@ export function reviewOf({ answer, diff, headSha, baseSha, usage = null, inline 
 
 /** The prompt's part on the run's tests: where they ran, what failed, the changed lines no test ran, and what to ask */
 function testsPart(tests, context) {
+  let scope = [];
+  if (tests?.provenance?.origin === 'github-actions') {
+    const source = tests.provenance;
+    scope = [`Prior GitHub Actions scope: ${oneLine(source.scope)}`,
+      `Source run ${source.attempt.id}, attempt ${source.attempt.number}; product ${source.productCommit}; workflow ${source.workflowHead}.`,
+      ...[...new Set(source.jobs?.map(job => job.checkoutHead) ?? [])].filter(head => head !== source.productCommit)
+        .map(head => `Tested checkout ${head}: API-verified equal product tree; this is not a new post-retarget merged-result run.`),
+      ...source.summaries.map(({ platform, part, summary, notRun }) => {
+        const name = part ? `${platform} ${part}` : platform;
+        if (summary.files === 0) return `${name}: 0 files, not run (${oneLine(notRun ?? 'no files')}).`;
+        const kind = part ? 'files' : 'unit files';
+        return `${name}: ${summary.files} selected ${kind}; ${summary.passed} passed, ${summary.failed} failed, ${summary.skippedChecks} skipped checks.`;
+      }),
+      'The complete selected manifests and provenance are in review/tests.json; these are prior CI results, not native measurements.', ''];
+  } else if (tests?.provenance) {
+    scope = [`Selected native scope: ${oneLine(tests.provenance.scope)}`, '',
+      `Native source attempt ${tests.provenance.attempt.id}: exit ${tests.provenance.attempt.exit}.`,
+      'Lines outside the supplied coverage records remain UNKNOWN; these are not this workflow\'s test results.', ''];
+  }
   if (!tests && context) {
     return ['No CI test/coverage artifacts were supplied. The pinned native evidence below is supplied test evidence '
       + 'for its stated selected operations. Assess what it proves at its exact input and platform; '
@@ -352,7 +373,7 @@ function testsPart(tests, context) {
   } else {
     uncovered = ['Every changed line the coverage report counts was run by a test.'];
   }
-  return [`They ran on ${tests.platforms.join(', ')}. ${failed}`, '', ...uncovered, '',
+  return [...scope, `They ran on ${tests.platforms.join(', ')}. ${failed}`, '', ...uncovered, '',
     'Is each new or changed behaviour tested, and does a failing test exist for each fix? '
       + 'Report each range above as a `not covered` finding (its file, its first line, "not covered: <file>:<lines>"), '
       + 'unless the PR says why; then say why, as `handled elsewhere`.'];

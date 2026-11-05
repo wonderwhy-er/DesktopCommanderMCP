@@ -111,9 +111,9 @@ function combineFile(reports) {
 function reportsByFile(finals) {
   const byFile = new Map();
   for (const final of finals) {
-    for (const data of Object.values(final)) {
-      const file = path.join(ROOT, inCheckout(data.path)).split('\\').join('/');
-      byFile.set(file, [...(byFile.get(file) ?? []), data]);
+    for (const fileCoverage of Object.values(final)) {
+      const file = path.join(ROOT, inCheckout(fileCoverage.path)).split('\\').join('/');
+      byFile.set(file, [...(byFile.get(file) ?? []), fileCoverage]);
     }
   }
   return [...byFile].sort(([a], [b]) => a.localeCompare(b));

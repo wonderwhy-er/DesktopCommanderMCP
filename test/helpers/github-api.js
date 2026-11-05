@@ -1,10 +1,10 @@
 /**
  * GitHub's REST API with a token, for CI's scripts (test/ci-comment.js,
  * test/ci-review.js): JSON in and out. Any other answer than 2xx throws, with
- * the status on the error (`error.status`).
+ * the status on the error (`error.status`). The optional text format is for Actions job logs.
  */
 export function githubApi({ api = 'https://api.github.com', token }) {
-  return async function github(method, url, body) {
+  return async function github(method, url, body, format = 'json') {
     const response = await fetch(url.startsWith('http') ? url : `${api}${url}`, {
       method,
       headers: {
@@ -19,6 +19,6 @@ export function githubApi({ api = 'https://api.github.com', token }) {
       error.status = response.status;
       throw error;
     }
-    return response.json();
+    return format === 'text' ? response.text() : response.json();
   };
 }

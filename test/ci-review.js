@@ -22,8 +22,9 @@ import {
   withUncovered,
 } from './helpers/ci-review.js';
 import { githubApi } from './helpers/github-api.js';
+import { verifyPriorRun, stagePriorRun, sourceEvidenceOf } from './helpers/review-source.js';
 import {
-  MAX_REVIEW_CONTEXT_BYTES, reviewContextOf, contextReceiptOf, publishedContextOf,
+  MAX_REVIEW_CONTEXT_BYTES, reviewContextOf, contextReceiptOf, publishedContextOf, measurementTestsOf, reviewFilesOf,
 } from './helpers/review-context.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -251,14 +252,23 @@ async function run(range, ...options) {
   const context = reviewContextOf(rawContext, change);
   const pull = process.env.PR ? await github('GET', `/repos/${repo}/pulls/${Number(process.env.PR)}`) : {};
   // The run's tests (CI: its artifacts, --tests) or this machine's last coverage run at B
-  const ran = option('--tests')
-    ? testsOf(path.resolve(option('--tests')))
+  const testsDirectory = option('--tests') && path.resolve(option('--tests'));
+  const automated = testsDirectory
+    ? testsOf(testsDirectory)
     : localTestsOf({ root: ROOT, head: change.head });
+  if (testsDirectory && fs.existsSync(path.join(testsDirectory, 'review-source.json'))) {
+    if (!automated) throw new Error('Review source: verified prior results are missing.');
+    Object.assign(automated, sourceEvidenceOf(testsDirectory, change));
+  }
+  const measured = measurementTestsOf(context);
+  if (automated && measured) throw new Error('Review context: choose current CI artifacts or selected native measurements.');
+  const ran = measured ?? automated;
   const tests = ran && {
     platforms: ran.platforms,
     failed: ran.failed,
     // Only files the coverage counts: the rules the coverage check holds the report to (.c8rc.json's files)
     uncovered: ran.lcovs.length ? uncoveredOf({ diff: change.diff, lcovs: ran.lcovs, counted: isCounted }) : null,
+    ...(ran.provenance ? { selected: ran.selected, coverageScope: ran.coverageScope, provenance: ran.provenance } : {}),
   };
   // A text check (--text): each claim in a text against the change, with the results files it cites
   const text = option('--text') && textToCheck(option('--text'), pull);
@@ -266,7 +276,8 @@ async function run(range, ...options) {
   fitsTheWindow(prompt, change.diff);
 
   const { git, head, diff } = change;
-  const modelJson = await askClaudeCode({ prompt, head, git, key, out, diff, shell: Boolean(text) });
+  const lcovs = ran?.provenance?.origin === 'github-actions' ? ran.lcovs : [];
+  const modelJson = await askClaudeCode({ prompt, head, git, key, out, diff, shell: Boolean(text), context, tests, lcovs });
   const contextReceipt = contextReceiptOf(context, prompt);
   if (contextReceipt) {
     fs.mkdirSync(out, { recursive: true });
@@ -279,12 +290,16 @@ async function run(range, ...options) {
 }
 
 /** Export the requested head with symlinks as plain files; the model sees only this folder. */
-async function askClaudeCode({ prompt, head, git, key, out, diff, shell }) {
+async function askClaudeCode({ prompt, head, git, key, out, diff, shell, context, tests, lcovs }) {
   const { askClaude } = await import('./helpers/claude-review.js');
   const folder = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'dc-review-')));
   try {
     fs.mkdirSync(path.join(folder, 'review'));
     fs.writeFileSync(path.join(folder, 'review', 'diff.patch'), diff);
+    const guide = fs.readFileSync(path.join(ROOT, '.github', 'code-style.md'), 'utf8');
+    for (const [file, body] of Object.entries(reviewFilesOf({ guide, context, tests, lcovs }))) {
+      fs.writeFileSync(path.join(folder, file), body);
+    }
     const index = { GIT_INDEX_FILE: path.join(folder, 'index') };
     git(['read-tree', head], index);
     const prefix = `--prefix=${path.join(folder, 'pr').replace(/\\/g, '/')}/`;
@@ -362,8 +377,20 @@ async function post(folder) {
   }
 }
 
+async function sourceVerify() {
+  const checked = await verifyPriorRun({ raw: process.env.SOURCE_RUN_JSON, repo,
+    head: process.env.HEAD_SHA, base: process.env.BASE_SHA, github });
+  fs.writeFileSync('ci-source-manifest.json', `${JSON.stringify(checked, null, 2)}\n`);
+  output(`run=${checked.run}\nartifacts=${[...new Set(checked.artifacts.map(a => a.id))].join(',')}`);
+}
+
+async function sourceStage() {
+  stagePriorRun({ checked: JSON.parse(fs.readFileSync('ci-source-manifest.json', 'utf8')),
+    downloaded: 'ci-source', out: 'ci' });
+}
+
 const [command, ...args] = process.argv.slice(2);
-const commands = { request, run, post };
+const commands = { request, run, post, 'source-verify': sourceVerify, 'source-stage': sourceStage };
 if (!commands[command]) {
   console.error(
     'Usage: npm run review -- <commit A>..<commit B> [--context <file>] [--text <file> [--results <file>]...]' +

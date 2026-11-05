@@ -1,7 +1,7 @@
 # The AI review of a maintainer's PR, after its tests: tests.yml calls this workflow
 # (workflow_call) once its test jobs are done, for a push to a PR with the label
 # `review`, adding that label, or a maintainer's `/review` comment, with the run's
-# results and coverage. On demand it runs alone, with no tests (gh workflow run
+# results and coverage. On demand it runs no tests of its own (gh workflow run
 # review.yml -f commit=<sha> -f base=<sha or branch>). Claude Code reads the PR's
 # code with read-only tools and answers with findings, by the rules in
 # .github/review-prompt.md, through test/ci-review.js run: the same script as
@@ -29,6 +29,10 @@ on:
         type: string
         required: false
         default: ''
+      source_run:
+        type: string
+        required: false
+        default: ''
     secrets:
       CLAUDE_CODE_OAUTH_TOKEN:
         required: false
@@ -51,6 +55,11 @@ on:
         options: [code, text]
       context:
         description: Optional pinned guide and native evidence JSON (48 KiB maximum)
+        type: string
+        required: false
+        default: ''
+      source_run:
+        description: Optional pinned prior CI run/attempt/selected-artifact manifest (16 KiB maximum)
         type: string
         required: false
         default: ''
@@ -85,6 +94,7 @@ jobs:
             /test/helpers/ci-platforms.js
             /test/helpers/ci-review.js
             /test/helpers/review-context.js
+            /test/helpers/review-source.js
             /test/check-coverage-report.js
             /test/helpers/node-test-runner.js
             /test/helpers/github-api.js
@@ -124,7 +134,9 @@ jobs:
       actions: read
 
     steps:
-      # The script and prompt from this run's workflow ref, not the reviewed head below.
+      # Runner scripts and prompts use the event's checkout: a PR merge ref on pull_request,
+      # the default branch on issue_comment, or the selected workflow ref on workflow_dispatch.
+      # The product head below is pinned separately and read as data.
       - name: Checkout
         uses: actions/checkout@v7
         with:
@@ -132,16 +144,19 @@ jobs:
           sparse-checkout: |
             /package.json
             /.github/review-prompt.md
+            /.github/code-style.md
             /.github/text-check-prompt.md
             /.github/writing-style.md
             /test/ci-review.js
             /test/helpers/claude-review.js
             /test/helpers/review-tools.js
+            /test/run-ci.js
             /test/check-coverage-report.js
             /test/helpers/node-test-runner.js
             /test/helpers/ci-platforms.js
             /test/helpers/ci-review.js
             /test/helpers/review-context.js
+            /test/helpers/review-source.js
             /test/helpers/github-api.js
           sparse-checkout-cone-mode: false
       # The PR's head, by the SHA the request job read, with the history back to its
@@ -161,17 +176,41 @@ jobs:
       # them before calling this. With none (no platform label, or on demand), the review
       # says it had no test results
       - name: The run's results
+        if: inputs.source_run == ''
         continue-on-error: true
         uses: actions/download-artifact@v8
         with:
           pattern: results-*
           path: ci
       - name: The run's coverage
+        if: inputs.source_run == ''
         continue-on-error: true
         uses: actions/download-artifact@v8
         with:
           pattern: coverage-*
           path: ci
+      - name: Verify the prior CI source
+        if: inputs.source_run != ''
+        id: source
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_RUN_JSON: ${{ inputs.source_run }}
+          HEAD_SHA: ${{ needs.request.outputs.sha }}
+          BASE_SHA: ${{ needs.request.outputs.base }}
+        run: node test/ci-review.js source-verify
+      - name: Download the pinned prior CI artifacts
+        if: inputs.source_run != ''
+        uses: actions/download-artifact@v8
+        with:
+          artifact-ids: ${{ steps.source.outputs.artifacts }}
+          run-id: ${{ steps.source.outputs.run }}
+          github-token: ${{ github.token }}
+          path: ci-source
+          merge-multiple: false
+          digest-mismatch: error
+      - name: Stage verified results with their actual selected part scope
+        if: inputs.source_run != ''
+        run: node test/ci-review.js source-stage
       # Without the secret it stops at once and fails, so the review never passes unseen
       - name: Install Claude Code 2.1.293
         run: npm install --global @anthropic-ai/claude-code@2.1.293
@@ -229,6 +268,7 @@ jobs:
             /test/helpers/ci-platforms.js
             /test/helpers/ci-review.js
             /test/helpers/review-context.js
+            /test/helpers/review-source.js
             /test/check-coverage-report.js
             /test/helpers/node-test-runner.js
             /test/helpers/github-api.js
