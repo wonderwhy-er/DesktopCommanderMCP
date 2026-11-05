@@ -6,7 +6,8 @@
 # code with read-only tools and answers with findings, by the rules in
 # .github/review-prompt.md, through the approved pinned test/ci-review.js runner.
 # Posting the findings as a COMMENT review requires the operator's posting gate.
-# The job summary retains the findings. On demand, check=text checks
+# Review artifacts retain the findings; text checks also write a job summary.
+# On demand, check=text checks
 # the PR's description against the change instead, in the job summary only. See
 # test/README.md.
 ---
