@@ -100,7 +100,22 @@ function posixShellRuns(found: FoundCommand, program: string): ShellRun {
  */
 function textProgramRuns(found: FoundCommand, program: string): ShellRun {
   const text = textProgramReadings(program, found.words);
-  return text ? { ...readingsRun(text.readings, found, { script: false }), shell: text.shell } : { texts: [] };
+  if (!text) return { texts: [] };
+  const run = { ...readingsRun(text.readings, found, { script: false }), shell: text.shell };
+  // An explicit command text consumes the shell's later words as arguments, not another script.
+  if (run.texts.length > 0 || !text.arguments?.length) return run;
+  const at = text.arguments;
+  const shellWords: FoundCommand = {
+    ...found, name: text.shell,
+    words: [text.shell, ...at.map(i => found.words[i])],
+    written: [text.shell, ...at.map(i => found.written[i])],
+    wordTexts: [text.shell, ...at.map(i => found.wordTexts[i])],
+  };
+  const inner = posixShellRuns(shellWords, text.shell);
+  return {
+    ...run, texts: [...new Set([...run.texts, ...inner.texts])],
+    ...(run.file === null || inner.file !== undefined ? { file: null } : {}),
+  };
 }
 
 /**

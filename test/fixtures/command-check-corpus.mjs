@@ -490,6 +490,18 @@ export const CORPUS = [
   { id: 'inline_su_c', group: 'inline', shell: 'bash', expect: 'su', command: "su -c 'sudo ls'", note: "su is blocked itself; its -c text runs in the user's shell" },
   { id: 'inline_runuser_c', group: 'inline', shell: 'bash', expect: 'sudo', command: "runuser -l root -c 'sudo ls'", note: "runuser runs -c's text in the user's shell" },
   { id: 'inline_runuser_c_after_user', group: 'inline', shell: 'bash', expect: 'sudo', command: "runuser root -c 'sudo ls'", note: '-c can come after the user too' },
+  {
+    id: 'inline_runuser_shell_c_after_separator', group: 'inline', shell: 'bash', expect: 'sudo',
+    command: "runuser root -- -c 'sudo ls'", note: 'remaining arguments are read by the user shell'
+  },
+  {
+    id: 'inline_runuser_shell_file_after_separator', group: 'inline', shell: 'bash', expect: 'unknowable',
+    command: 'runuser root -- deploy.sh', note: 'a script passed to the user shell is not visible'
+  },
+  {
+    id: 'inline_runuser_shell_allowed_after_separator', group: 'inline', shell: 'bash', expect: null,
+    command: "runuser root -- -c 'echo hi'", note: 'an allowed command in the user shell stays allowed'
+  },
   { id: 'inline_runuser_u', group: 'inline', shell: 'bash', expect: 'sudo', command: 'runuser -u nobody sudo ls', note: 'with -u, runuser runs the program after the user' },
   {
     id: 'inline_runuser_u_wrapper', group: 'inline', shell: 'bash', expect: 'sudo',

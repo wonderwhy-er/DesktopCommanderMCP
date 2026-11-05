@@ -119,6 +119,8 @@ interface PosixWrapper {
    * which is that word and the ones after it, joined with spaces (watch's 0, sg's 1, after its group)
    */
   textOperands?: number;
+  /** Leading operands before the remaining words become arguments to a shell (su's user). */
+  shellArgumentsAfter?: number;
   /** The words that end that text, and the words after them are no part of it: parallel's ::: before its arguments */
   textEnds?: string[];
   /**
@@ -467,12 +469,12 @@ const TEXT_PROGRAMS = new Map<string, { rules: PosixWrapper; shell: string }>([
   ['su', { shell: 'sh', rules: {
     letters: 'gGsw', flags: 'flmpP', long: ['group', 'supp-group', 'shell', 'whitelist-environment'],
     longFlags: ['fast', 'login', 'preserve-environment', 'pty', 'help', 'version'],
-    texts: { letters: 'c', long: ['command', 'session-command'] }, optionsAfterTexts: true, permute: true,
+    texts: { letters: 'c', long: ['command', 'session-command'] }, optionsAfterTexts: true, permute: true, shellArgumentsAfter: 1,
   } }],
   ['runuser', { shell: 'sh', rules: {
     letters: 'gGswu', flags: 'flmpP', long: ['group', 'supp-group', 'shell', 'whitelist-environment', 'user'],
     longFlags: ['fast', 'login', 'preserve-environment', 'pty', 'help', 'version'],
-    texts: { letters: 'c', long: ['command', 'session-command'] }, optionsAfterTexts: true, permute: true,
+    texts: { letters: 'c', long: ['command', 'session-command'] }, optionsAfterTexts: true, permute: true, shellArgumentsAfter: 1,
     operandRoles: { u: 'program', user: 'program' },
   } }],
   ['sg', { shell: 'sh', rules: { texts: { letters: 'c', long: [] }, optionsAfterTexts: true, permute: true, textOperands: 1 } }],
@@ -702,7 +704,9 @@ export function shellOptionReadings(program: string, words: (string | null)[]): 
  * options read in every way, and the shell that reads its texts. Undefined for
  * any other program.
  */
-export function textProgramReadings(program: string, words: (string | null)[]): { readings: OptionReadings; shell: string } | undefined {
+export function textProgramReadings(
+  program: string, words: (string | null)[]
+): { readings: OptionReadings; shell: string; arguments?: number[] } | undefined {
   const found = TEXT_PROGRAMS.get(program);
   if (!found) return undefined;
   const readings = readOptions(words, found.rules);
@@ -719,7 +723,11 @@ export function textProgramReadings(program: string, words: (string | null)[]): 
       ...text, after: text.after + at, ...(text.at === undefined ? {} : { at: text.at + at }), ...(text.to === undefined ? {} : { to: text.to + at }),
     })));
   }
-  return { readings, shell: found.shell };
+  const argumentsAfter = found.rules.shellArgumentsAfter;
+  const argumentsAt = argumentsAfter === undefined ? {} : {
+    arguments: [...new Set(readings.operands)].sort((a, b) => a - b).slice(argumentsAfter),
+  };
+  return { readings, shell: found.shell, ...argumentsAt };
 }
 
 /** For a program that runs one command text in the shell it was started from (see SAME_SHELL_PROGRAMS): its options read in every way */
