@@ -59,7 +59,7 @@ function defaultFixture({ wrongTree = false, falseParent = false, testsValue = '
   return { input, github };
 }
 
-function apiFixture({ product = HEAD, attempt = 1, mixedArtifact = false, scope = 'test' } = {}) {
+function apiFixture({ product = HEAD, attempt = 1, mixedArtifact = false, scope = 'test', testsFrom = '' } = {}) {
   return async (_method, url, _body, format) => {
     if (url.endsWith('/attempts/1')) return { id: 100, run_attempt: attempt, status: 'completed',
       conclusion: 'success', head_sha: HARNESS };
@@ -69,7 +69,8 @@ function apiFixture({ product = HEAD, attempt = 1, mixedArtifact = false, scope 
         head_sha: HARNESS } })) };
     if (url.endsWith('/jobs/301/logs')) {
       assert.equal(format, 'text');
-      return log.replace(HEAD, product).replace('TESTS: test', `TESTS: ${scope}`);
+      return log.replace(HEAD, product).replace('TESTS: test', `TESTS: ${scope}`)
+        + (testsFrom ? `2026-01-01T00:00:04Z   TESTS_FROM: ${testsFrom}\n` : '');
     }
     throw new Error(`Unexpected offline API request: ${url}`);
   };
@@ -164,4 +165,10 @@ test('logged files and changed selectors use the trusted producer without silent
     assert.deepEqual(checked.jobs[0].producer.parts.sort(), selector.startsWith('changed:')
       ? [...defaultParts].sort() : ['suite']);
   }
+});
+
+test('legacy suite mode also refuses a nonempty unproved tests_from overlay', async () => {
+  const { verifyPriorRun } = await import('./helpers/review-source.js');
+  await assert.rejects(verifyPriorRun({ raw: JSON.stringify(manifest), repo: 'owner/repo', head: HEAD, base: BASE,
+    github: apiFixture({ testsFrom: HARNESS }) }), /tests_from overlay/);
 });
