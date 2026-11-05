@@ -5,8 +5,33 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import * as installHarness from './helpers/install-script.js';
+import { load } from './helpers/install-stand-ins.js';
 import { runIfMain } from './helpers/run-if-main.js';
 const { runInstallScript } = installHarness;
+
+/** The real stand-in source must retain transport options, so lifecycle tests can detect a broken request. */
+async function requestOptionsAreRecorded() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dc-request-options-'));
+  const log = path.join(dir, 'requests.jsonl');
+  const previous = process.env.DC_STAND_INS;
+  try {
+    process.env.DC_STAND_INS = JSON.stringify({ log });
+    const { source } = await load('dc-stand-in:https', {}, () => { throw new Error('unexpected real module'); });
+    const https = await import(`data:text/javascript,${encodeURIComponent(source)}#${randomUUID()}`);
+    const body = JSON.stringify({ events: [{ name: 'fixture' }] });
+    const headers = { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) };
+    const request = https.request('https://fixture.invalid/', { method: 'POST', headers });
+    request.write(body);
+    request.end();
+    const post = JSON.parse(fs.readFileSync(log, 'utf8'));
+    assert.strictEqual(post.method, 'POST', 'record the request method');
+    assert.deepStrictEqual(post.headers, headers, 'record the actual headers');
+  } finally {
+    if (previous === undefined) delete process.env.DC_STAND_INS;
+    else process.env.DC_STAND_INS = previous;
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
 
 /** Permission fixtures must distinguish UID 0 from ordinary users and platforms without Unix UIDs. */
 function rootUserDetection() {
@@ -53,6 +78,7 @@ async function failedSpawnCleansTemporaryDirectories() {
 
 export default async function run() {
   rootUserDetection();
+  await requestOptionsAreRecorded();
   await failedSpawnCleansTemporaryDirectories();
 }
 
