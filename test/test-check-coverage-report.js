@@ -76,9 +76,18 @@ export default async function run() {
     const files = JSON.stringify(['src/tools/edit.ts', 'src/types.ts', 'test/run-ci.js']);
     const probe = 'const { isCounted } = await import(\'./test/check-coverage-report.js\');\n'
       + `console.log(JSON.stringify(${files}.map((file) => isCounted(file))));`;
-    const result = spawnSync(process.execPath, ['--input-type=module', '-e', probe], { cwd: sparse, encoding: 'utf8' });
-    assert.strictEqual(result.status, 0, `isCounted in a checkout without src/ or node_modules:\n${result.stderr}`);
-    assert.deepStrictEqual(JSON.parse(result.stdout), [true, true, false], 'by path: src/ counts, test/ doesn\'t');
+    const sparseProcess = spawnSync(
+      process.execPath,
+      ['--input-type=module', '-e', probe],
+      { cwd: sparse, encoding: 'utf8' },
+    );
+    assert.strictEqual(
+      sparseProcess.status, 0,
+      `isCounted in a checkout without src/ or node_modules:\n${sparseProcess.stderr}`,
+    );
+    assert.deepStrictEqual(
+      JSON.parse(sparseProcess.stdout), [true, true, false], 'by path: src/ counts, test/ doesn\'t',
+    );
   } finally {
     fs.rmSync(sparse, { recursive: true, force: true });
   }
@@ -90,8 +99,12 @@ export default async function run() {
     const check = (name, keys) => {
       const file = path.join(dir, `${name}.json`);
       fs.writeFileSync(file, JSON.stringify(Object.fromEntries([['total', entry], ...keys.map((key) => [`/elsewhere/${key}`, entry])])));
-      const result = spawnSync(process.execPath, [path.join(ROOT, 'test', 'check-coverage-report.js'), file, '/elsewhere'], { cwd: ROOT, encoding: 'utf8' });
-      return { status: result.status, output: `${result.stdout}${result.stderr}` };
+      const checkProcess = spawnSync(
+        process.execPath,
+        [path.join(ROOT, 'test', 'check-coverage-report.js'), file, '/elsewhere'],
+        { cwd: ROOT, encoding: 'utf8' },
+      );
+      return { status: checkProcess.status, output: `${checkProcess.stdout}${checkProcess.stderr}` };
     };
     const complete = check('complete', counted);
     assert.strictEqual(complete.status, 0, `a report with every counted file passes:\n${complete.output}`);
