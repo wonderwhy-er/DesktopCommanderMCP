@@ -58,7 +58,12 @@ async function keysShownOn(configAnswer) {
       // parent, which is this window here, and waits for the host's answer
       window.addEventListener('message', ({ data }) => {
         if (data?.method !== 'ui/initialize') return;
-        const result = { protocolVersion: data.params.protocolVersion, hostInfo: { name: 'test-host', version: '1.0.0' }, hostCapabilities: {}, hostContext: {} };
+        const result = {
+          protocolVersion: data.params.protocolVersion,
+          hostInfo: { name: 'test-host', version: '1.0.0' },
+          hostCapabilities: {},
+          hostContext: {},
+        };
         window.dispatchEvent(new window.MessageEvent('message', { source: window, data: { jsonrpc: '2.0', id: data.id, result } }));
       });
     },
