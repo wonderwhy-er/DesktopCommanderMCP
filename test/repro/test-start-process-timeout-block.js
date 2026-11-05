@@ -98,7 +98,9 @@ async function testChattyNonPromptProcessWaitsUntilCap() {
     await readUntil(res.pid, (text) => text.includes('progress'), OUTPUT_WAIT_MS, 'the progress output arrives');
     running = terminalManager.getSession(res.pid) !== undefined;
   } finally {
-    cleanup(res.pid);
+    const outcome = await terminalManager.forceTerminate(res.pid);
+    assert.notStrictEqual(outcome, 'failed',
+      `process cleanup failed for PID ${res.pid}`);
   }
 
   assert.strictEqual(res.isBlocked, true, 'should report isBlocked=true (still running)');
