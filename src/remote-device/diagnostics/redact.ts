@@ -64,8 +64,8 @@ export function redact(text: string): string {
     out = out.replace(BEARER, '$1<redacted>');
     out = out.replace(JWT, '<jwt>');
     out = out.replace(EMAIL, '<email>');
+    // Mask the full host before UUIDs so a UUID within its name cannot leave host fragments.
     // "name.local" and the bare "name" a Mac also goes by
-    // Match hostnames before masking IDs, which may be part of the hostname.
     const hostname = os.hostname();
     for (const name of new Set([hostname, hostname.split('.')[0]])) {
         const host = wordPattern(name);

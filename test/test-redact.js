@@ -139,15 +139,17 @@ async function runTests() {
         assertGone(redact(`running on ${host} now`), host, 'the host name');
     });
 
-    await test('a UUID inside a host name does not prevent masking the full and bare names', () => {
-        const originalHostname = os.hostname;
-        const bare = `runner-${UUID}`;
-        os.hostname = () => `${bare}.local`;
+    await test('a UUID inside the host name does not leave part of the host name visible', () => {
+        const hostname = os.hostname;
+        const host = `runner-${UUID}-worker.local`;
+        os.hostname = () => host;
         try {
-            const line = `Starting MCP Device on ${os.hostname()}... Bare ${bare}. Device ${UUID}`;
-            assert.strictEqual(redact(line), 'Starting MCP Device on <host>... Bare <host>. Device <id>');
+            assert.strictEqual(
+                redact(`host ${host}; bare ${host.split('.')[0]}; device ${UUID}`),
+                'host <host>; bare <host>; device <id>',
+            );
         } finally {
-            os.hostname = originalHostname;
+            os.hostname = hostname;
         }
     });
 
