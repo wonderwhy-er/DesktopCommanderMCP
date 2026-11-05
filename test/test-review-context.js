@@ -305,3 +305,29 @@ test('the actual run forwards verified prior CI through standard tests without n
   assert.match(result.seen.reads['coverage.lcov'], /DA:1,0/);
   assert.equal(result.receipt, null, 'prior CI is not a native-context receipt');
 });
+
+test('a native nonzero attempt with no failed file is retained without a clean failed-file summary', () => {
+  const attempt = JSON.stringify({ part: 'selected.windows', system: 'windows', exit: 7 });
+  const lcov = 'SF:src/a.ts\nDA:1,1\nend_of_record\n';
+  const pack = structuredClone(context);
+  pack.measurements = {
+    productCommit: HEAD, base: BASE, platform: 'windows', scope: 'Selected native attempt.',
+    source: { path: 'unit-results.json', sha256: digest('results') },
+    selected: ['test/test-a.js'], failed: [], skipped: 0,
+    attempt: { source: { path: 'attempt.json', sha256: digest(attempt) }, text: attempt },
+    coverage: { source: { path: 'coverage.json', sha256: digest('coverage') },
+      text: lcov, sha256: digest(lcov), excerpt: true },
+  };
+  const validated = reviewContextOf(JSON.stringify(pack), { head: HEAD, base: BASE });
+  const tests = { ...measurementTestsOf(validated), uncovered: [] };
+  const prompt = promptOf({ ...options, context: validated, tests });
+  assert.match(prompt, /exit 7/);
+  assert.doesNotMatch(prompt, /None failed\./);
+  assert.match(prompt, /native attempt.*(?:nonzero|failed)/i);
+  assert.match(prompt, /no failed file.*listed/i);
+  const listed = promptOf({ ...options, tests: { ...tests, failed: [{ platform: 'native:windows', file: 'test/test-a.js' }] } });
+  assert.match(listed, /Failed: test\/test-a.js \(native:windows\)/);
+  const github = promptOf({ ...options, tests: { platforms: ['ubuntu-latest'], failed: [], uncovered: [],
+    provenance: { origin: 'github-actions', summaries: [], attempt: { exit: 7 } } } });
+  assert.match(github, /None failed\./);
+});

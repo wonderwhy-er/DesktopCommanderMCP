@@ -2,6 +2,7 @@ import path from 'path';
 import {configManager} from './config-manager.js';
 import {capture} from "./utils/capture.js";
 import {getShellType, isShellAvailable, programName, type ShellType} from './utils/shell.js';
+import {sameShellTexts, shellRuns} from './utils/inline-shells.js';
 import {shellScriptFiles} from './utils/shell-script-files.js';
 import {readPosixCommands} from './utils/posix-commands.js';
 import {readPowerShellCommands} from './utils/powershell-commands.js';
@@ -283,7 +284,9 @@ class CommandManager {
         return {
             ...read,
             commands: (names.length > 0 ? names : [this.getBaseCommand(command)])
-                .map((name, start) => ({ name, words: [name], written: [name], start, nameAtRunTime: false })),
+                .map((name, start) => ({
+                    name, words: [name], written: [name], wordTexts: [name], start, nameAtRunTime: false
+                })),
         };
     }
 
@@ -326,14 +329,11 @@ class CommandManager {
                 unseen.push({ what: cmd.name, inFile: false });
                 continue;
             }
-            const program = programName(cmd.name, shellType);
-            const runsText = (shellType === 'posix' && program === 'eval')
-                || (shellType === 'powershell' && program === 'invoke-expression');
-            if (runsText) {
-                unseen.push({ what: cmd.name, inFile: false });
-                continue;
-            }
             unseen.push(...this.scriptFiles(cmd, shellType));
+            const unknown = sameShellTexts(cmd, shellType).file === null || shellRuns(cmd).file === null;
+            if (unknown && !unseen.some((item) => item.what === cmd.name && !item.inFile)) {
+                unseen.push({ what: cmd.name, inFile: false });
+            }
         }
         return unseen;
     }
@@ -375,7 +375,27 @@ class CommandManager {
      *   error or a missing PowerShell is allowed instead: nothing runs, and
      *   PowerShell or start_process answers.
      */
-    async checkCommand(command: string, shell: string): Promise<CommandCheck> {
+    checkCommand(command: string, shell: string): Promise<CommandCheck> {
+        return this.checkText(command, shell, new Map());
+    }
+
+    /**
+     * checkCommand() for a command, or for a command text in it: each text is
+     * checked once per command in each shell, however many readings give it.
+     * In pwsh $a pwsh $a … each text gives every later one again, so without
+     * this the work doubled with each pair.
+     */
+    private checkText(command: string, shell: string, checked: Map<string, Promise<CommandCheck>>): Promise<CommandCheck> {
+        const key = `${shell}\0${command}`;
+        let check = checked.get(key);
+        if (check === undefined) {
+            check = this.checkOnce(command, shell, checked);
+            checked.set(key, check);
+        }
+        return check;
+    }
+
+    private async checkOnce(command: string, shell: string, checked: Map<string, Promise<CommandCheck>>): Promise<CommandCheck> {
         try {
             const config = await configManager.getConfig();
             const blockedCommands = config.blockedCommands || [];
@@ -391,7 +411,7 @@ class CommandManager {
                     : { verdict: 'failed', reason: reading.parseError };
             }
 
-            const running = withStartedPrograms(this.withoutOwnFunctionCalls(reading, shellType), shellType);
+            const running = withStartedPrograms(this.withoutOwnFunctionCalls(reading, shellType), shell);
             // set_config_value checks only that the list is an array
             const entries = blockedCommands.filter((entry): entry is string => typeof entry === 'string');
             for (const found of running) {
@@ -401,7 +421,30 @@ class CommandManager {
                 const entry = entries.find((candidate) => programName(candidate, shellType) === program);
                 if (entry !== undefined) return { verdict: 'blocked', name: entry };
             }
-            const unseen = this.findUnseen(running, shellType);
+            const unseen: UnseenProgram[] = [];
+            let unreadable: CommandCheck | undefined;
+            for (const found of running) {
+                unseen.push(...this.findUnseen([found], shellType));
+                const run = shellRuns(found);
+                const texts = [
+                    ...sameShellTexts(found, shellType).texts.map((text) => ({ text, runs: shell })),
+                    // su -c's text runs in sh, runas's command line as cmd reads it
+                    ...run.texts.map((text) => ({ text, runs: run.shell ?? found.name })),
+                ];
+                for (const { text, runs } of texts) {
+                    // The shell that runs the command looks a PowerShell's name up itself, in its working folder
+                    // too: one the check can't find is read by the PowerShell running the command, when that is one
+                    const reader = getShellType(runs) !== 'powershell' ? runs
+                        : [runs, shell].find((candidate) => getShellType(candidate) === 'powershell' && isShellAvailable(candidate));
+                    const inner: CommandCheck = reader === undefined
+                        ? { verdict: 'failed', reason: `${runs} isn't installed here, so the command given to it can't be read` }
+                        : await this.checkText(text, reader, checked);
+                    if (inner.verdict === 'blocked') return inner;
+                    if (inner.verdict === 'failed') unreadable ??= inner;
+                    if (inner.verdict === 'unseen') unseen.push(...inner.unseen);
+                }
+            }
+            if (unreadable) return unreadable;
             return unseen.length > 0 ? { verdict: 'unseen', unseen } : { verdict: 'allowed' };
         } catch (error) {
             const reason = error instanceof Error ? error.message : String(error);

@@ -89,18 +89,7 @@ function isPowerShellParameter(word: string | null): boolean {
  * counts. bash's --rcfile or --init-file names a file it runs too.
  */
 function posixShellRuns(found: FoundCommand, program: string): ShellRun {
-  const run = readingsRun(shellOptionReadings(program, found.words), found, { script: true });
-  if (program !== 'bash') return run;
-  // bash takes its long options first, before the single-letter ones, and an interactive bash runs the file
-  // --rcfile or --init-file names before its command (bash --rcfile ./startup.sh -ic 'echo ready'): that file's
-  // commands run too, and a file the readings don't agree on is noted as the script file is
-  const startup: (string | null)[] = [];
-  for (let i = 1; i < found.words.length && found.words[i] !== '--' && found.words[i]?.startsWith('--'); i++) {
-    if (found.words[i] === '--rcfile' || found.words[i] === '--init-file') startup.push(found.words[++i] ?? null);
-  }
-  if (startup.length === 0) return run;
-  const files = [...new Set([...(run.file === undefined ? [] : [run.file]), ...startup])];
-  return { ...run, file: files.length === 1 ? files[0] : null };
+  return readingsRun(shellOptionReadings(program, found.words), found, { script: true });
 }
 
 /**

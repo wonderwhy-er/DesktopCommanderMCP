@@ -234,7 +234,7 @@ async function detectInstallationSource() {
         return {
             source: 'docker',
             details: {
-                container_id: process.env.HOSTNAME?.substring(0, 8) + '...' || 'unknown'
+                container_id: process.env.HOSTNAME ? process.env.HOSTNAME.substring(0, 8) + '...' : 'unknown'
             }
         };
     }
@@ -246,7 +246,7 @@ async function detectInstallationSource() {
             return {
                 source: 'docker',
                 details: {
-                    container_id: process.env.HOSTNAME?.substring(0, 8) + '...' || 'unknown'
+                    container_id: process.env.HOSTNAME ? process.env.HOSTNAME.substring(0, 8) + '...' : 'unknown'
                 }
             };
         }
