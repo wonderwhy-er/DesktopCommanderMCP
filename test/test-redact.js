@@ -139,6 +139,18 @@ async function runTests() {
         assertGone(redact(`running on ${host} now`), host, 'the host name');
     });
 
+    await test('a UUID inside a host name does not prevent masking the full and bare names', () => {
+        const originalHostname = os.hostname;
+        const bare = `runner-${UUID}`;
+        os.hostname = () => `${bare}.local`;
+        try {
+            const line = `Starting MCP Device on ${os.hostname()}... Bare ${bare}. Device ${UUID}`;
+            assert.strictEqual(redact(line), 'Starting MCP Device on <host>... Bare <host>. Device <id>');
+        } finally {
+            os.hostname = originalHostname;
+        }
+    });
+
     await test('a plain status line comes out unchanged', () => {
         const line = "Channel subscribed (recovered after 2 attempts) — socket=open(1) ch=joined attempt=0";
         assert.strictEqual(redact(line), line);
