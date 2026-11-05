@@ -327,12 +327,19 @@ async function isPathAllowed(pathToCheck: string): Promise<boolean> {
     });
 }
 
-// At most this many path lookups run on the disk at a time in one folder. A
-// lookup on a drive that stops answering keeps its file thread (one of 16, see
-// src/bootstrap.ts) until the drive answers, even after validatePath has given
-// up on it. With this limit, a folder there holds at most 4 threads, and the
-// other folders keep the rest.
-export const LOOKUPS_PER_FOLDER = 4;
+// A timed-out native lookup keeps its file thread until the OS answers. Leave
+// one configured slot for other folders when the pool has at least two threads,
+// and use at most four slots per written parent path. bootstrap.ts sets the
+// server's startup size; a direct import uses libuv's default of four. A
+// one-thread pool cannot isolate a hung native lookup, nor is this a global cap
+// across aliases or multiple stalled folders.
+export const LOOKUPS_PER_FOLDER = lookupLimitForPool(process.env.UV_THREADPOOL_SIZE);
+
+/** Size a folder's queue below its startup pool budget, without changing that pool setting. */
+function lookupLimitForPool(configuredSize: string | undefined): number {
+    const size = Number.parseInt(configuredSize ?? '4', 10);
+    return Math.max(1, Math.min(4, (Number.isFinite(size) ? size : 1) - 1));
+}
 
 /**
  * Lookup state keeps letter case: differently cased entries can be distinct,

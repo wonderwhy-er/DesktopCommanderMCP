@@ -29,7 +29,7 @@ const compiled = ts.transpileModule(statements.map((node) => node.getText(ast)).
 const flush = async () => { for (let i = 0; i < 30; i++) await Promise.resolve(); };
 
 /** Build an isolated case-sensitive resolver with manually released lookups and timeout callbacks. */
-function fixture() {
+function fixture(poolSize = '16') {
   const timers = new Map();
   const pending = new Map();
   const calls = [];
@@ -45,7 +45,8 @@ function fixture() {
   };
   const exports = {};
   const context = vm.createContext({ exports, path: path.posix,
-    process: { cwd: () => '/case' }, expandHome: (p) => p,
+    process: { cwd: () => '/case', env: poolSize === null ? {} : { UV_THREADPOOL_SIZE: poolSize } },
+    expandHome: (p) => p,
     resolveRealPath: resolver, resolveEntryPath: resolver,
     isPathAllowed: async () => true, getAllowedDirs: async () => ['/case'],
     fs: { stat: async (p) => assert(entries.has(p)) },
@@ -55,7 +56,7 @@ function fixture() {
   });
   vm.runInContext(compiled, context, { filename: 'production-lookup-code.js' });
   return {
-    calls, validate: exports.validatePath,
+    calls, validate: exports.validatePath, limit: exports.LOOKUPS_PER_FOLDER,
     /** Hold one exact path until release() completes its pending lookup. */
     stall(p) {
       let release;
@@ -123,10 +124,31 @@ async function queueFoldersKeepCase() {
   finally { await f.release(); await Promise.all(waiting); }
 }
 
+/** Keep an active slot rather than a zero/NaN queue for small or malformed startup values. */
+function startupPoolBudgets() {
+  for (const [size, expected] of [[null, 3], ['1', 1], ['2', 1], ['4', 3], ['16', 4], ['invalid', 1]]) {
+    assert.equal(fixture(size).limit, expected, `lookup budget for startup pool ${size}`);
+  }
+}
+
+/** A four-thread configuration must not start four held lookups in one folder. */
+async function smallPoolLeavesRoom() {
+  const f = fixture('4');
+  const paths = Array.from({ length: 4 }, (_, i) => `/case/Folder/queued${i}`);
+  for (const p of paths) f.stall(p);
+  const waiting = paths.map((p) => f.validate(p));
+  await flush();
+  try {
+    assert.equal(f.calls.length, 3, 'one folder leaves a configured pool slot available');
+    await probe(f, '/case/folder/healthy');
+  } finally { await f.release(); await Promise.all(waiting); }
+}
+
 /** Run all controlled case checks and retain each failure instead of stopping after the first. */
 export default async function runTests() {
   const failures = [];
-  for (const test of [hungPathsKeepCase, stalledFoldersKeepCase, queueFoldersKeepCase]) {
+  for (const test of [hungPathsKeepCase, stalledFoldersKeepCase, queueFoldersKeepCase,
+    startupPoolBudgets, smallPoolLeavesRoom]) {
     try { await test(); console.log(`PASS ${test.name}`); }
     catch (error) {
       failures.push(`${test.name}: ${error.message}`);
@@ -134,6 +156,6 @@ export default async function runTests() {
     }
   }
   assert.deepEqual(failures, [], failures.join('\n'));
-  console.log('PASS 3 controlled POSIX case-sensitive path/queue checks; no elapsed-time or performance claim');
+  console.log('PASS 5 controlled path/queue and startup-pool checks; no elapsed-time or performance claim');
 }
 runIfMain(import.meta.url, runTests);

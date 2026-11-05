@@ -7,7 +7,7 @@
  *
  * Expected: a folder whose lookups don't answer must not take every file
  * thread. validatePath() (src/tools/filesystem.ts) looks every path up with
- * fs.realpath, on one of libuv's 16 threads (src/bootstrap.ts), and a lookup
+ * fs.realpath, on libuv's pool (16 threads by default in src/bootstrap.ts), and a lookup
  * keeps its thread until the operating system answers, even after
  * validatePath() stops waiting for it (test/repro/test-withtimeout-leak.js).
  *
