@@ -68,7 +68,7 @@ Each runner writes, in `test-results/suite/`, `test-results/repro/` or `test-res
   - every file under `src/` (`.ts` and `.js`);
   - the install scripts the package ships at its root: `setup-claude-server.js` (bin `setup`), `uninstall-claude-server.js` (bin `remove`), `track-installation.js` (postinstall);
   - the vendored `vendor/telemetry-contract/`, without its tests.
-- **Not counted:** `dist/`, `node_modules/`, `scripts/` and `test/`, as in a usual setup. `test/` holds the tests and the runners, coverage and CI scripts. Those scripts have tests of their own (`test/test-coverage-areas.js`, `test-check-coverage-report.js`, `test-map-copied-scripts.js`, `test-run-coverage.js`, `test-run-ci.js`, `test-ci-comment.js`, `test-ci-platforms.js`, `test-select-tests.js`, `test-node-test-runner.js`, `test-runner-scripts.js`), which still run.
+- **Not counted:** `dist/`, `node_modules/`, `scripts/` and `test/`, as in a usual setup. `test/` holds the tests and the runners, coverage and CI scripts. Those scripts have tests of their own (`test/test-coverage-areas.js`, `test-check-coverage-report.js`, `test-map-copied-scripts.js`, `test-run-coverage.js`, `test-run-ci.js`, `test-ci-comment.js`, `test-ci-platforms.js`, `test-ci-review.js`, `test-select-tests.js`, `test-node-test-runner.js`, `test-runner-scripts.js`), which still run.
 - **Type-only files aren't counted either:** a `.ts` file under `src/` that compiles to no JavaScript, such as `src/types.ts`, holds nothing a test could run. `.c8rc.json`'s `exclude` names each one, and the check fails when that list and the real set differ.
 - **How:** c8 follows every Node process that keeps the test's environment, the server the tests start included, and maps `dist/` back to `src/` through the source maps of the coverage build: `tsconfig.coverage.json` for the TypeScript, and `test/map-copied-scripts.js` for the plain `.js` files the build copies into `dist/` (from `src/`, and the install scripts).
 - **Files no test loads** show at 0 %.
@@ -94,7 +94,7 @@ A change to a shared module reaches most tests, because many tests start the who
 
 ## CI
 
-`.github/workflows/tests.yml` runs on pull requests opened by the maintainers in `MAINTAINERS` (`test/helpers/ci-platforms.js`), the one list it checks.
+`.github/workflows/tests.yml` runs on pull requests opened by the maintainers in `MAINTAINERS` (`test/helpers/ci-platforms.js`), the one list both workflows check.
 - **Platforms: add the `linux` label to run the tests on Linux.** The same goes for `windows` and `macos`. With none of them, nothing runs.
   - A push runs every labelled platform. A new push cancels the older push's run.
   - Adding a label runs its platform at once. Another label, or removing one, runs nothing and cancels nothing.
@@ -136,3 +136,13 @@ A change to a shared module reaches most tests, because many tests start the who
   - the lines by area, collapsed, a column per platform and the combined one, then one total.
 - **The combined figure on your machine:** `node test/combined-coverage.js <coverage-final.json>...`, for example the three downloaded `coverage-<runner>` reports, prints the table by area.
 - **A run replaces only its own platforms' rows,** so a platform that didn't run in the latest push keeps its last row, with its own commit. The comment keeps each platform's results as hidden data for that. The job summary has the same text.
+
+## AI review
+
+`npm run review -- A..B` reviews the frozen head B through Claude Code, using `ANTHROPIC_API_KEY` locally. CI maps the existing protected secret `CLAUDE_CODE_OAUTH_TOKEN` to that API-key environment variable; its storage label does not describe the authentication kind. The model is pinned to `claude-haiku-5-5` at medium effort. Install Claude Code 2.1.293 or later. See [API configuration and safeguards](../.github/review-api.md).
+
+The output folder is `test-results/review/` unless `--out` names another one. It contains `review.md`, `review.json`, `diff.patch`, `answer.json` and a redacted `session.jsonl`. Missing credentials or an incomplete API response fail the review. The broker reads only the exported head and diff; code review has no shell or writes. Text checks retain bounded read-only git/gh evidence reads, `--results` inputs and explicit `not checked` findings.
+
+The review receives the run's tests and coverage through `--tests`, or a local clean coverage stamp at B. Uncovered changed lines remain findings. `npm run review -- A..B --text <file> [--results <file>]...` checks a text against that evidence and writes `text-check.md` and `text-check.json`.
+
+`tests.yml` runs the labelled platforms and then calls `review.yml` with the protected review credential. A maintainer may dispatch `review.yml` with `--ref <workflow-branch>`, `commit`, `base` and `check=code` or `check=text`. During cutover leave `REVIEW_POST_ENABLED` unset or `false`: artifacts are uploaded, and the job that posts review comments is skipped. Set it to exactly `true` after accepting the artifacts. Text checks always stay in the job summary and artifacts.
