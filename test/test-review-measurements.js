@@ -62,6 +62,17 @@ test('measurement target, attempt hash, manifest and missing coverage fail befor
   }
 });
 
+test('partial native coverage cannot establish coverage for an unrepresented changed file', () => {
+  const parsed = validated(context);
+  const ran = inputs.measurementTestsOf(parsed);
+  const diff = '+++ b/src/b.ts\n@@ -0,0 +1 @@\n+changed\n';
+  const tests = { ...ran, uncovered: uncoveredOf({ diff, lcovs: ran.lcovs }) };
+  const prompt = promptOf({ template: 'Review.', headSha: HEAD, baseSha: BASE, files: ['src/b.ts'],
+    title: '', description: '', calls: 8, tests, context: parsed });
+  assert.match(prompt, /outside the supplied coverage records.*UNKNOWN/);
+  assert.doesNotMatch(prompt, /Every changed line the coverage report counts was run by a test/);
+});
+
 test('legacy native text evidence remains separate when no measured inputs were supplied', () => {
   const legacy = structuredClone(context); delete legacy.measurements;
   const parsed = validated(legacy);
