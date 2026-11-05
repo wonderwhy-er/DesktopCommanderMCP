@@ -20,6 +20,12 @@ import { getRemoteDeviceConfigPath, isBackendLocal } from './remote-utils.js';
 
 export { getRemoteDeviceConfigPath };
 
+function isTelemetryUrl(value: unknown): value is string {
+    if (typeof value !== 'string' || !URL.canParse(value)) return false;
+    const protocol = new URL(value).protocol;
+    return protocol === 'http:' || protocol === 'https:';
+}
+
 export interface MCPDeviceOptions {
     persistSession?: boolean;
 }
@@ -316,7 +322,12 @@ export class MCPDevice {
 
             // Telemetry goes where the server says. Set before the local Desktop
             // Commander starts: it gets this environment then, so it sends there too
-            if (telemetryUrl) process.env.DC_TELEMETRY_URL = telemetryUrl;
+            if (isTelemetryUrl(telemetryUrl)) {
+                process.env.DC_TELEMETRY_URL = telemetryUrl;
+            } else if (telemetryUrl) {
+                // Keep a usable environment override; never log the invalid value.
+                console.warn('Ignoring invalid telemetryUrl from the server; expected an HTTP(S) URL.');
+            }
 
             // Initialize desktop integration
             await this.desktop.initialize();
