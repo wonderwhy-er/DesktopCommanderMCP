@@ -16,7 +16,7 @@ $script:DockerArgs = @()
 $script:ClaudeDesktopFolders = @(
     "$env:LOCALAPPDATA\Programs\Claude",
     "$env:PROGRAMFILES\Claude",
-    "$env:PROGRAMFILES(x86)\Claude",
+    "${env:ProgramFiles(x86)}\Claude",
     "$env:APPDATA\Claude",
     "$env:USERPROFILE\AppData\Local\Programs\Claude"
 )
@@ -290,18 +290,33 @@ function Build-DockerArgs {
         Write-Info "Mounted folders: $($script:Folders.Count) folders" 
         Write-Info "Container mode: Auto-remove after each use (--rm)"
     }
-}function Find-ClaudeProcess {
+}
+
+function Test-ClaudeDesktopExecutablePath {
+    param([string]$Path)
+
+    $desktopFolders = @("$env:LOCALAPPDATA\AnthropicClaude") + $script:ClaudeDesktopFolders
+    # Installation roots are literal paths; only the Store package name is a wildcard.
+    $desktopPatterns = @($desktopFolders | ForEach-Object {
+        [System.Management.Automation.WildcardPattern]::Escape($_) + '\*'
+    })
+    $desktopPatterns += (
+        [System.Management.Automation.WildcardPattern]::Escape("$env:ProgramFiles\WindowsApps\") + 'Claude_*\*'
+    )
+    return [bool]($Path -and ($desktopPatterns | Where-Object { $Path -like $_ }))
+}
+
+function Find-ClaudeProcess {
     Write-Info "Looking for Claude Desktop processes..."
 
     # Claude Code also runs as claude.exe (for example from ~\.local\bin), and its sessions must
     # keep running. So a process counts as Claude Desktop only when it runs from a folder Claude
     # Desktop is installed in, the Microsoft Store package's and the classic installer's too.
-    $desktopFolders = @("$env:ProgramFiles\WindowsApps\Claude_*", "$env:LOCALAPPDATA\AnthropicClaude") + $script:ClaudeDesktopFolders
     $foundProcesses = @()
 
     foreach ($proc in Get-Process -Name "claude" -ErrorAction SilentlyContinue) {
         $procPath = try { $proc.Path } catch { $null }
-        if (-not $procPath -or -not ($desktopFolders | Where-Object { $procPath -like "$_\*" })) {
+        if (-not (Test-ClaudeDesktopExecutablePath $procPath)) {
             if ($VerboseOutput) { Write-Info "Not Claude Desktop, left running: $($proc.ProcessName) (PID: $($proc.Id)) $procPath" }
             continue
         }
@@ -442,16 +457,18 @@ function Find-ClaudeExecutable {
     $searchDirs = @(
         "$env:LOCALAPPDATA\Programs",
         "$env:PROGRAMFILES",
-        "$env:PROGRAMFILES(x86)"
+        "${env:ProgramFiles(x86)}"
     )
     
     foreach ($dir in $searchDirs) {
         if (Test-Path $dir) {
             if ($VerboseOutput) { Write-Info "Searching in: $dir" }
             try {
-                $found = Get-ChildItem -Path $dir -Recurse -Name "Claude.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+                $found = Get-ChildItem -Path $dir -Recurse -Filter "Claude.exe" -File -ErrorAction SilentlyContinue |
+                    Where-Object { Test-ClaudeDesktopExecutablePath $_.FullName } |
+                    Select-Object -First 1
                 if ($found) {
-                    $fullPath = Join-Path $dir $found
+                    $fullPath = $found.FullName
                     if ($VerboseOutput) { Write-Info "Found Claude executable via search: $fullPath" }
                     return $fullPath
                 }
