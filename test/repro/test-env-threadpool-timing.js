@@ -21,6 +21,13 @@ import { createStalledReadTarget } from '../helpers/stalled-read.js';
 
 const T0 = Date.now();
 const log = (m) => console.log(`[${Date.now() - T0}ms] ${m}`);
+// A starved write never finishes, a free one takes milliseconds: a long guard
+// holds up on a loaded machine. Where libuv keeps its 4 threads, the guard
+// firing is the expected answer, so that run waits it out
+const GUARD_MS = 30_000;
+// Time for the 4 stalled reads to reach their blocking call and hold their
+// threads; on a loaded machine 150ms could fire first and let the write through
+const HEAD_START_MS = 1000;
 if (setAtStart) {
   log(`UV_THREADPOOL_SIZE=${setAtStart} was set when Node started, and on Windows with Node 22 that value counts: run this without it`);
   exitProcess(1);
@@ -36,15 +43,15 @@ if (setAtStart) {
     let blocked = false;
     const guard = setTimeout(() => {
       blocked = true;
-      log(reaches ? `BLOCKED >3000ms -> env set too late, pool still 4` : `BLOCKED >3000ms -> as expected, libuv kept its default 4 (the bootstrap starts the server again with the variable)`);
+      log(reaches ? `BLOCKED >${GUARD_MS}ms -> env set too late, pool still 4` : `BLOCKED >${GUARD_MS}ms -> as expected, libuv kept its default 4 (the bootstrap starts the server again with the variable)`);
       stalled.close();
       exitProcess(reaches ? 1 : 0);
-    }, 3000);
+    }, GUARD_MS);
     await fs.writeFile(path.join(os.tmpdir(), 'dc-envtest-probe'), 'x');
     if (blocked) return; // the guard closed the pipe, which is what let the write finish
     clearTimeout(guard);
     log(reaches ? `write completed in ${Date.now() - t}ms -> in-process env set WORKS (pool=8)` : `write completed in ${Date.now() - t}ms -> in-process env set WORKS, but processEnvReachesThreadpool() says it doesn't`);
     stalled.close();
     exitProcess(reaches ? 0 : 1);
-  }, 150);
+  }, HEAD_START_MS);
 }

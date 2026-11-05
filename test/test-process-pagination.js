@@ -16,17 +16,31 @@ import { pythonCommand } from './helpers/python.js';
 // Helper to wait
 const wait = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
+// How long a wait for output or an exit may take. Each such wait ends as soon
+// as it comes, so this only has to be long enough for a loaded machine.
+const OUTPUT_DEADLINE_MS = 30000;
+
 // Reads new output (offset=0) until `done` holds for all the text read so far,
-// for up to 10s: a command can take most of a second to start (on Windows it
-// starts through powershell.exe), so a fixed wait can end before its output
+// for up to OUTPUT_DEADLINE_MS: a command can take most of a second to start (on
+// Windows it starts through powershell.exe), so a fixed wait can end before its output
 async function readUntil(pid, done) {
   let text = '';
-  for (const deadline = Date.now() + 10000; !done(text) && Date.now() < deadline;) {
+  for (const deadline = Date.now() + OUTPUT_DEADLINE_MS; !done(text) && Date.now() < deadline;) {
     const read = await readProcessOutput({ pid, timeout_ms: 300 });
     assert(!read.isError, `Read should succeed, got: ${read.content[0].text}`);
     text += read.content[0].text;
   }
   return text;
+}
+
+// Waits until `line` is the last line of the process's output, so all of it has
+// arrived. A tail read, so the position of the next new-output read stays put.
+async function waitForLastLine(pid, line) {
+  const lastLine = () => terminalManager.readOutputPaginated(pid, -1, 1)?.lines[0]?.trim();
+  for (const deadline = Date.now() + OUTPUT_DEADLINE_MS; lastLine() !== line && Date.now() < deadline;) {
+    await wait(50);
+  }
+  assert.strictEqual(lastLine(), line, `The output should end with "${line}" within ${OUTPUT_DEADLINE_MS}ms`);
 }
 
 /**
@@ -35,37 +49,42 @@ async function readUntil(pid, done) {
 async function testNewOutputBehavior() {
   console.log('\n📋 Test 1: Basic new output behavior (offset=0) for running process...');
   
-  // Start a process that prints a tick every 200ms for ~4s, so it is still running for both reads
+  // Start a process that prints a tick every 200ms for ~30s, so it is still
+  // running for both reads on a loaded machine too; ended once they are done
   const startResult = await startProcess({
-    command: 'node -e "let i=0; setInterval(() => { console.log(\'tick\' + i++); if(i>20) process.exit(0); }, 200)"',
+    command: 'node -e "let i=0; setInterval(() => { console.log(\'tick\' + i++); if(i>150) process.exit(0); }, 200)"',
     timeout_ms: 500  // Return before completion
   });
-  
+
   const pid = startResult.structuredContent.pid;
   assert(pid, 'Should get PID');
   
-  // First read - get initial output, until the first tick has arrived
-  const ticks = (text) => text.match(/tick\d+/g) || [];
-  const ticks1 = ticks(await readUntil(pid, (text) => ticks(text).length > 0));
-  console.log(`  First read got ${ticks1.length} tick lines`);
-  assert(ticks1.length > 0, 'The first tick should arrive within 10s');
+  try {
+    // First read - get initial output, until the first tick has arrived
+    const ticks = (text) => text.match(/tick\d+/g) || [];
+    const ticks1 = ticks(await readUntil(pid, (text) => ticks(text).length > 0));
+    console.log(`  First read got ${ticks1.length} tick lines`);
+    assert(ticks1.length > 0, `The first tick should arrive within ${OUTPUT_DEADLINE_MS}ms`);
 
-  // Wait for more output
-  await wait(400);
+    // Wait for more output
+    await wait(400);
 
-  // Second read should get NEW output only
-  const read2 = await readProcessOutput({ pid, timeout_ms: 300 });
-  assert(!read2.isError, 'Second read should succeed');
-  const ticks2 = ticks(read2.content[0].text);
-  console.log(`  Second read got ${ticks2.length} tick lines`);
+    // Second read should get NEW output only; it returns once some has come
+    const read2 = await readProcessOutput({ pid, timeout_ms: OUTPUT_DEADLINE_MS });
+    assert(!read2.isError, 'Second read should succeed');
+    const ticks2 = ticks(read2.content[0].text);
+    console.log(`  Second read got ${ticks2.length} tick lines`);
 
-  assert(ticks2.length > 0, `Second read should return the ticks printed since the first read, got: ${read2.content[0].text}`);
-  const repeated = ticks2.filter((tick) => ticks1.includes(tick));
-  assert.deepStrictEqual(repeated, [], 'Second read should not repeat output already returned by the first read');
-  const tickNumber = (tick) => Number(tick.slice('tick'.length));
-  assert.strictEqual(tickNumber(ticks2[0]), tickNumber(ticks1[ticks1.length - 1]) + 1,
-    `Second read should start with the tick right after the first read's last (none lost), got ${ticks1.join(',')} then ${ticks2.join(',')}`);
-  
+    assert(ticks2.length > 0, `Second read should return the ticks printed since the first read, got: ${read2.content[0].text}`);
+    const repeated = ticks2.filter((tick) => ticks1.includes(tick));
+    assert.deepStrictEqual(repeated, [], 'Second read should not repeat output already returned by the first read');
+    const tickNumber = (tick) => Number(tick.slice('tick'.length));
+    assert.strictEqual(tickNumber(ticks2[0]), tickNumber(ticks1[ticks1.length - 1]) + 1,
+      `Second read should start with the tick right after the first read's last (none lost), got ${ticks1.join(',')} then ${ticks2.join(',')}`);
+  } finally {
+    await forceTerminate({ pid });
+  }
+
   console.log('✅ Test 1 passed: New output behavior works correctly');
 }
 
@@ -83,7 +102,7 @@ async function testAbsoluteOffset() {
   const pid = startResult.structuredContent.pid;
   assert(pid, 'Should get PID');
   
-  await wait(500);
+  await waitForLastLine(pid, 'line9');
   
   // Read from line 5
   const read = await readProcessOutput({ pid, offset: 5, length: 3, timeout_ms: 1000 });
@@ -111,7 +130,7 @@ async function testTailBehavior() {
   const pid = startResult.structuredContent.pid;
   assert(pid, 'Should get PID');
   
-  await wait(500);
+  await waitForLastLine(pid, 'line19');
   
   // Read last 5 lines (output has 20 lines: line0-line19; the nothing after
   // the final newline is not a line). Last 5 lines are line15 to line19
@@ -140,7 +159,7 @@ async function testLengthLimit() {
   const pid = startResult.structuredContent.pid;
   assert(pid, 'Should get PID');
   
-  await wait(500);
+  await waitForLastLine(pid, 'line99');
   
   // Read with length limit of 10 from absolute position 0
   const read = await readProcessOutput({ pid, offset: 1, length: 10, timeout_ms: 1000 });
@@ -191,10 +210,10 @@ async function testInteractTruncation() {
   const lineLimit = (await configManager.getConfig()).fileReadLineLimit ?? 1000;
   const printedLines = lineLimit + 500;
 
-  // Start a Python REPL
+  // Start a Python REPL (the wait ends at its prompt)
   const startResult = await startProcess({
     command: `${python} -i`,
-    timeout_ms: 3000
+    timeout_ms: OUTPUT_DEADLINE_MS
   });
 
   const pid = startResult.structuredContent?.pid;
@@ -207,7 +226,7 @@ async function testInteractTruncation() {
     const result = await interactWithProcess({
       pid,
       input: `print("\\n".join(f"line {i}" for i in range(${printedLines})))`,
-      timeout_ms: 10000
+      timeout_ms: OUTPUT_DEADLINE_MS  // the wait ends at the prompt after the lines
     });
 
     assert(!result.isError, `Python interaction should succeed, got: ${result.content?.[0]?.text}`);
@@ -241,7 +260,7 @@ async function testReReadOutput() {
   const pid = startResult.structuredContent.pid;
   assert(pid, 'Should get PID');
   
-  await wait(500);
+  await waitForLastLine(pid, 'data4');
   
   // First read with offset=0 (consumes the "new" pointer for running sessions)
   const read1 = await readProcessOutput({ pid, offset: 0, timeout_ms: 1000 });
@@ -264,11 +283,12 @@ async function testReReadOutput() {
 async function testCountsAfterTrailingNewline() {
   console.log('\n📋 Test 8: Line counts for output ending in a newline...');
 
-  // Prints "done", then exits once the trigger file exists, or after 15s on
-  // its own, so a failing run (no trigger) leaves nothing running
+  // Prints "done", then exits once the trigger file exists, or after 60s on
+  // its own (past this test's waits on a loaded machine), so a failing run (no
+  // trigger) leaves nothing running
   const trigger = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'dc-pagination-')), 'exit');
   const startResult = await startProcess({
-    command: `node -e "console.log('done'); setTimeout(() => process.exit(0), 15000).unref(); const t = setInterval(() => { if (require('fs').existsSync(process.argv[1])) clearInterval(t); }, 20)" "${trigger}"`,
+    command: `node -e "console.log('done'); setTimeout(() => process.exit(0), 60000).unref(); const t = setInterval(() => { if (require('fs').existsSync(process.argv[1])) clearInterval(t); }, 20)" "${trigger}"`,
     timeout_ms: 1000
   });
   const pid = startResult.structuredContent.pid;
@@ -276,7 +296,7 @@ async function testCountsAfterTrailingNewline() {
   const statusLine = (result) => result.content[0].text.split('\n')[0];
 
   try {
-    const read1 = await readProcessOutput({ pid, timeout_ms: 1000 });
+    const read1 = await readProcessOutput({ pid, timeout_ms: OUTPUT_DEADLINE_MS });
     assert(read1.content[0].text.includes('done'), `The first read should return "done", got: ${read1.content[0].text}`);
     assert.strictEqual(statusLine(read1), '[Reading 1 new lines (total: 1 lines)]', 'The one line printed is the only line counted');
     const read2 = await readProcessOutput({ pid, timeout_ms: 300 });
@@ -285,7 +305,7 @@ async function testCountsAfterTrailingNewline() {
     assert.strictEqual(statusLine(tail), '[Reading last 1 lines (total: 1 lines)]', 'The last lines are the one line printed');
 
     fs.writeFileSync(trigger, '');
-    for (let i = 0; i < 100 && terminalManager.getSession(pid); i++) await wait(50);
+    for (const deadline = Date.now() + OUTPUT_DEADLINE_MS; terminalManager.getSession(pid) && Date.now() < deadline;) await wait(50);
     assert.strictEqual(terminalManager.getSession(pid), undefined, 'The process should have exited');
 
     const read3 = await readProcessOutput({ pid, timeout_ms: 1000 });

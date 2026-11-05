@@ -10,13 +10,13 @@
 
 import assert from 'assert';
 import fs from 'fs';
-import os from 'os';
 import path from 'path';
 import { searchManager } from '../dist/search-manager.js';
 import { configManager } from '../dist/config-manager.js';
 import { writeFile } from '../dist/tools/filesystem.js';
 import { searchUntilDone, filesInAnswer } from './helpers/search.js';
 import { runIfMain } from './helpers/run-if-main.js';
+import { createTempDir } from './helpers/test-env.js';
 
 // filePattern, the Excel/DOCX files expected
 const CASES = [
@@ -27,7 +27,7 @@ const CASES = [
 ];
 
 export default async function runTests() {
-  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'dc-search-office-any-folder-')));
+  const dir = createTempDir('dc-search-office-any-folder-');
   const originalConfig = await configManager.getConfig();
   await configManager.setValue('allowedDirectories', [dir]);
   const failures = [];

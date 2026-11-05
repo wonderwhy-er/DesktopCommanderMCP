@@ -27,9 +27,15 @@ import { runIfMain } from './helpers/run-if-main.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const FLAGS_MODULE = pathToFileURL(path.join(__dirname, '..', 'dist', 'utils', 'feature-flags.js')).href;
 
-// The product's fetch timeout (FETCH_TIMEOUT_MS in feature-flags.ts) plus margin
+// The product's fetch timeout (FETCH_TIMEOUT_MS in feature-flags.ts) plus margin.
+// The margin is wide because a loaded machine can fire that timer seconds late;
+// the hangs these checks catch last far longer: SLOW_RESPONSE_MS, for good, or
+// the ~30 s of #465
 const FETCH_TIMEOUT_MS = 3000;
-const MAX_FETCH_MS = FETCH_TIMEOUT_MS + 2000;
+const MAX_FETCH_MS = FETCH_TIMEOUT_MS + 7000;
+// The slow server's answer: far beyond MAX_FETCH_MS, so a refresh() that waits
+// for it fails (its process is killed at MAX_FETCH_MS * 3)
+const SLOW_RESPONSE_MS = 60_000;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -107,12 +113,20 @@ if (process.env.STUB_HANGING_FETCH) {
   // A fetch that never settles and ignores its AbortSignal: the Windows + undici behavior from #465
   globalThis.fetch = () => new Promise(() => {});
 }
+// The last flags request. The product aborts its signal at the fetch timeout,
+// so one whose signal hasn't fired yet is still waiting for the network
+let flagRequest = null;
+const fetchBefore = globalThis.fetch;
+globalThis.fetch = (url, options) => { flagRequest = options ?? {}; return fetchBefore(url, options); };
 const { featureFlagManager } = await import(process.env.FLAGS_MODULE);
 const time = async (fn) => { const start = Date.now(); await fn(); return Date.now() - start; };
 const result = {};
 for (const step of process.env.STEPS.split(',')) {
   if (step === 'refresh') result.refreshMs = await time(() => featureFlagManager.refresh());
-  if (step === 'initialize') result.initializeMs = await time(() => featureFlagManager.initialize());
+  if (step === 'initialize') {
+    result.initializeMs = await time(() => featureFlagManager.initialize());
+    result.requestWaitingAfterInitialize = flagRequest !== null && !flagRequest.signal?.aborted;
+  }
   if (step === 'waitForFreshFlags') result.waitMs = await time(() => featureFlagManager.waitForFreshFlags());
 }
 result.flags = featureFlagManager.getAll();
@@ -184,11 +198,11 @@ async function testRefreshBlackHole() {
  * Test 2: refresh() does not wait for a response slower than its timeout
  */
 async function testRefreshSlowResponse() {
-  const server = createSlowResponseServer(15000);
+  const server = createSlowResponseServer(SLOW_RESPONSE_MS);
   const port = await listenOnRandomPort(server);
   try {
     const { refreshMs, flags } = await runFlagManager(`http://127.0.0.1:${port}/flags.json`, ['refresh']);
-    console.log(`   refresh() against 15s response returned in ${refreshMs}ms (limit: ${MAX_FETCH_MS}ms)`);
+    console.log(`   refresh() against ${SLOW_RESPONSE_MS / 1000}s response returned in ${refreshMs}ms (limit: ${MAX_FETCH_MS}ms)`);
     assert(refreshMs < MAX_FETCH_MS, `refresh() waited ${refreshMs}ms for a slow response`);
     assert.strictEqual(flags.slow, undefined, 'The late response should not be applied');
   } finally {
@@ -219,11 +233,14 @@ async function testNewUserStartup() {
   const server = createBlackHoleServer();
   const port = await listenOnRandomPort(server);
   try {
-    const { initializeMs, waitMs } = await runFlagManager(
+    const { initializeMs, requestWaitingAfterInitialize, waitMs } = await runFlagManager(
       `http://127.0.0.1:${port}/flags.json`, ['initialize', 'waitForFreshFlags']
     );
     console.log(`   initialize() took ${initializeMs}ms, waitForFreshFlags() waited ${waitMs}ms`);
-    assert(initializeMs < 1000, `initialize() should not wait for the network, took ${initializeMs}ms`);
+    // Not a time: an initialize() that waits for the network returns only once
+    // the fetch timeout has aborted the request
+    assert(requestWaitingAfterInitialize,
+      `initialize() should start the flags request and return while it still waits; it returned after ${initializeMs}ms with none waiting`);
     assert(waitMs < MAX_FETCH_MS, `waitForFreshFlags() blocked startup for ${waitMs}ms (issue #465)`);
   } finally {
     await closeServer(server);

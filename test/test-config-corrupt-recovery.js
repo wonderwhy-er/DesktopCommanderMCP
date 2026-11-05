@@ -6,7 +6,13 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const TEST_FILE = fileURLToPath(import.meta.url);
-const TIMEOUT_MS = 5_000;
+// The worker's whole run. It is about 4 s here: the config manager re-reads a
+// file that doesn't parse for at least 1 s before calling it corrupt, and the
+// worker meets that three times (startup, mutation, watcher). The wait ends
+// when the worker is done, so this much holds up on a loaded machine
+const TIMEOUT_MS = 60_000;
+// The watcher's recovery, about 1 s here; a watcher that never recovers fails at it
+const WATCHER_TIMEOUT_MS = 30_000;
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 async function worker() {
@@ -58,7 +64,7 @@ async function worker() {
   await sleep(200);
   const beforeWatcherCorruption = events.length;
   writeFileSync(CONFIG_FILE, '{"telemetryEnabled": false, "watcher": {');
-  const watcherDeadline = Date.now() + TIMEOUT_MS;
+  const watcherDeadline = Date.now() + WATCHER_TIMEOUT_MS;
   let watcherEvent;
   while (!watcherEvent && Date.now() < watcherDeadline) {
     watcherEvent = events.slice(beforeWatcherCorruption).find((event) => event.phase === 'watcher');

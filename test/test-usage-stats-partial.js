@@ -7,7 +7,10 @@ import { fileURLToPath } from 'node:url';
 import { runIfMain } from './helpers/run-if-main.js';
 
 const TEST_FILE = fileURLToPath(import.meta.url);
-const TIMEOUT_MS = 5_000;
+// The stats persist in milliseconds and the wait ends then; 30 s holds on a loaded machine
+const TIMEOUT_MS = 30_000;
+// The parent also waits for the worker's Node to start and load dist/
+const WORKER_START_MS = 30_000;
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 async function worker() {
@@ -39,7 +42,7 @@ async function parent() {
   const child = fork(TEST_FILE, [], { env: { ...process.env, HOME: home, USERPROFILE: home, DC_PARTIAL_STATS_WORKER: '1' }, stdio: ['ignore', 'inherit', 'inherit', 'ipc'] });
   try {
     await new Promise((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error('timeout waiting for partial stats test')), TIMEOUT_MS + 1_000);
+      const timer = setTimeout(() => reject(new Error('timeout waiting for partial stats test')), TIMEOUT_MS + WORKER_START_MS);
       child.on('message', (message) => { if (message.type === 'done') { clearTimeout(timer); resolve(); } });
       child.on('exit', (code) => { if (code && code !== 0) { clearTimeout(timer); reject(new Error(`worker exited ${code}`)); } });
     });
