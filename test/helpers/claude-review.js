@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
+import { StringDecoder } from 'node:string_decoder';
 import { readTool, readTools } from './review-tools.js';
 import { CREDENTIAL } from './review-context.js';
 
@@ -39,12 +40,15 @@ function runCli(cli, args, options, input, timeoutMs) {
       stdio: ['pipe', 'pipe', 'pipe'],
     });
     let stdout = '';
+    let stdoutBytes = 0;
+    const stdoutDecoder = new StringDecoder('utf8');
     let stderr = '';
     const timer = setTimeout(() => child.kill(), timeoutMs);
     let stopped = false;
     child.stdout.on('data', (part) => {
-      stdout += part;
-      if (stdout.length > 4 * 1024 * 1024) { stopped = true; child.kill(); }
+      stdout += stdoutDecoder.write(part);
+      stdoutBytes += part.length;
+      if (stdoutBytes > 4 * 1024 * 1024) { stopped = true; child.kill(); }
     });
     // Drain stderr fully, but retain only a bounded diagnostic for credential redaction by the caller.
     child.stderr.on('data', (part) => { stderr = (stderr + part).slice(0, 20_000); });
@@ -53,7 +57,7 @@ function runCli(cli, args, options, input, timeoutMs) {
     child.on('close', (code, signal) => {
       clearTimeout(timer);
       if (signal || stopped) reject(new Error('Claude Code timeout or output limit: review not done.'));
-      else resolve({ code, stdout, stderr });
+      else resolve({ code, stdout: stdout + stdoutDecoder.end(), stderr });
     });
     child.stdin.end(input);
   });
@@ -112,7 +116,7 @@ export async function askClaude({ prompt, key, folder, out, calls = 8, maxTurns 
             : await readTool({ ...readOptions, folder, name: params.name, args: params.arguments });
         const failed = /^(Read denied|Read failed|Tool denied|Tool budget)/.test(output);
         if (!failed) successful++;
-        if (!failed && params.name === 'read_file'
+        if (!failed && output.replace(/^\d+: /gm, '').trim() && params.name === 'read_file'
           && path.posix.normalize(String(params.arguments?.path ?? '')).startsWith('pr/')) sourceReads++;
         methodResponse = { content: [{ type: 'text', text: redact(output) }], isError: failed };
         session.push({ name: params.name, arguments: params.arguments, result: methodResponse });

@@ -28,6 +28,9 @@ const restartBackoffMs = (attempt: number) =>
     // Cap AFTER jitter, so the cap is the wait this comment claims it is.
     Math.min(RESTART_BACKOFF_CAP_MS, 250 * 2 ** Math.min(attempt, 5) * (0.5 + Math.random()));
 
+// As long as the server waits: it fails a call still running in the background 30 minutes after the device claims it, at its next 30-second sweep
+const TOOL_CALL_TIMEOUT_MS = 30 * 60_000 + 30_000;
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -304,7 +307,7 @@ export class DesktopCommanderIntegration {
                 name: toolName,
                 arguments: args,
                 _meta: { remote: true, ...metadata || {} }
-            } as any);
+            } as any, undefined, { timeout: TOOL_CALL_TIMEOUT_MS });
             console.debug('[DEBUG] Tool call successful:', toolName);
             return result;
         } catch (error) {

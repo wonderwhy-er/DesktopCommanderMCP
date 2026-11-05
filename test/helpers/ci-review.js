@@ -239,7 +239,7 @@ export function answerOf(text) {
  */
 export function findingsOf(answer, diff) {
   const lines = changedLines(diff);
-  return answer.findings.map((finding) => {
+  const findings = answer.findings.map((finding) => {
     const named = String(finding?.file ?? '').replace(/^\.\//, '');
     const line = Number(finding?.line);
     return {
@@ -248,7 +248,11 @@ export function findingsOf(answer, diff) {
       line: Number.isInteger(line) && line > 0 ? line : null,
       text: String(finding?.text ?? '').trim(),
     };
-  }).filter((finding) => finding.file.trim().length > 0);
+  });
+  if (findings.some((finding) => finding.file.trim().length === 0)) {
+    throw new Error("The model's answer has a finding that names no file: review not done.");
+  }
+  return findings;
 }
 
 /**

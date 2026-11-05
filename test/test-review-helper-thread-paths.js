@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { answerOf, findingsOf, reviewOf, testsOf, textPromptOf, withUncovered } from './helpers/ci-review.js';
+import { answerOf, findingsOf, reviewOf, testsOf, textAnswerOf, textCheckOf, textPromptOf, withUncovered } from './helpers/ci-review.js';
 
 await test('a malformed results part leaves the other parts available to the review', () => {
   const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'dc-review-results-'));
@@ -31,16 +31,31 @@ const promptInput = {
   file: 'claims.md', text: 'Claim.', files: ['src/a.ts'], calls: 8,
 };
 
-test('review findings without a file are excluded from normalized findings and rendered counts', () => {
-  const findings = [undefined, { kind: 'bug', text: 'missing' }, { kind: 'bug', file: '  ', text: 'blank' },
-    { kind: 'nitpick', file: 'src/a.ts', line: 1, text: 'located' }];
-  const answer = { summary: 'Checked.', findings };
-  assert.equal(findingsOf(answer, '').length, 1);
-  const review = reviewOf({ answer, diff: '', headSha: 'a', baseSha: 'b', tests: null });
-  assert.match(review.body, /1 nitpick/);
-  assert.doesNotMatch(review.body, /\| `\?`|missing|blank|bugs/);
-  assert.deepEqual(answerOf(JSON.stringify({ summary: 'Text.', findings: [{ text: 'no file' }] })).findings,
-    [{ text: 'no file' }]);
+const locatedFinding = { kind: 'bug', file: 'src/a.ts', line: 1, text: 'Located bug.' };
+for (const [name, findings] of [
+  ['missing file', [{ kind: 'bug', text: 'Unlocated bug.' }]],
+  ['blank file', [{ kind: 'bug', file: '  ', text: 'Blank-location bug.' }]],
+  ['normalized empty file', [{ kind: 'bug', file: 'pr/', text: 'Empty normalized location.' }]],
+  ['missing finding', [undefined]],
+  ['mixed located and unlocated findings', [locatedFinding, { kind: 'bug', text: 'Unlocated bug.' }]],
+]) {
+  test(`review rejects ${name} instead of dropping a finding or reporting clean`, () => {
+    const answer = { summary: 'Checked.', findings };
+    assert.throws(() => findingsOf(answer, ''), /finding.*file|file.*finding/i);
+    assert.throws(() => reviewOf({ answer, diff: '', headSha: 'a', baseSha: 'b', tests: null }),
+      /finding.*file|file.*finding/i);
+  });
+}
+
+test('located review findings and shared text-check rows remain accepted', () => {
+  const answer = { summary: 'Checked.', findings: [locatedFinding] };
+  assert.deepEqual(findingsOf(answer, ''), [locatedFinding]);
+  assert.match(reviewOf({ answer, diff: '', headSha: 'a', baseSha: 'b', tests: null }).body, /1 bug/);
+  const textAnswer = { summary: 'Text.', findings: [{ kind: 'wrong claim', line: 1, text: 'A wrong claim.' }],
+    checked: [] };
+  assert.deepEqual(answerOf(JSON.stringify(textAnswer)), textAnswer);
+  assert.match(textCheckOf({ answer: textAnswerOf(JSON.stringify(textAnswer)), file: 'claims.md', headSha: 'a' }),
+    /claims\.md:1/);
 });
 
 test('oversized text checks fail rather than silently omitting claims', () => {
