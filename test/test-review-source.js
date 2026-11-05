@@ -25,6 +25,40 @@ const job = { id: 301, run_id: 100, run_attempt: 1, name: 'unit (ubuntu-latest)'
 const log = `2026-01-01T00:00:01Z [command]/usr/bin/git log -1 --format=%H\n2026-01-01T00:00:02Z ${HEAD}\n`
   + '2026-01-01T00:00:03Z   TESTS: test\n';
 
+const MERGE = 'f'.repeat(40), TEST_BASE = '9'.repeat(40), TREE = '8'.repeat(40);
+const defaultParts = ['suite', 'repro', 'integration', 'docker', 'repro-rebuilds-dist'];
+const producerText = fs.readFileSync(path.join(ROOT, 'test/run-ci.js'), 'utf8').replace(/\r\n/g, '\n');
+const producerBlob = createHash('sha1').update(`blob ${Buffer.byteLength(producerText)}\0${producerText}`).digest('hex');
+
+function defaultFixture({ wrongTree = false, falseParent = false, testsValue = '', missingPart = false } = {}) {
+  const input = structuredClone(manifest); input.scope = 'ci-default';
+  input.artifacts = [...defaultParts.filter(part => !missingPart || part !== 'integration').map(part => ({
+    ...manifest.artifacts[0], file: { path: `${part}/results.json`, sha256: digest(results) },
+  })), manifest.artifacts[1]];
+  const text = log.replace(HEAD, MERGE).replace('TESTS: test', `TESTS: ${testsValue}`)
+    + '2026-01-01T00:00:04Z [command]git checkout --force refs/remotes/pull/969/merge\n'
+    + '2026-01-01T00:00:05Z ##[group]Run npm run test:coverage\n'
+    + ['suite', 'repro', 'integration', 'docker', 'repro, rebuilds dist/ (not covered)',
+      'coverage build again', 'copied scripts mapped again'].map(name => `########## ${name} ##########\n`).join('');
+  const github = async (method, url, body, format) => {
+    if (url.endsWith('/attempts/1')) return { id: 100, run_attempt: 1, status: 'completed', head_sha: HEAD,
+      event: 'pull_request', pull_requests: [{ number: 969 }] };
+    if (url.includes('/git/commits/')) {
+      const sha = url.split('/').at(-1);
+      if (sha === MERGE) return { sha, tree: { sha: wrongTree ? HARNESS : TREE },
+        parents: [{ sha: falseParent ? HARNESS : TEST_BASE }, { sha: HEAD }] };
+      if (sha === HEAD) return { sha, tree: { sha: TREE }, parents: [{ sha: TEST_BASE }] };
+      if (sha === BASE) return { sha, tree: { sha: '7'.repeat(40) }, parents: [{ sha: TEST_BASE }] };
+    }
+    if (url.includes('/contents/test/run-ci.js')) return { sha: producerBlob };
+    if (url.endsWith('/jobs/301/logs')) return text;
+    const answer = await apiFixture()(method, url, body, format);
+    if (answer.artifacts) answer.artifacts.forEach(a => { a.workflow_run.head_sha = HEAD; });
+    return answer;
+  };
+  return { input, github };
+}
+
 function apiFixture({ product = HEAD, attempt = 1, mixedArtifact = false, scope = 'test' } = {}) {
   return async (_method, url, _body, format) => {
     if (url.endsWith('/attempts/1')) return { id: 100, run_attempt: attempt, status: 'completed',
@@ -90,4 +124,26 @@ test('the existing REST client retains JSON defaults and reads raw job logs only
   const github = githubApi({ api: 'https://offline.invalid', token: 'synthetic-only' });
   assert.deepEqual(await github('GET', '/run'), { id: 100 });
   assert.equal(await github('GET', '/logs', null, 'text'), log);
+});
+
+test('default PR CI accepts API-verified same-tree merges and the trusted producer manifest', async () => {
+  const { verifyPriorRun } = await import('./helpers/review-source.js');
+  const fixture = defaultFixture();
+  const checked = await verifyPriorRun({ raw: JSON.stringify(fixture.input), repo: 'owner/repo',
+    head: HEAD, base: BASE, github: fixture.github });
+  assert.equal(checked.scope, 'ci-default');
+  assert.equal(checked.jobs[0].checkoutHead, MERGE, 'tested merge identity is retained');
+  assert.equal(checked.jobs[0].sourceIdentity.requestedHead, HEAD);
+  assert.equal(checked.jobs[0].producer.blob, producerBlob);
+  assert.deepEqual(checked.jobs[0].producer.parts.sort(), [...defaultParts].sort());
+  assert.equal(checked.artifacts.filter(a => a.name.startsWith('results-')).length, 5);
+});
+
+test('default CI rejects wrong trees, false merge parents, false TESTS values and mixed part scopes', async () => {
+  const { verifyPriorRun } = await import('./helpers/review-source.js');
+  for (const options of [{ wrongTree: true }, { falseParent: true }, { testsValue: 'test' }, { missingPart: true }]) {
+    const fixture = defaultFixture(options);
+    await assert.rejects(verifyPriorRun({ raw: JSON.stringify(fixture.input), repo: 'owner/repo',
+      head: HEAD, base: BASE, github: fixture.github }), /Review source:/);
+  }
 });
