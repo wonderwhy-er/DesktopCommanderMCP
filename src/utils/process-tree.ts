@@ -25,10 +25,10 @@ import { logger } from './logger.js';
  * Limit: a process whose parent exited before a walk has been reparented (to
  * init or a subreaper) and can no longer be found through its parent.
  *
- * Every path that ends a command DC runs for the client (force_terminate on a
- * start_process session, the node:local timeout) goes through terminateProcessTree.
- * kill_process ends just the PID it is given, with the same SIGTERM, grace
- * period and SIGKILL (terminatePid).
+ * Every path that ends a command DC runs for the client (force_terminate or
+ * kill_process on a start_process session, the node:local timeout) goes
+ * through terminateProcessTree. kill_process on any other PID ends just that
+ * PID, with the same SIGTERM, grace period and SIGKILL (terminatePid).
  */
 
 /** How long a process tree gets to exit after SIGTERM before SIGKILL (macOS/Linux) */

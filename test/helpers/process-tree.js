@@ -2,13 +2,15 @@
  * Helpers for tests that check processes against the OS rather than against
  * Desktop Commander's own bookkeeping: start a process tree
  * (fixtures/process-tree.js) whose processes report their PIDs, check which
- * PIDs still run, and kill what a failing test left behind.
+ * PIDs still run, make the tool that finds a tree impossible to start, and kill
+ * what a failing test left behind.
  */
 import { execFileSync } from 'child_process';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { withEnv } from './test-env.js';
 
 const FIXTURE = fileURLToPath(new URL('../fixtures/process-tree.js', import.meta.url));
 
@@ -100,6 +102,24 @@ export async function waitForExit(pids, timeoutMs = 5000) {
     running = running.filter(isRunning);
   }
   return running;
+}
+
+/**
+ * Runs `fn` while the tool that finds a tree can't start (taskkill on Windows,
+ * ps on macOS/Linux), and returns its result. The failure the server logs to
+ * stdout, without a transport, is kept out of the test output.
+ */
+export async function withoutTreeTool(dir, fn) {
+  const broken = process.platform === 'win32'
+    ? { SystemRoot: path.join(dir, 'no-windows') }
+    : { PATH: path.join(dir, 'no-bin') };
+  const stdoutWrite = process.stdout.write;
+  process.stdout.write = () => true;
+  try {
+    return await withEnv(broken, fn);
+  } finally {
+    process.stdout.write = stdoutWrite;
+  }
 }
 
 /**
