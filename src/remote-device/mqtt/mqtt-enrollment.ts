@@ -221,7 +221,7 @@ export async function enrollMqttDevice(
 						);
 					}
 				} else {
-					console.warn(
+					console.debug(
 						"[MQTT] Previous credentials cannot be identified on this backend; continuing with fresh enrollment. The old certificate may remain active.",
 					);
 				}

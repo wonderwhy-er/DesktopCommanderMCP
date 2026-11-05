@@ -7,12 +7,12 @@
 
 import assert from 'assert';
 import fs from 'fs';
-import os from 'os';
 import path from 'path';
 import { searchManager } from '../dist/search-manager.js';
 import { configManager } from '../dist/config-manager.js';
 import { searchUntilDone, filesInAnswer } from './helpers/search.js';
 import { runIfMain } from './helpers/run-if-main.js';
+import { createTempDir } from './helpers/test-env.js';
 
 const FILES = ['report[1].txt', 'report1.txt', 'sub/report[1].txt', 'notes{a}.md', 'notesa.md'];
 
@@ -29,7 +29,7 @@ const CASES = [
 ];
 
 export default async function runTests() {
-  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'dc-search-files-literal-')));
+  const dir = createTempDir('dc-search-files-literal-');
   for (const rel of FILES) {
     fs.mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true });
     fs.writeFileSync(path.join(dir, rel), 'x');

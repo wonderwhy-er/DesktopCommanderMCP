@@ -45,8 +45,12 @@ process.env.DESKTOP_COMMANDER_DISABLE_TELEMETRY = '1';
 
 const DEVICE_ID = 'device-1';
 
-/** Cap on waiting for a write to land; far above any healthy save. */
-const PERSIST_DEADLINE_MS = 5000;
+/**
+ * Cap on waiting for a write to land; far above any healthy save, even on a
+ * loaded machine. The wait returns as soon as the write lands, so only a
+ * rotation that never reaches disk waits it out.
+ */
+const PERSIST_DEADLINE_MS = 30_000;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 

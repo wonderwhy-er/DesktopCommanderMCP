@@ -23,6 +23,10 @@
 //   many:     ripgrep peak 264-520 MB / 248-322 MB for 200 results
 //   context:  server +384-411 MB / +406-437 MB for 160 matches (250 MB of context text)
 //   line:     7.5-7.7 s, server +656-664 MB / 2.5-3.8 s, +732-1,448 MB
+//             (judged by memory only: the growth is past 8 times the line,
+//             384 MB, on both platforms. Its time is reported, not judged: a busy
+//             machine slows a fixed server as much, and on macOS the base took
+//             under 5 s anyway)
 //   v8-limit: the server exits ("Uncaught exception: Invalid string length")
 //             after 778 s, server peak 3,654 MB, ripgrep 2,318 MB (Windows)
 // With the #716 fixes, near-cap (a 255 MB line): server peak ~1.05 GB on both.
@@ -35,6 +39,9 @@
 // dist/index.js with the SDK client, runs start_search (content, "needle",
 // maxResults: 200, the default contextLines) until it completes, and samples
 // the peak memory of the server and of its ripgrep (test/helpers/process-memory.js).
+// The server is the process that get_config names: on Windows with Node 22 the
+// process the client starts only waits, and a copy of it serves
+// (src/utils/threadpool-size.ts).
 //
 // Run: node test/repro/run-repro.js test-search-memory.js
 //      (REPRO_MB scales the fixtures, default 64; REPRO_SCENARIOS=many,line picks some;
@@ -43,8 +50,8 @@
 //       sampling interval, default 100)
 // Exit code: 1 if the problem shows: ripgrep holds more than 128 MB for 200
 // results, the server grows by more than all the context text, a 48 MB line
-// takes more than 5 s or grows the server by more than 8 times its size, or the
-// server exits. 2 (NOT MEASURED) if a scenario judged by memory has no valid
+// grows the server by more than 8 times its size or its search doesn't complete,
+// or the server exits. 2 (NOT MEASURED) if a scenario judged by memory has no valid
 // measurement: its memory could not be sampled, or (many, context) its search
 // failed or did not complete. A many search whose ripgrep exited between two
 // samples (sampling worked but never saw it) is named as not measured, as a
@@ -56,7 +63,7 @@ import path from 'path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { LoggingMessageNotificationSchema } from '@modelcontextprotocol/sdk/types.js';
 import { watchPeakMemory, formatMB } from '../helpers/process-memory.js';
-import { readSearchAnswer, closeClient } from '../helpers/mcp-client.js';
+import { answerText, readSearchAnswer, closeClient } from '../helpers/mcp-client.js';
 import { serverTransport } from '../helpers/mcp-server.js';
 import { exitProcess } from '../../dist/utils/exit-process.js';
 
@@ -159,13 +166,16 @@ async function runScenario(name) {
     transport.onclose = () => { serverExited = true; };
     await client.connect(transport, { timeout: 30_000 });
 
-    const serverPid = transport.pid;
+    // The serving process, by its own process ID (get_config's systemInfo.processInfo.pid)
+    const config = answerText(await client.callTool({ name: 'get_config', arguments: {} }));
+    const serverPid = JSON.parse(config.slice(config.indexOf('{'))).systemInfo.processInfo.pid;
     const memory = watchPeakMemory(serverPid, SAMPLE_MS);
     let started = Date.now();
     try {
       await sleep(1000);
-      // Growth is measured from the server's first sample (PowerShell can take seconds to start)
-      const sampledBy = Date.now() + 20_000;
+      // Growth is measured from the server's first sample (PowerShell can take
+      // seconds to start, more on a busy machine; the wait ends at the first sample)
+      const sampledBy = Date.now() + 60_000;
       while (!memory.peakOf(serverPid) && !memory.failure() && Date.now() < sampledBy) await sleep(100);
       outcome.serverBefore = memory.peakOf(serverPid);
 
@@ -242,11 +252,12 @@ for (const name of names) {
   if (name === 'context' && sampled && searched && growth > SCENARIOS.context.contextBytes()) {
     findings.push(`context: the server grew ${formatMB(growth)}, more than all the context text (${formatMB(SCENARIOS.context.contextBytes())}), for ${o.matches} matches whose answer shows ${SHOWN_CHARS} characters per entry`);
   }
-  const lineFinding = name === 'line' && (!o.complete || o.seconds > 5 || (sampled && growth > 8 * SCENARIOS.line.size));
+  // line by its memory, not its time (see the measurements above)
+  const lineFinding = name === 'line' && (!o.complete || (sampled && growth > 8 * SCENARIOS.line.size));
   if (lineFinding) {
     findings.push(`line: a search through one ${formatMB(SCENARIOS.line.size)} line took ${o.seconds.toFixed(1)} s and grew the server ${formatMB(growth)}`);
   }
-  // many, context and line are judged by memory too (v8-limit and near-cap only by the server exiting)
+  // many, context and line are judged by memory (v8-limit and near-cap only by the server exiting)
   if ((name === 'many' || name === 'context' || (name === 'line' && !lineFinding)) && !o.serverExited && o.samplingFailure) {
     unmeasured.push(`${name}: memory not measured (${o.samplingFailure})`);
   }

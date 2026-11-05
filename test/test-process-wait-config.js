@@ -119,7 +119,9 @@ async function testCappedWaitAnswers() {
     await forceTerminate({ pid });
   }
 
-  const repl = await startProcess({ command: 'node -i', timeout_ms: 5000 });
+  // The wait ends at the REPL's prompt; a prompt that came only after it would
+  // end the interaction below early, so it gets long enough for a loaded machine
+  const repl = await startProcess({ command: 'node -i', timeout_ms: 30000 });
   const replPid = repl.structuredContent?.pid;
   assert.ok(replPid > 0, `start_process should start the Node.js REPL, got: ${repl.content[0].text}`);
   try {
@@ -136,17 +138,19 @@ async function testCappedWaitAnswers() {
 
 async function testNodeLocalWaitsWithinTheCeiling() {
   console.log('\n--- Test 5: a node:local call waits within the ceiling too ---');
-  // A small ceiling stands in for MAX_PROCESS_WAIT_MS; the script needs 6 s, the call allows 20 s
+  // A small ceiling stands in for MAX_PROCESS_WAIT_MS; the script needs 30 s, the
+  // call allows 45 s. So a slow kill on a loaded machine still ends the script
+  // first; without the ceiling the script answers 'done'.
   const CAP_MS = 1500;
-  const started = await startProcess({ command: 'node:local', timeout_ms: 20000 });
+  const started = await startProcess({ command: 'node:local', timeout_ms: 45000 });
   const pid = Number(started.content[0].text.match(/PID (-?\d+)/)?.[1]);
   assert.ok(pid < 0, `start_process should start a node:local session, got: ${started.content[0].text}`);
   try {
     const result = await interactWithProcess(
-      { pid, input: "await new Promise((resolve) => setTimeout(resolve, 6000)); console.log('done');", timeout_ms: 20000 }, CAP_MS);
+      { pid, input: "await new Promise((resolve) => setTimeout(resolve, 30000)); console.log('done');", timeout_ms: 45000 }, CAP_MS);
     const text = result.content[0].text;
     assert.ok(!text.includes('done'),
-      `a node:local script ran past the ${CAP_MS}ms wait ceiling (the call's timeout_ms was 20000) and answered: ${text}`);
+      `a node:local script ran past the ${CAP_MS}ms wait ceiling (the call's timeout_ms was 45000) and answered: ${text}`);
   } finally {
     await forceTerminate({ pid });
   }

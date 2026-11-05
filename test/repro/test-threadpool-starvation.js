@@ -30,6 +30,10 @@ for (let i = 0; i < BLOCKERS; i++) {
 }
 
 // After threads are grabbed, time a trivial write == the per-call config write.
+// Each read is an open, a stat and a read, queued in turn: a write queued before
+// they all reach the read that blocks could take a thread first. They take
+// milliseconds; 2 s still gives them time on a loaded machine.
+const SETTLE_MS = 2000;
 setTimeout(async () => {
   log(`firing trivial write (proxy for list_processes' config save)...`);
   const t = Date.now();
@@ -55,4 +59,4 @@ setTimeout(async () => {
     stalled.close();
     exitProcess(1);
   }
-}, 200);
+}, SETTLE_MS);

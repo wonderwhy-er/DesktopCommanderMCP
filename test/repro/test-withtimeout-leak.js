@@ -7,15 +7,18 @@
 // Exit code: 0 when the leak is demonstrated; 1 if the thread was freed, which
 // means withTimeout's behavior changed and this repro (and its callers' reliance
 // on the bootstrap's extra threads) needs revisiting.
-// Always one thread, set before any threadpool use: an inherited larger pool
-// would leave free threads and hide the leak
-process.env.UV_THREADPOOL_SIZE = '1';
 import fs from 'fs/promises';
 import os from 'os';
 import path from 'path';
 import { withTimeout } from '../../dist/utils/withTimeout.js';
 import { exitProcess } from '../../dist/utils/exit-process.js';
 import { createStalledReadTarget } from '../helpers/stalled-read.js';
+import { setThreadpoolSize } from '../../dist/utils/threadpool-size.js';
+
+// Always one thread, set before any threadpool use: an inherited larger pool
+// would leave free threads and hide the leak. On Windows with Node 22 libuv
+// doesn't see a value set in process.env, so this runs the script again with it.
+setThreadpoolSize('1');
 
 const T0 = Date.now();
 const log = (m) => console.log(`[${Date.now() - T0}ms] ${m}`);

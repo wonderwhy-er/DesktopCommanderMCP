@@ -7,7 +7,17 @@ import { fileURLToPath } from 'node:url';
 import { runIfMain } from './helpers/run-if-main.js';
 
 const TEST_FILE = fileURLToPath(import.meta.url);
-const TIMEOUT_MS = 5_000;
+// A save to land on disk: the retried one about 250 ms after the failure
+// (SAVE_RETRY_MS), the other at once. Each wait ends when it lands, so this
+// much holds up on a loaded machine
+const TIMEOUT_MS = 30_000;
+// The worker's whole run, about 3 s here (with 1 s of re-reading the corrupt
+// file before recovering it); above both saves' waits, so a save that never
+// lands is reported by its own assertion
+const WORKER_TIMEOUT_MS = 90_000;
+// A replayed post-commit write would come about 250 ms after the release
+// failure (SAVE_RETRY_MS); 2 s still sees one a loaded machine delays
+const REPLAY_WAIT_MS = 2_000;
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 async function worker() {
@@ -51,7 +61,7 @@ async function worker() {
     if (disk.__postCommitCounter === 1) break;
     await sleep(25);
   }
-  await sleep(600);
+  await sleep(REPLAY_WAIT_MS);
   assert.equal(JSON.parse(readFileSync(CONFIG_FILE, 'utf8')).__postCommitCounter, 1);
   configManager.acquireConfigLock = originalAcquire;
   assert.equal((await configManager.getConfig()).version, VERSION);
@@ -88,7 +98,7 @@ async function parent() {
   const child = fork(TEST_FILE, [], { env: { ...process.env, HOME: home, USERPROFILE: home, DC_CONFIG_RECOVERY_WORKER: '1' }, stdio: ['ignore', 'inherit', 'inherit', 'ipc'] });
   try {
     await new Promise((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error('timeout waiting for recovery test')), TIMEOUT_MS + 2_000);
+      const timer = setTimeout(() => reject(new Error('timeout waiting for recovery test')), WORKER_TIMEOUT_MS);
       child.on('message', (message) => {
         if (message.type === 'done') { clearTimeout(timer); resolve(); }
       });
