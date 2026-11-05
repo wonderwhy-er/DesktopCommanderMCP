@@ -369,6 +369,29 @@ async function testRangeWithSheetPrefix() {
 }
 
 /**
+ * Quoted sheet names may contain exclamation marks and escaped apostrophes.
+ */
+async function testQuotedSheetNameWithExclamationMark() {
+  const sheetName = "Sales! O'Brien";
+  const FILE = path.join(TEST_DIR, 'quoted_bang_sheet.xlsx');
+  await writeFile(FILE, JSON.stringify({
+    Other: [['untouched']],
+    [sheetName]: [['Name', 'Value'], ['Acme', 10]],
+  }));
+
+  const range = "'Sales! O''Brien'!A1:B2";
+  const before = await readFile(FILE, { range });
+  assert.deepStrictEqual(sheetRows(before.content.toString()), [['Name', 'Value'], ['Acme', 10]]);
+
+  await handleEditBlock({ file_path: FILE, range: "'Sales! O''Brien'!B2", content: [[20]] });
+  const after = await readFile(FILE, { range });
+  assert.deepStrictEqual(sheetRows(after.content.toString()), [['Name', 'Value'], ['Acme', 20]]);
+  const other = await readFile(FILE, { sheet: 'Other' });
+  assert.deepStrictEqual(sheetRows(other.content.toString()), [['untouched']]);
+  console.log('✓ Quoted sheet names containing ! and escaped apostrophes read and edit correctly');
+}
+
+/**
  * Test 11: A range written end-first is the same range, as in Excel:
  * A5:C2 is A2:C5, for read_file and edit_block alike
  */
@@ -625,6 +648,7 @@ async function runAllTests() {
   await testAppendMode();
   await testNegativeOffset();
   await testRangeWithSheetPrefix();
+  await testQuotedSheetNameWithExclamationMark();
   await testReversedRange();
   await testLowercaseRange();
   await testRangeStartingPastTheData();
