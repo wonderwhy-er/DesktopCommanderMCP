@@ -5,6 +5,7 @@ import { installedPowerShells, psQuote } from './helpers/powershell.js';
 import { skip } from './helpers/run-if-main.js';
 
 const shells = installedPowerShells();
+if (!shells.length && process.platform === 'win32') throw new Error('PowerShell is required to test the Windows Docker installer');
 if (!shells.length) skip('no PowerShell (powershell, pwsh) on this machine');
 const cases = [
   { path: 'C:\\Users\\Jo[1]\\AppData\\Local\\Programs\\Claude\\Claude.exe', expected: true },

@@ -33,6 +33,7 @@ function check(name, ok, detail = '') {
 
 const shells = installedPowerShells();
 if (shells.length === 0) {
+  if (process.platform === 'win32') throw new Error('PowerShell is required to test the Windows Docker installer');
   skip('no PowerShell (powershell, pwsh) on this machine');
 }
 

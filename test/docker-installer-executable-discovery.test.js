@@ -8,6 +8,7 @@ import { createTempDir } from './helpers/test-env.js';
 import { skip } from './helpers/run-if-main.js';
 
 const shells = installedPowerShells();
+if (!shells.length && process.platform === 'win32') throw new Error('PowerShell is required to test the Windows Docker installer');
 if (!shells.length) skip('no PowerShell (powershell, pwsh) on this machine');
 const temp = createTempDir('dc-installer-discovery-');
 let failed = false;
