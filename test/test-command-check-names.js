@@ -63,6 +63,27 @@ async function theNameIsLowercased() {
   ]));
 }
 
+/** POSIX shells outside Windows keep quoted backslashes; Git Bash still accepts Windows paths. */
+async function posixBackslashesStayInTheName() {
+  const literal = String.raw`bin\sudo`;
+  assert.strictEqual(programName(literal, 'posix'), isWindows ? 'sudo' : literal);
+  assert.strictEqual(programName('/usr/bin/sudo', 'posix'), 'sudo');
+  assert.strictEqual(programName(literal, 'cmd'), 'sudo');
+  assert.strictEqual(programName(literal, 'powershell'), 'sudo');
+  if (!isTestHome()) return skip('blocked entry checks need the runner test home');
+  await configManager.setValue('blockedCommands', ['sudo']);
+  assert.strictEqual((await commandManager.checkCommand(String.raw`bin\sudo ls`, 'bash')).verdict, 'allowed');
+  for (const command of [String.raw`'bin\sudo' ls`, String.raw`"bin\sudo" ls`, String.raw`bin\\sudo ls`]) {
+    assert.strictEqual((await commandManager.checkCommand(command, 'bash')).verdict,
+      isWindows ? 'blocked' : 'allowed', command);
+  }
+  assert.strictEqual((await commandManager.checkCommand('/usr/bin/sudo ls', 'bash')).verdict, 'blocked');
+  await configManager.setValue('blockedCommands', [literal]);
+  assert.strictEqual((await commandManager.checkCommand(String.raw`'bin\sudo' ls`, 'bash')).verdict, 'blocked');
+  assert.strictEqual((await commandManager.checkCommand('sudo ls', 'bash')).verdict,
+    isWindows ? 'blocked' : 'allowed');
+}
+
 async function anExtensionIsDropped() {
   await withEnv({ ...outsideWsl, PATHEXT: defaultPathExt }, () => expectNames([
     ['sc.exe', isWindows ? 'sc' : 'sc.exe'],
@@ -157,7 +178,7 @@ async function anEntryIsComparedInTheSameForm() {
 
 export default async function runTests() {
   const failures = [];
-  for (const check of [thePathIsRemoved, theNameIsLowercased, anExtensionIsDropped, inWslANameIsReadAsOnWindows, wslIsKnownByItsInteropEntryToo, aMissingInteropEntryIsReadAgain, anEntryIsComparedInTheSameForm]) {
+  for (const check of [thePathIsRemoved, theNameIsLowercased, posixBackslashesStayInTheName, anExtensionIsDropped, inWslANameIsReadAsOnWindows, wslIsKnownByItsInteropEntryToo, aMissingInteropEntryIsReadAgain, anEntryIsComparedInTheSameForm]) {
     try {
       console.log(`${await check() === SKIPPED ? '- skipped:' : '✓'} ${check.name}`);
     } catch (error) {

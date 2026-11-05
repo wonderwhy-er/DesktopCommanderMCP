@@ -1,4 +1,6 @@
-import { terminalManager, MAX_BUFFERED_OUTPUT_CHARS, getProcessWaitLimit } from '../terminal-manager.js';
+import {
+  terminalManager, MAX_BUFFERED_OUTPUT_CHARS, getProcessWaitLimit, type ProcessStartResult,
+} from '../terminal-manager.js';
 import { commandManager, type UnseenProgram } from '../command-manager.js';
 import { StartProcessArgsSchema, ReadProcessOutputArgsSchema, InteractWithProcessArgsSchema, ForceTerminateArgsSchema, ListSessionsArgsSchema } from './schemas.js';
 import { capture } from "../utils/capture.js";
@@ -151,26 +153,11 @@ export async function startProcess(args: unknown, maxWaitMs: number = MAX_PROCES
       isError: true,
     };
   }
-
-  try {
-    // Each command's first word as typed, so telemetry replaces a path whole
-    // (the base name alone would send the last part of it)
-    const commands = commandManager.extractCommands(parsed.data.command, true).join(', ');
-    capture('server_start_process', {
-      command: commandManager.getBaseCommand(parsed.data.command),
-      commands: commands
-    });
-  } catch (error) {
-    capture('server_start_process', {
-      command: commandManager.getBaseCommand(parsed.data.command)
-    });
-  }
-
+  captureProcessCommand(parsed.data.command);
   // The shell that runs the command, worked out before the check so the
   // check reads the command with that shell's grammar
   const config = await configManager.getConfig();
   const shellUsed = getCommandShell(parsed.data.shell, config.defaultShell);
-
   const check = await commandManager.checkCommand(parsed.data.command, shellUsed);
   if (commandManager.isRefused(check)) {
     const text = check.verdict === 'blocked'
@@ -185,28 +172,8 @@ export async function startProcess(args: unknown, maxWaitMs: number = MAX_PROCES
 
   const commandToRun = parsed.data.command;
 
-  // Handle node:local - runs Node.js code directly on MCP server
   if (commandToRun.trim() === 'node:local') {
-    const virtualPid = virtualPidCounter--;
-    virtualNodeSessions.set(virtualPid, { timeout_ms: parsed.data.timeout_ms || 30000 });
-
-    return {
-      content: [{
-        type: "text",
-        text: `Node.js session started with PID ${virtualPid} (MCP server execution)
-
-   IMPORTANT: Each interact_with_process call runs as a FRESH script.
-   State is NOT preserved between calls. Include ALL code in ONE call:
-   - imports, file reading, processing, and output together.
-
-   Available libraries:
-   - ExcelJS for Excel files: import ExcelJS from 'exceljs'
-   - All Node.js built-ins: fs, path, http, crypto, etc.
-
-🔄 Ready for code - send complete self-contained script via interact_with_process.`
-      }],
-      structuredContent: { pid: virtualPid, status: 'waiting_for_input' },
-    };
+    return startNodeSession(parsed.data.timeout_ms);
   }
 
   const result = await terminalManager.executeCommand(
@@ -224,6 +191,52 @@ export async function startProcess(args: unknown, maxWaitMs: number = MAX_PROCES
     };
   }
 
+  const unseenMessage = check.verdict === 'unseen' ? unseenNotes(check.unseen) : '';
+  return startedProcessResult(result, shellUsed, unseenMessage);
+}
+
+function captureProcessCommand(command: string): void {
+  try {
+    // Each command's first word as typed, so telemetry replaces a path whole
+    // (the base name alone would send the last part of it)
+    const commands = commandManager.extractCommands(command, true).join(', ');
+    capture('server_start_process', {
+      command: commandManager.getBaseCommand(command),
+      commands: commands
+    });
+  } catch (error) {
+    capture('server_start_process', {
+      command: commandManager.getBaseCommand(command)
+    });
+  }
+}
+
+function startNodeSession(timeoutMs: number | undefined): ServerResult {
+  const virtualPid = virtualPidCounter--;
+  virtualNodeSessions.set(virtualPid, { timeout_ms: timeoutMs || 30000 });
+
+  return {
+    content: [{
+      type: "text",
+      text: `Node.js session started with PID ${virtualPid} (MCP server execution)
+
+   IMPORTANT: Each interact_with_process call runs as a FRESH script.
+   State is NOT preserved between calls. Include ALL code in ONE call:
+   - imports, file reading, processing, and output together.
+
+   Available libraries:
+   - ExcelJS for Excel files: import ExcelJS from 'exceljs'
+   - All Node.js built-ins: fs, path, http, crypto, etc.
+
+🔄 Ready for code - send complete self-contained script via interact_with_process.`
+    }],
+    structuredContent: { pid: virtualPid, status: 'waiting_for_input' },
+  };
+}
+
+function startedProcessResult(
+  result: ProcessStartResult, shellUsed: string, unseenMessage: string,
+): ServerResult {
   // Whether the process is waiting for input, as detected when the wait ended
   const { processState } = result;
 
@@ -242,15 +255,11 @@ export async function startProcess(args: unknown, maxWaitMs: number = MAX_PROCES
     timingMessage = formatTimingInfo(result.timingInfo);
   }
 
-  let unseenMessage = '';
-  if (check.verdict === 'unseen') {
-    unseenMessage = unseenNotes(check.unseen);
-  }
-
   return {
     content: [{
       type: "text",
-      text: `Process started with PID ${result.pid} (shell: ${shellUsed})\nInitial output:\n${result.output}${statusMessage}${timingMessage}${unseenMessage}`
+      text: `Process started with PID ${result.pid} (shell: ${shellUsed})\nInitial output:\n`
+        + `${result.output}${statusMessage}${timingMessage}${unseenMessage}`
     }],
     structuredContent: {
       pid: result.pid,
@@ -268,8 +277,10 @@ export async function startProcess(args: unknown, maxWaitMs: number = MAX_PROCES
  */
 function unseenNotes(unseen: UnseenProgram[]): string {
   const notes = unseen.map(({ what, inFile }) => inFile
-    ? `Note: the blocklist could not check the commands in ${what}, because they are in that file, not in this command.`
-    : `Note: the blocklist could not check the program this command runs (${what}), because it is only known when the command runs.`);
+    ? `Note: the blocklist could not check the commands in ${what}, `
+      + 'because they are in that file, not in this command.'
+    : `Note: the blocklist could not check the program this command runs (${what}), `
+      + 'because it is only known when the command runs.');
   return `\n\n${notes.join('\n')}`;
 }
 

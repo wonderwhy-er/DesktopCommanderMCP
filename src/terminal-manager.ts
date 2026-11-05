@@ -167,7 +167,8 @@ export class TerminalManager {
     // Get the appropriate spawn configuration for the shell, with login flags where appropriate
     const spawnConfig: ShellSpawnConfig = getShellSpawnArgs(shellToUse, enhancedCommand);
     const spawnOptions: any = {
-      env: getShellEnvironment(),  // PATHEXT and ProgramData repaired on Windows, and TERM for better terminal compatibility
+      // PATHEXT and ProgramData repaired on Windows; TERM for better terminal compatibility.
+      env: getShellEnvironment(),
       windowsHide: true  // Prevent visible console windows on Windows
     };
 

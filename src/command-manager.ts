@@ -2,11 +2,11 @@ import path from 'path';
 import {configManager} from './config-manager.js';
 import {capture} from "./utils/capture.js";
 import {getShellType, isShellAvailable, programName, type ShellType} from './utils/shell.js';
+import {shellScriptFiles} from './utils/shell-script-files.js';
 import {readPosixCommands} from './utils/posix-commands.js';
 import {readPowerShellCommands} from './utils/powershell-commands.js';
 import {readCmdCommands} from './utils/cmd-commands.js';
 import {withStartedPrograms} from './utils/command-wrappers.js';
-import {sameShellTexts, shellRuns} from './utils/inline-shells.js';
 import type {CommandReading, FoundCommand} from './utils/command-reading.js';
 
 /**
@@ -29,7 +29,7 @@ export type CommandCheck =
 export interface UnseenProgram {
   /** What hides it, as the shell reads it (in PowerShell, an alias's target): "eval", "Invoke-Expression", "$tool" or "deploy.sh" */
   what: string;
-  /** True for a script file (bash deploy.sh), false for a program chosen at run time (eval, Invoke-Expression, $tool) */
+  /** True for a script/startup file given to a shell; false for a program chosen at runtime. */
   inFile: boolean;
 }
 
@@ -283,14 +283,7 @@ class CommandManager {
         return {
             ...read,
             commands: (names.length > 0 ? names : [this.getBaseCommand(command)])
-                .map((name, start) => ({
-                    name,
-                    words: [name],
-                    written: [name],
-                    wordTexts: [name],
-                    start,
-                    nameAtRunTime: false
-                })),
+                .map((name, start) => ({ name, words: [name], written: [name], start, nameAtRunTime: false })),
         };
     }
 
@@ -307,7 +300,8 @@ class CommandManager {
      * found.
      */
     private withoutOwnFunctionCalls(reading: CommandReading, shellType: ShellType): FoundCommand[] {
-        const sameName = (a: string, b: string) => shellType === 'powershell' ? a.toLowerCase() === b.toLowerCase() : a === b;
+        const sameName = (a: string, b: string) =>
+            shellType === 'powershell' ? a.toLowerCase() === b.toLowerCase() : a === b;
         return reading.commands.filter((cmd) => {
             const written = cmd.words[0];
             if (written === null || written.includes('/') || written.includes('\\')) return true;
@@ -316,50 +310,56 @@ class CommandManager {
     }
 
     /**
-     * What hides a program from the check in a command that runs (one entry of
-     * CommandCheck's `unseen`):
+     * What hides a program from the check among the commands that run
+     * (CommandCheck's `unseen`), in the order the commands start:
      * - a program chosen only when the command runs: a name that is a variable
-     *   or another command's output (& $tool), or eval and Invoke-Expression
-     *   given a text known only at run time, in whole or in part (eval "$CMD",
-     *   eval "ls $X": see sameShellTexts);
+     *   or another command's output (& $tool), or eval and Invoke-Expression,
+     *   which run text the command builds (eval "$CMD");
      * - a script file given to a shell (bash deploy.sh): the commands in it
      *   aren't in the text. A file named only when the command runs ("$SCRIPT")
-     *   counts as a program chosen at run time, named by the shell, and so does
-     *   a command text given to a shell with a part known only at run time
-     *   (bash -c "ls $X", pwsh -Command $cmd: see shellRuns).
+     *   counts as a program chosen at run time, named by the shell.
      */
-    private findUnseen(cmd: FoundCommand, shellType: ShellType): UnseenProgram | undefined {
-        if (cmd.nameAtRunTime) return { what: cmd.name, inFile: false };
-        // eval and Invoke-Expression's text is read as written, but a part of it known only at run time may hold any command
-        if (sameShellTexts(cmd, shellType).file === null) return { what: cmd.name, inFile: false };
-        return this.scriptFile(cmd, shellType);
+    private findUnseen(commands: FoundCommand[], shellType: ShellType): UnseenProgram[] {
+        const unseen: UnseenProgram[] = [];
+        for (const cmd of commands) {
+            if (cmd.nameAtRunTime) {
+                unseen.push({ what: cmd.name, inFile: false });
+                continue;
+            }
+            const program = programName(cmd.name, shellType);
+            const runsText = (shellType === 'posix' && program === 'eval')
+                || (shellType === 'powershell' && program === 'invoke-expression');
+            if (runsText) {
+                unseen.push({ what: cmd.name, inFile: false });
+                continue;
+            }
+            unseen.push(...this.scriptFiles(cmd, shellType));
+        }
+        return unseen;
     }
 
     /**
-     * What hides the program when a command gives a shell a script file to run
+     * What hides the program when a command gives a shell a script or startup file to run
      * (bash deploy.sh, pwsh -File deploy.ps1, source deploy.sh), or when
      * PowerShell runs one named as the command (./deploy.ps1): the file, or the
-     * shell when the file, or a part of the command text it is given, is known
-     * only when the command runs ("$SCRIPT", bash -c "ls $X").
-     * Undefined when the command runs no script file: a shell given its
-     * commands as text (bash -c '…') or reading its input. A shell's own
-     * arguments are read by shellRuns().
+     * shell when the file is named only when the command runs ("$SCRIPT").
+     * A shell's command text or standard input adds no file. An explicit Bash
+     * startup file can still run beside command text in interactive mode.
      */
-    private scriptFile(cmd: FoundCommand, shellType: ShellType): UnseenProgram | undefined {
-        const program = programName(cmd.name);
+    private scriptFiles(cmd: FoundCommand, shellType: ShellType): UnseenProgram[] {
+        const program = programName(cmd.name, shellType);
         const args = cmd.words.slice(1);
-        const hidden = (file: string | null | undefined): UnseenProgram | undefined => {
-            if (file === undefined) return undefined;
+        const hidden = (file: string | null): UnseenProgram => {
             return file === null ? { what: cmd.name, inFile: false } : { what: file, inFile: true };
         };
         if (shellType === 'posix' && (program === 'source' || program === '.')) {
-            return hidden(args[0]);
+            return args[0] === undefined ? [] : [hidden(args[0])];
         }
         // PowerShell runs a .ps1 named as the command (./deploy.ps1, & ./deploy.ps1) as a script file
         if (shellType === 'powershell' && /\.ps1$/i.test(cmd.name)) {
-            return hidden(cmd.name);
+            return [hidden(cmd.name)];
         }
-        return hidden(shellRuns(cmd).file);
+        return shellScriptFiles(program, args).map(hidden);
     }
 
     /**
@@ -368,39 +368,14 @@ class CommandManager {
      * - blocked: a program it runs is in blockedCommands, both compared in the
      *   form programName() gives; the answer names the entry as written (a call
      *   to the script's own function is not the program: see withoutOwnFunctionCalls).
-     *   A program a wrapper starts is one it runs: env sudo ls runs sudo. So is
-     *   a program in the command text a shell is started with (bash -c 'sudo ls',
-     *   pwsh -Command 'net user', cmd /c net user: see shellRuns), or that eval
-     *   and Invoke-Expression run (eval 'sudo ls': see sameShellTexts).
      * - unseen: allowed, but a program is chosen only when the command runs or
      *   is in a script file (see findUnseen), so start_process can say the
      *   blocklist couldn't check it.
      * - failed: the command or the settings can't be read. In PowerShell a parse
      *   error or a missing PowerShell is allowed instead: nothing runs, and
-     *   PowerShell or start_process answers. A command given to a PowerShell the
-     *   check can't find, from a shell that isn't PowerShell, can't be read either.
+     *   PowerShell or start_process answers.
      */
-    checkCommand(command: string, shell: string): Promise<CommandCheck> {
-        return this.checkText(command, shell, new Map());
-    }
-
-    /**
-     * checkCommand() for a command, or for a command text in it: each text is
-     * checked once per command in each shell, however many readings give it.
-     * In pwsh $a pwsh $a … each text gives every later one again, so without
-     * this the work doubled with each pair.
-     */
-    private checkText(command: string, shell: string, checked: Map<string, Promise<CommandCheck>>): Promise<CommandCheck> {
-        const key = `${shell}\0${command}`;
-        let check = checked.get(key);
-        if (check === undefined) {
-            check = this.checkOnce(command, shell, checked);
-            checked.set(key, check);
-        }
-        return check;
-    }
-
-    private async checkOnce(command: string, shell: string, checked: Map<string, Promise<CommandCheck>>): Promise<CommandCheck> {
+    async checkCommand(command: string, shell: string): Promise<CommandCheck> {
         try {
             const config = await configManager.getConfig();
             const blockedCommands = config.blockedCommands || [];
@@ -416,48 +391,17 @@ class CommandManager {
                     : { verdict: 'failed', reason: reading.parseError };
             }
 
-            // A wrapper starts the program itself, never the script's own function of that name
-            const running = withStartedPrograms(this.withoutOwnFunctionCalls(reading, shellType), shell);
+            const running = withStartedPrograms(this.withoutOwnFunctionCalls(reading, shellType), shellType);
             // set_config_value checks only that the list is an array
             const entries = blockedCommands.filter((entry): entry is string => typeof entry === 'string');
             for (const found of running) {
                 // A name known only at run time ($tool) names no program the list could match
                 if (found.nameAtRunTime) continue;
-                const program = programName(found.name);
-                const entry = entries.find((entry) => programName(entry) === program);
+                const program = programName(found.name, shellType);
+                const entry = entries.find((candidate) => programName(candidate, shellType) === program);
                 if (entry !== undefined) return { verdict: 'blocked', name: entry };
             }
-
-            // A shell started with a command text runs it, and eval and Invoke-Expression run theirs in this shell,
-            // so each text is checked as a command of the shell that runs it, the way extractCommands() reads a
-            // $( ) again. Any blocked program in them refuses the command; otherwise the first text that can't be
-            // read does. What hides a program is noted in the order the commands start, so a text's notes come
-            // right after the command that runs it.
-            const unseen: UnseenProgram[] = [];
-            let unreadable: CommandCheck | undefined;
-            for (const found of running) {
-                const hidden = this.findUnseen(found, shellType);
-                if (hidden) unseen.push(hidden);
-                const run = shellRuns(found);
-                const texts = [
-                    ...sameShellTexts(found, shellType).texts.map((text) => ({ text, runs: shell })),
-                    // su -c's text runs in sh, runas's command line as cmd reads it
-                    ...run.texts.map((text) => ({ text, runs: run.shell ?? found.name })),
-                ];
-                for (const { text, runs } of texts) {
-                    // The shell that runs the command looks a PowerShell's name up itself, in its working folder
-                    // too: one the check can't find is read by the PowerShell running the command, when that is one
-                    const reader = getShellType(runs) !== 'powershell' ? runs
-                        : [runs, shell].find((candidate) => getShellType(candidate) === 'powershell' && isShellAvailable(candidate));
-                    const inner: CommandCheck = reader === undefined
-                        ? { verdict: 'failed', reason: `${runs} isn't installed here, so the command given to it can't be read` }
-                        : await this.checkText(text, reader, checked);
-                    if (inner.verdict === 'blocked') return inner;
-                    if (inner.verdict === 'failed') unreadable ??= inner;
-                    if (inner.verdict === 'unseen') unseen.push(...inner.unseen);
-                }
-            }
-            if (unreadable) return unreadable;
+            const unseen = this.findUnseen(running, shellType);
             return unseen.length > 0 ? { verdict: 'unseen', unseen } : { verdict: 'allowed' };
         } catch (error) {
             const reason = error instanceof Error ? error.message : String(error);

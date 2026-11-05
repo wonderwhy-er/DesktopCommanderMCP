@@ -84,6 +84,8 @@ jobs:
             /test/helpers/ci-platforms.js
             /test/ci-review.js
             /test/helpers/ci-review.js
+            /test/helpers/review-context.js
+            /test/helpers/review-source.js
             /test/check-coverage-report.js
             /test/helpers/node-test-runner.js
             /test/helpers/github-api.js
@@ -304,8 +306,9 @@ jobs:
       pull-requests: write
 
     steps:
-      # A comment's run checks out main, as GitHub starts it: this job holds a write
-      # token, so it runs our script, never the PR's, and reads the artifacts as data
+      # issue_comment uses the default branch; pull_request uses the PR merge;
+      # workflow_dispatch uses its selected ref. This preserves repository-code-writer
+      # trust, not an immutable trusted-script boundary. Artifacts are read as data.
       - name: Checkout
         uses: actions/checkout@v7
         with:

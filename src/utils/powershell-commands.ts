@@ -195,7 +195,10 @@ while ($true) {
         }
       })
       $isBlockValue = { $args[0] -is [Management.Automation.Language.ScriptBlockExpressionAst] }
-      $isFunctionOrAliasVariable = { $args[0] -is [Management.Automation.Language.VariableExpressionAst] -and $args[0].VariablePath.DriveName -in 'function', 'alias' }
+      $isFunctionOrAliasVariable = {
+        $args[0] -is [Management.Automation.Language.VariableExpressionAst] -and
+          $args[0].VariablePath.DriveName -in 'function', 'alias'
+      }
       $isMethodCall = { $args[0] -is [Management.Automation.Language.InvokeMemberExpressionAst] }
       $removers = @($answer.commands | Microsoft.PowerShell.Core\\Where-Object { (& $testRemovesFunction $_) -or (& $testRunsUnreadCode $_) })
       $functionsMayGo = $removers.Count -gt 0 -or $ast.Find($isBlockValue, $true) -or $ast.Find($isFunctionOrAliasVariable, $true) -or $ast.Find($isMethodCall, $true)
@@ -325,10 +328,15 @@ export class PowerShellHelper {
     // The environment the command's shell gets, so the profile and the names are as the command will see them.
     // PowerShell's module analysis cache is off, so the helper doesn't write it (with a home
     // that has no AppData folder, PowerShell would write it into the working folder).
-    const env = { ...getShellEnvironment(), PSModuleAnalysisCachePath: process.platform === 'win32' ? 'NUL' : '/dev/null' };
+    const env = {
+      ...getShellEnvironment(),
+      PSModuleAnalysisCachePath: process.platform === 'win32' ? 'NUL' : '/dev/null'
+    };
     // Not in the caller's working folder: the helper keeps running, and Windows can't delete a folder a process is
     // in, though the server may leave it (a profile that looks at the folder isn't matched)
-    const child = spawn(this.program, this.args, { cwd: mcpRoot, env, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
+    const child = spawn(this.program, this.args, {
+      cwd: mcpRoot, env, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true
+    });
     this.child = child;
     this.output = '';
     this.answered = false;

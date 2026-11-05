@@ -1,4 +1,4 @@
-import { MCPDevice, getRemoteDeviceConfigPath, removeRemoteDeviceConfig } from '../remote-device/device.js';
+import { MCPDevice, getRemoteDeviceConfigPath, logoutRemoteDevice } from '../remote-device/device.js';
 import os from 'os';
 import { captureRemote } from '../utils/capture.js';
 import { startDeviceLog } from '../remote-device/diagnostics/device-log.js';
@@ -29,7 +29,7 @@ Usage:
   desktop-commander remote [options]
 
 Options:
-  --logout              Remove saved local Remote MCP credentials and exit
+  --logout              Revoke this device and remove saved credentials
   --report              Save a diagnostics zip for support, send it, and exit
                         (the device doesn't start and nothing signs in)
   --no-upload           With --report: only save the zip, don't send it
@@ -45,18 +45,20 @@ Examples:
   npx @wonderwhy-er/desktop-commander@latest remote --report
 
 Note:
-  --logout removes local credentials only. Revoke the device in the Remote MCP
-  dashboard if you also want to invalidate its server-side authorization.`);
+  --logout requires the backend to confirm device and MQTT certificate revocation.
+  Saved credentials are kept on failure so you can retry. After successful logout,
+  the next start requires pairing this computer again.`);
         return;
     }
     if (process.argv.includes('--logout')) {
         const configPath = getRemoteDeviceConfigPath();
         try {
-            await removeRemoteDeviceConfig(configPath);
-            console.log('🔓 Logged out locally. Saved Remote MCP device credentials were removed.');
+            await logoutRemoteDevice(configPath);
+            console.log('🔓 Logged out. Saved device and MQTT credentials were removed.');
             console.log(`   ${configPath}`);
+            console.log('   Start remote again to pair this computer from scratch.');
         } catch (error: any) {
-            console.error('❌ Failed to remove saved Remote MCP credentials:', error.message);
+            console.error('❌ Logout did not complete:', error.message);
             process.exitCode = 1;
         }
         return;
