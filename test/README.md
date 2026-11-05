@@ -139,10 +139,22 @@ A change to a shared module reaches most tests, because many tests start the who
 
 ## AI review
 
-`npm run review -- A..B` reviews the frozen head B through Claude Code, using `ANTHROPIC_API_KEY` locally. CI maps the existing protected secret `CLAUDE_CODE_OAUTH_TOKEN` to that API-key environment variable; its storage label does not describe the authentication kind. The model is pinned to `claude-haiku-5-5` at medium effort. Install Claude Code 2.1.293 or later. See [API configuration and safeguards](../.github/review-api.md).
+The hosted review uses Claude Code 2.1.293 with `claude-haiku-5-5`, medium effort and company API-key authentication. `.github/workflows/review.yml` pins its runner scripts and prompts to commit `987fe9d2f8284add28796c794426892044756df0`. It checks out the requested product head separately, by SHA.
 
-The output folder is `test-results/review/` unless `--out` names another one. It contains `review.md`, `review.json`, `diff.patch`, `answer.json` and a redacted `session.jsonl`. Missing credentials or an incomplete API response fail the review. The broker reads only the exported head and diff; code review has no shell or writes. Text checks retain bounded read-only git/gh evidence reads, `--results` inputs and explicit `not checked` findings.
+Set the repository secret `CLAUDE_CODE_OAUTH_TOKEN` to the company API key. Despite the secret's historical name, the runner requires first-party API-key authentication. It refuses a different effective model or authentication method. The hosted workflow does not use a Gemini key or model setting.
 
-The review receives the run's tests and coverage through `--tests`, or a local clean coverage stamp at B. Uncovered changed lines remain findings. `npm run review -- A..B --text <file> [--results <file>]...` checks a text against that evidence and writes `text-check.md` and `text-check.json`.
+In CI, `tests.yml` runs the PR's labelled platforms and calls `review.yml` after the tests, passed or failed, with the selected head/base and this run's results and coverage. The `review` label controls that review. Maintainership is checked by the request scripts.
 
-`tests.yml` runs the labelled platforms and then calls `review.yml` with the protected review credential. A maintainer may dispatch `review.yml` with `--ref <workflow-branch>`, `commit`, `base` and `check=code` or `check=text`. During cutover leave `REVIEW_POST_ENABLED` unset or `false`: artifacts are uploaded, and the job that posts review comments is skipped. Set it to exactly `true` after accepting the artifacts. Text checks always stay in the job summary and artifacts.
+For an on-demand review, select a branch containing this workflow explicitly:
+
+```sh
+gh workflow run review.yml --ref <workflow-branch> -f commit=<sha> -f base=<sha-or-branch> -f check=code
+```
+
+Use `-f check=text` to check the live PR description. A text check writes `text-check.md`, `text-check.json` and a job summary; it never posts. Code findings remain in the `review` artifact as `review.md` and `review.json`, with the diff and provider evidence.
+
+The review job has a read-only GitHub token and only the company review secret. Claude reads through the bounded file broker; it has no write tools. The separate posting job holds no company secret and runs only when `REVIEW_POST_ENABLED` is `true`. It reads the review artifact as data and posts a COMMENT review, not an approval. Code findings do not reach a posting-job summary while that job is disabled.
+
+Locally, `npm run review -- A..B` uses this checkout's Claude Code adapter with `ANTHROPIC_API_KEY`. Hosted execution uses the pinned scripts described above. The local output folder is `test-results/review/` unless `--out` names another one.
+
+The local runner accepts test evidence through `--tests`, or a clean coverage stamp at B. `npm run review -- A..B --text <file> [--results <file>]...` checks a text against that evidence and writes `text-check.md` and `text-check.json`. Uncovered changed lines and claims without evidence remain findings.
