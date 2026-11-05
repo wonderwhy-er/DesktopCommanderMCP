@@ -393,6 +393,7 @@ function startedPrograms(command: FoundCommand, shellType: ShellType): Started[]
   // Its own arguments are in -ArgumentList, a text the check doesn't read, so a program Start-Process starts has only its name
   if (shellType === 'powershell' && name === 'start-process') return (command.filePaths ?? []).map(({ word, written }) => ({ words: [word], written: [written] }));
   if (shellType === 'cmd' && name === 'start') return cmdStartProgramsAt(command).map(from);
+  if (shellType === 'cmd' && name === 'call') return words.length > 1 ? [from(1)] : [];
   return [];
 }
 
