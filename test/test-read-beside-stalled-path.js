@@ -106,7 +106,7 @@ async function readFile(client, filePath) {
 }
 
 /** Check a healthy read before and during intentionally pending lookups, then release them. */
-async function runTests() {
+async function runTests({ threadpoolSize } = {}) {
   const testEnv = createTestEnv();
   const healthyFile = path.join(testEnv.home, 'healthy.txt');
   fs.writeFileSync(healthyFile, `${FILE_TEXT}\n`);
@@ -117,7 +117,12 @@ async function runTests() {
     if (!stalled) {
       return skip('read beside a stalled path: a realpath on a share in 192.0.2.0/24 answers at once on this machine, so nothing holds a thread');
     }
-    const transport = serverTransport({ env: testEnv.env, nodeArgs: stalled.serverArgs });
+    // A supplied size belongs in the server's startup environment: changing it
+    // after the native pool starts cannot resize that pool.
+    const env = threadpoolSize === undefined
+      ? testEnv.env
+      : { ...testEnv.env, UV_THREADPOOL_SIZE: String(threadpoolSize) };
+    const transport = serverTransport({ env, nodeArgs: stalled.serverArgs });
     let stderr = '';
     transport.stderr?.on('data', (chunk) => { stderr += chunk; });
     client = new Client({ name: 'test-read-beside-stalled-path', version: '1.0.0' }, { capabilities: {} });
