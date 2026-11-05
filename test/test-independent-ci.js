@@ -22,7 +22,7 @@ function commit(root, message) {
 }
 function fixture() {
   const root=temp(); git(root,'init','-q');
-  write(root,'.gitignore','node_modules/\ndist/\ntest-results/\ncoverage/\n');
+  write(root,'.gitignore','node_modules/\ndist/\ncoverage/\n');
   write(root,'package.json',JSON.stringify({name:'fixture',version:'1.0.0',type:'module',scripts:{build:'node build.cjs'}}));
   write(root,'package-lock.json',JSON.stringify({name:'fixture',version:'1.0.0',lockfileVersion:3,packages:{'':{name:'fixture',version:'1.0.0'}}}));
   write(root,'build.cjs',"require('node:fs').mkdirSync('dist',{recursive:true}); require('node:fs').copyFileSync('src/a.js','dist/a.js');\n");
@@ -45,11 +45,14 @@ test('old product without coverage script runs selected tests with real remapped
     assert.match(receipt.harness,/^[a-f0-9]{40}$/); assert.equal(receipt.phase,'complete');
     const summary=JSON.parse(fs.readFileSync(path.join(out,'coverage/coverage-summary.json')));
     const keys=Object.keys(summary).filter(key=>key!=='total');
-    assert.equal(keys.length,1); assert.match(keys[0].replaceAll('\\','/'),/\/src\/a.js$/);
+    assert.deepEqual(keys,['src/a.js'],'removed-on-main product sources keep stable cross-platform identities');
+    const final=JSON.parse(fs.readFileSync(path.join(out,'coverage/coverage-final.json')));
+    assert.deepEqual(Object.keys(final),['src/a.js']); assert.equal(final['src/a.js'].path,'src/a.js');
+    assert.match(fs.readFileSync(path.join(out,'coverage/lcov.info'),'utf8'),/^SF:src\/a.js$/m);
     assert.ok(summary.total.branches.covered < summary.total.branches.total,'unexecuted branch remains uncovered');
     const results=JSON.parse(fs.readFileSync(path.join(out,'test-results/suite/results.json')));
     assert.equal(results.summary.files,1); assert.equal(results.summary.failed,0);
-    assert.equal(git(root,'status','--porcelain'),'','source checkout is unchanged');
+    assert.equal(git(root,'status','--porcelain','--untracked-files=no'),'','tracked source checkout is unchanged');
   } finally { fs.rmSync(root,{recursive:true,force:true}); }
 });
 test('new tests on old product and old tests on new product report real failures in both directions',async()=> {
@@ -122,6 +125,9 @@ test('output guard rejects source roots, ancestors and Windows case aliases befo
     assert.throws(()=>ci.safeOutput(source,[source]),/source checkout/);
     assert.throws(()=>ci.safeOutput(dir,[source]),/source checkout/);
     assert.throws(()=>ci.safeOutput(path.parse(source).root,[source]),/source checkout/);
+    write(source,'src/keep.js','keep'); fs.mkdirSync(path.join(source,'.git'));
+    assert.throws(()=>ci.safeOutput(path.join(source,'src'),[source]),/source checkout/);
+    assert.throws(()=>ci.safeOutput(path.join(source,'.git'),[source]),/source checkout/);
     if (process.platform==='win32') assert.throws(()=>ci.safeOutput(source.toUpperCase(),[source]),/source checkout/);
     assert.equal(ci.safeOutput(path.join(dir,'output'),[source]),path.join(dir,'output'));
     assert.equal(fs.readFileSync(path.join(source,'keep.txt'),'utf8'),'keep');

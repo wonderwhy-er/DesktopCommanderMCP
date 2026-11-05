@@ -28,9 +28,23 @@ export function safeOutput(outDir,sources) {
     return process.platform==='win32'?resolved.toLowerCase():resolved;
   };
   const output=canonical(outDir);
-  for (const source of sources.map(canonical)) {
-    const relative=path.relative(output,source);
-    if (!path.isAbsolute(relative) && relative!=='..' && !relative.startsWith('..'+path.sep)) throw Error('Output cannot replace a source checkout');
+  const contains=(parent,child)=> {
+    const relative=path.relative(parent,child);
+    return !path.isAbsolute(relative) && relative!=='..' && !relative.startsWith('..'+path.sep);
+  };
+  const refuse=()=>{throw Error('Output cannot replace a source checkout or Git metadata');};
+  for (const original of sources) {
+    const source=canonical(original);
+    if (contains(output,source)) refuse();
+    if (contains(source,output)) {
+      const relative=path.relative(source,output);
+      const tracked=spawnSync('git',['-C',original,'ls-files','--',relative],{encoding:'utf8'});
+      if (relative.split(path.sep)[0]==='.git' || tracked.status!==0 || tracked.stdout.trim()) refuse();
+    }
+    const metadata=spawnSync('git',['-C',original,'rev-parse','--path-format=absolute','--git-dir','--git-common-dir'],{encoding:'utf8'});
+    if (metadata.status===0) for (const dir of metadata.stdout.trim().split(/\r?\n/).map(canonical)) {
+      if (contains(output,dir) || contains(dir,output)) refuse();
+    }
   }
   return path.resolve(outDir);
 }
@@ -88,6 +102,28 @@ function coverageFiles(root, expected) {
   const files=Object.keys(summary).filter(key=>key!=='total').map(key=>posix(path.relative(root,key))).sort();
   if (JSON.stringify(files)!==JSON.stringify(expected) || !summary.total) throw Error('Coverage source inventory mismatch');
   for (const file of ['coverage-final.json','lcov.info']) if (!fs.existsSync(path.join(root,'coverage',file))) throw Error(`Missing coverage ${file}`);
+  // Publication happens on current main; old product files may no longer exist there.
+  // Product-relative keys combine across runner OS and temporary directory names.
+  for (const name of ['coverage-summary.json','coverage-final.json']) {
+    const file=path.join(root,'coverage',name);
+    const data=JSON.parse(fs.readFileSync(file));
+    const normalized={};
+    for (const [key,value] of Object.entries(data)) {
+      if (key==='total') {normalized.total=value;continue;}
+      const relative=posix(path.relative(root,key));
+      if (!expected.includes(relative)) throw Error('Coverage source inventory mismatch');
+      normalized[relative]=name==='coverage-final.json'?{...value,path:relative}:value;
+    }
+    if (JSON.stringify(Object.keys(normalized).filter(key=>key!=='total').sort())!==JSON.stringify(expected)) throw Error('Coverage source inventory mismatch');
+    write(file,normalized);
+  }
+  const lcov=path.join(root,'coverage/lcov.info');
+  fs.writeFileSync(lcov,fs.readFileSync(lcov,'utf8').replace(/^SF:(.+)$/gm,(_,file)=> {
+    const source=file.trim();
+    const relative=path.isAbsolute(source)?posix(path.relative(root,source)):source.replaceAll('\\','/');
+    if (!expected.includes(relative)) throw Error('LCOV source inventory mismatch');
+    return `SF:${relative}`;
+  }));
 }
 
 function outputManifest(dir) {

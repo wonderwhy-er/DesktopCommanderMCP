@@ -284,7 +284,7 @@ jobs:
           fi
           git fetch --no-tags --depth=1 origin "${TESTS_FROM:-$PRODUCT}"
           if [[ -n "$TIMED_TEST" ]]; then export TESTS="files:$TIMED_TEST"; fi
-          node .ci-harness/test/independent-ci.js --root . --product "$PRODUCT" --tests "${TESTS_FROM:-$PRODUCT}" --harness "$HARNESS" --out ci-output
+          node .ci-harness/test/independent-ci.js --root . --product "$PRODUCT" --tests "${TESTS_FROM:-$PRODUCT}" --harness "$HARNESS" --out test-results/independent
       # A timed job's results apart from the others' (results-<runner>-timed-<test>, a / as -)
       - name: Upload the test results
         if: always()
@@ -292,7 +292,7 @@ jobs:
         with:
           name: results-${{ matrix.os }}${{ matrix.id && format('-{0}', matrix.id) || '' }}
           path: |
-            ${{ (github.event_name != 'pull_request') && 'ci-output/test-results/' || 'test-results/' }}
+            ${{ (github.event_name != 'pull_request') && 'test-results/independent/test-results/' || 'test-results/' }}
             !test-results/c8-tmp/
           retention-days: 14
           overwrite: true
@@ -301,7 +301,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: coverage-${{ matrix.os }}
-          path: ${{ (github.event_name != 'pull_request') && 'ci-output/coverage/' || 'coverage/' }}
+          path: ${{ (github.event_name != 'pull_request') && 'test-results/independent/coverage/' || 'coverage/' }}
           retention-days: 14
           overwrite: true
 

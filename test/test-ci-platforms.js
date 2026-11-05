@@ -604,7 +604,7 @@ export default async function run() {
   // Cross-tests execute through the trusted harness; the product checkout is not overwritten.
   const crossStep = step(unitJob, 'Independent product and tests');
   for (const line of ['shell: bash', 'TESTS_FROM: ${{ needs.platforms.outputs.tests_from }}',
-    'node .ci-harness/test/independent-ci.js --root . --product "$PRODUCT" --tests "${TESTS_FROM:-$PRODUCT}" --harness "$HARNESS" --out ci-output']) {
+    'node .ci-harness/test/independent-ci.js --root . --product "$PRODUCT" --tests "${TESTS_FROM:-$PRODUCT}" --harness "$HARNESS" --out test-results/independent']) {
     assert.ok(crossStep.includes(line), `the independent step: ${line}`);
   }
   assert.ok(commentJob.some((line) => line.trim() === 'TESTS_FROM: ${{ needs.platforms.outputs.tests_from }}'), 'the comment names both commits');
