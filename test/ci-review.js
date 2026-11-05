@@ -23,7 +23,7 @@ import {
 } from './helpers/ci-review.js';
 import { githubApi } from './helpers/github-api.js';
 import {
-  MAX_REVIEW_CONTEXT_BYTES, reviewContextOf, contextReceiptOf, publishedContextOf,
+  MAX_REVIEW_CONTEXT_BYTES, reviewContextOf, contextReceiptOf, publishedContextOf, measurementTestsOf, reviewFilesOf,
 } from './helpers/review-context.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -251,14 +251,18 @@ async function run(range, ...options) {
   const context = reviewContextOf(rawContext, change);
   const pull = process.env.PR ? await github('GET', `/repos/${repo}/pulls/${Number(process.env.PR)}`) : {};
   // The run's tests (CI: its artifacts, --tests) or this machine's last coverage run at B
-  const ran = option('--tests')
+  const automated = option('--tests')
     ? testsOf(path.resolve(option('--tests')))
     : localTestsOf({ root: ROOT, head: change.head });
+  const measured = measurementTestsOf(context);
+  if (automated && measured) throw new Error('Review context: choose current CI artifacts or selected native measurements.');
+  const ran = measured ?? automated;
   const tests = ran && {
     platforms: ran.platforms,
     failed: ran.failed,
     // Only files the coverage counts: the rules the coverage check holds the report to (.c8rc.json's files)
     uncovered: ran.lcovs.length ? uncoveredOf({ diff: change.diff, lcovs: ran.lcovs, counted: isCounted }) : null,
+    ...(ran.provenance ? { selected: ran.selected, coverageScope: ran.coverageScope, provenance: ran.provenance } : {}),
   };
   // A text check (--text): each claim in a text against the change, with the results files it cites
   const text = option('--text') && textToCheck(option('--text'), pull);
@@ -266,7 +270,7 @@ async function run(range, ...options) {
   fitsTheWindow(prompt, change.diff);
 
   const { git, head, diff } = change;
-  const modelJson = await askClaudeCode({ prompt, head, git, key, out, diff, shell: Boolean(text) });
+  const modelJson = await askClaudeCode({ prompt, head, git, key, out, diff, shell: Boolean(text), context, tests });
   const contextReceipt = contextReceiptOf(context, prompt);
   if (contextReceipt) {
     fs.mkdirSync(out, { recursive: true });
@@ -279,12 +283,16 @@ async function run(range, ...options) {
 }
 
 /** Export the requested head with symlinks as plain files; the model sees only this folder. */
-async function askClaudeCode({ prompt, head, git, key, out, diff, shell }) {
+async function askClaudeCode({ prompt, head, git, key, out, diff, shell, context, tests }) {
   const { askClaude } = await import('./helpers/claude-review.js');
   const folder = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'dc-review-')));
   try {
     fs.mkdirSync(path.join(folder, 'review'));
     fs.writeFileSync(path.join(folder, 'review', 'diff.patch'), diff);
+    const guide = fs.readFileSync(path.join(ROOT, '.github', 'code-style.md'), 'utf8');
+    for (const [file, body] of Object.entries(reviewFilesOf({ guide, context, tests }))) {
+      fs.writeFileSync(path.join(folder, file), body);
+    }
     const index = { GIT_INDEX_FILE: path.join(folder, 'index') };
     git(['read-tree', head], index);
     const prefix = `--prefix=${path.join(folder, 'pr').replace(/\\/g, '/')}/`;

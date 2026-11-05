@@ -8,7 +8,9 @@ import path from 'node:path';
 import vm from 'node:vm';
 import { fileURLToPath } from 'node:url';
 import { promptOf, answerOf, findingsOf, withUncovered, reviewOf } from './helpers/ci-review.js';
-import { reviewContextOf, contextReceiptOf, MAX_REVIEW_CONTEXT_BYTES } from './helpers/review-context.js';
+import { reviewContextOf, contextReceiptOf, MAX_REVIEW_CONTEXT_BYTES, measurementTestsOf, reviewFilesOf,
+  GUIDES_COMMIT, GUIDE_SHA256 } from './helpers/review-context.js';
+import { readTool } from './helpers/review-tools.js';
 
 // These input tests must never reach Git, gh, a provider, or even a local network service.
 const require = createRequire(import.meta.url);
@@ -123,7 +125,7 @@ function actualFunction(start, end) {
 }
 
 async function runOffline({ raw = JSON.stringify(context), useFile = false, providerFails = false,
-  pr = '', key = 'offline-fixture-only', alsoEnv = false } = {}) {
+  pr = '', key = 'offline-fixture-only', alsoEnv = false, captureInputs = false } = {}) {
   const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'review-context-test-'));
   const out = path.join(folder, 'out'); fs.mkdirSync(out);
   fs.writeFileSync(path.join(out, 'review-context-receipt.json'), 'old receipt');
@@ -137,12 +139,26 @@ async function runOffline({ raw = JSON.stringify(context), useFile = false, prov
   if (alsoEnv) env.REVIEW_CONTEXT_JSON = raw;
   const sandbox = vm.createContext({
     exports: {}, fs, path, ROOT, process: { env }, MAX_REVIEW_CONTEXT_BYTES, TOOL_CALLS: 8, TEXT_TOOL_CALLS: 16,
-    reviewContextOf, contextReceiptOf, promptOf, answerOf, findingsOf, withUncovered,
+    reviewContextOf, contextReceiptOf, measurementTestsOf, promptOf, answerOf, findingsOf, withUncovered,
+    uncoveredOf: () => [{ file: 'src/a.ts', ranges: [[1, 1]] }], isCounted: () => true,
     filesOf: () => [], usageOf: () => ({}), reviewOf: () => ({ body: 'Offline provider result.' }),
     changeOf: () => ({ head: HEAD, base: BASE, diff: '', commits: [], git: forbidden }),
     github: forbidden, resultsOf: forbidden, textToCheck: forbidden, writeTextCheck: forbidden,
     testsOf: () => null, localTestsOf: () => null, fitsTheWindow: () => {},
-    askClaudeCode: async ({ prompt }) => {
+    askClaudeCode: async ({ prompt, tests, context: supplied }) => {
+      if (captureInputs) {
+        const guide = fs.readFileSync(path.join(ROOT, '.github/code-style.md'), 'utf8');
+        seen.tests = tests;
+        seen.missingPath = await readTool({ folder, name: 'read_file', args: { path: 'review/code-style.md' } });
+        fs.mkdirSync(path.join(folder, 'review'));
+        for (const [file, body] of Object.entries(reviewFilesOf({ guide, context: supplied, tests }))) {
+          fs.writeFileSync(path.join(folder, file), body);
+        }
+        seen.reads = {};
+        for (const file of ['code-style.md', 'tests.json', 'coverage.lcov']) {
+          seen.reads[file] = await readTool({ folder, name: 'read_file', args: { path: `review/${file}` } });
+        }
+      }
       seen.providerCalls++; seen.prompt = prompt;
       if (providerFails) throw new Error('offline provider fixture failure');
       return { response: JSON.stringify({ summary: 'Offline input delivery checked.', findings: [] }), stats: {} };
@@ -230,4 +246,33 @@ test('missing review artifacts do not claim that no tests ran anywhere', () => {
   const prompt = promptOf(options);
   assert.match(prompt, /No test results came with this review/);
   assert.doesNotMatch(prompt, /no platform.s tests ran/);
+});
+
+test('the actual run delivers scoped measurements and the pinned guide to the bounded read consumer', async () => {
+  const pack = structuredClone(context);
+  pack.guide = { commit: GUIDES_COMMIT, path: '.github/code-style.md', sha256: GUIDE_SHA256,
+    text: fs.readFileSync(path.join(ROOT, '.github/code-style.md'), 'utf8').replace(/\r\n/g, '\n') };
+  const receipt = JSON.stringify({ part: 'selected.windows', system: 'windows', exit: 0 });
+  const lcov = 'SF:src/a.ts\nDA:1,0\nDA:2,1\nend_of_record\n';
+  pack.measurements = { productCommit: HEAD, base: BASE, platform: 'windows', scope: 'Two selected Windows unit files.',
+    source: { path: 'unit-results.json', sha256: digest('source results') },
+    selected: ['test/test-a.js', 'test/test-b.js'], failed: ['test/test-b.js'], skipped: 1,
+    attempt: { source: { path: 'selected.windows.result.json', sha256: digest(receipt) }, text: receipt },
+    coverage: { source: { path: 'coverage/lcov.info', sha256: digest('full LCOV source') },
+      text: lcov, sha256: digest(lcov), excerpt: true } };
+  const result = await runOffline({ raw: JSON.stringify(pack), captureInputs: true });
+  assert.equal(result.error, undefined, result.error?.message);
+  assert.equal(result.seen.providerCalls, 1);
+  assert.match(result.seen.missingPath, /^Read denied:/);
+  assert.match(result.seen.reads['code-style.md'], /Write for the next reader/);
+  assert.match(result.seen.reads['tests.json'], /test\/test-b.js/);
+  assert.match(result.seen.reads['tests.json'], /"origin": "native"/);
+  assert.match(result.seen.reads['coverage.lcov'], /DA:1,0/);
+  assert.match(result.seen.prompt, /Two selected Windows unit files/);
+  assert.deepEqual(result.review.tests.selected, pack.measurements.selected);
+  assert.equal(result.review.tests.provenance.attempt.id, 'selected.windows');
+  assert.equal(result.receipt.measurements.coverage.sha256, digest(lcov));
+  assert.equal(result.receipt.coverage, 'partial-native');
+  assert.equal(result.receipt.modelAcceptanceClaimed, false);
+  assert.throws(() => reviewFilesOf({ guide: 'PR-owned substitute guide', context: pack, tests: null }), /guide pin differs/);
 });

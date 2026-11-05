@@ -1,7 +1,7 @@
 # The AI review of a maintainer's PR, after its tests: tests.yml calls this workflow
 # (workflow_call) once its test jobs are done, for a push to a PR with the label
 # `review`, adding that label, or a maintainer's `/review` comment, with the run's
-# results and coverage. On demand it runs alone, with no tests (gh workflow run
+# results and coverage. On demand it runs no tests of its own (gh workflow run
 # review.yml -f commit=<sha> -f base=<sha or branch>). Claude Code reads the PR's
 # code with read-only tools and answers with findings, by the rules in
 # .github/review-prompt.md, through test/ci-review.js run: the same script as
@@ -134,6 +134,7 @@ jobs:
           sparse-checkout: |
             /package.json
             /.github/review-prompt.md
+            /.github/code-style.md
             /.github/text-check-prompt.md
             /.github/writing-style.md
             /test/ci-review.js

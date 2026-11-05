@@ -6,14 +6,15 @@ import path from 'node:path';
 import { test } from 'node:test';
 import { ciReview, fakeGitHub, git } from './test-ci-review.js';
 import { reviewCliFixture } from './helpers/review-api-checks.js';
+import { GUIDES_COMMIT } from './helpers/review-context.js';
 
 const digest = text => createHash('sha256').update(text).digest('hex');
 
 function nativeContext(head, base) {
-  const guide = 'Keep the launcher alive only for its original launcher.\n';
+  const guide = fs.readFileSync(new URL('../.github/code-style.md', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
   const receipt = JSON.stringify({ id: 'selected-linux', state: 'done', system: 'linux', commit: head, exit: 0 });
   return { version: 1, head, base,
-    guide: { commit: 'c'.repeat(40), path: '.github/code-style.md', sha256: digest(guide), text: guide },
+    guide: { commit: GUIDES_COMMIT, path: '.github/code-style.md', sha256: digest(guide), text: guide },
     evidence: [{ kind: 'native-receipt', name: 'Selected Linux check',
       source: { path: 'receipts/selected-linux.json', sha256: digest(receipt) },
       sha256: digest(receipt), text: receipt }] };
