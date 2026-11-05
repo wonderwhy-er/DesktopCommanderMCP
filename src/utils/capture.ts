@@ -1,4 +1,5 @@
 import { platform, homedir } from 'os';
+import * as http from 'http';
 import * as https from 'https';
 import { AsyncLocalStorage } from 'async_hooks';
 import type { TransportParams } from '@desktop-commander/telemetry-contract/transport';
@@ -525,6 +526,7 @@ export const buildEventProperties = async (properties?: any) => {
 /**
  * Send event to the telemetry proxy (direct BigQuery ingestion).
  * Uses the custom domain first and retries the generated Cloud Run URL on failure.
+ * With DC_TELEMETRY_URL set, sends there instead, once.
  */
 const sendToTelemetryProxy = async (event: string, eventProperties: any) => {
     try {
@@ -541,6 +543,13 @@ const sendToTelemetryProxy = async (event: string, eventProperties: any) => {
             }]
         });
 
+        // Read on every send: a remote device sets it after this module is loaded
+        const configured = process.env.DC_TELEMETRY_URL;
+        if (configured) {
+            await postTelemetryPayload(configured, payload);
+            return;
+        }
+
         const sent = await postTelemetryPayload(TELEMETRY_PROXY_URL, payload);
         if (!sent) {
             await postTelemetryPayload(TELEMETRY_PROXY_FALLBACK_URL, payload);
@@ -550,13 +559,20 @@ const sendToTelemetryProxy = async (event: string, eventProperties: any) => {
     }
 };
 
+/** Sends to the address as given: http or https by its protocol, with its port and query. */
 const postTelemetryPayload = async (endpoint: string, payload: string): Promise<boolean> => {
     return await new Promise((resolve) => {
+        let settled = false;
+        let deadline: NodeJS.Timeout | undefined;
+        const finish = (sent: boolean) => {
+            if (settled) return;
+            settled = true;
+            if (deadline) clearTimeout(deadline);
+            resolve(sent);
+        };
         const url = new URL(endpoint);
+        const client = url.protocol === 'http:' ? http : https;
         const options = {
-            hostname: url.hostname,
-            port: 443,
-            path: url.pathname,
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -564,16 +580,22 @@ const postTelemetryPayload = async (endpoint: string, payload: string): Promise<
             }
         };
 
-        const req = https.request(options, (res) => {
+        const req = client.request(url, options, (res) => {
             res.resume();
             res.on('end', () => {
-                resolve(res.statusCode !== undefined && res.statusCode >= 200 && res.statusCode < 300)
+                finish(res.statusCode !== undefined && res.statusCode >= 200 && res.statusCode < 300);
             });
+            res.on('error', () => finish(false));
         });
-        req.on('error', () => resolve(false));
+        // Socket inactivity alone does not bound a response that keeps trickling.
+        deadline = setTimeout(() => {
+            req.destroy();
+            finish(false);
+        }, 3000);
+        req.on('error', () => finish(false));
         req.setTimeout(3000, () => {
             req.destroy();
-            resolve(false);
+            finish(false);
         });
         req.write(payload);
         req.end();
@@ -600,44 +622,103 @@ export const capture = async (event: string, properties?: any) => {
     })();
 }
 
+/** How often the device looks again for the telemetry address while transport events are held */
+const TRANSPORT_RETRY_MS = 5000;
+/** The most transport events held; when more come, the oldest go first */
+const TRANSPORT_QUEUE_LIMIT = 100;
+/** The longest a transport event is held; after that it is dropped, so the retry ends for a server that never names an address */
+const TRANSPORT_HOLD_MS = 10 * 60 * 1000;
+
+const transportQueue: { event: string; properties: TransportParams; userId: string; queuedAt: number; consent: Promise<boolean> }[] = [];
+let transportRetryTimer: NodeJS.Timeout | undefined;
+
+/** Sends one transport event, redacted like every other event (known paths, path properties, error text) */
+const sendTransport = async (event: string, properties: TransportParams, userId: string) => {
+    try {
+        const endpoint = process.env.DC_TELEMETRY_URL;
+        if (!endpoint || isTelemetryDisabledByEnv()) return;
+        const telemetryEnabled = await configManager.getValue('telemetryEnabled');
+        if (isTelemetryDisabledValue(telemetryEnabled)) return;
+        if (uniqueUserId === 'unknown') uniqueUserId = await configManager.getOrCreateClientId();
+        const payload = JSON.stringify({
+            client_id: uniqueUserId,
+            user_id: userId,
+            telemetry_type: 'transport',
+            timestamp_micros: Date.now() * 1000,
+            events: [{ name: event, params: sanitizeEventProperties(properties, await knownEventPaths()) }]
+        });
+        await postTelemetryPayload(endpoint, payload);
+    } catch {
+        // Telemetry must not affect command handling.
+    }
+};
+
+let transportDraining = false;
+
+const scheduleTransportRetry = () => {
+    if (transportQueue.length > 0 && !process.env.DC_TELEMETRY_URL && !transportRetryTimer) {
+        transportRetryTimer = setTimeout(() => {
+            transportRetryTimer = undefined;
+            void drainTransportQueue();
+        }, TRANSPORT_RETRY_MS);
+        transportRetryTimer.unref?.();
+    }
+};
+
+/**
+ * Sends the held transport events once DC_TELEMETRY_URL is set, one at a time and in the order they came, so a
+ * slow event is never overtaken and a burst of held events is not sent at once. Without the address they stay
+ * held, never go to the built-in production address, and the check runs again after TRANSPORT_RETRY_MS while
+ * any are left.
+ */
+const drainTransportQueue = async () => {
+    if (transportDraining) return;
+    transportDraining = true;
+    try {
+        while (transportQueue.length > 0) {
+            const next = transportQueue[0];
+            const enabledWhenRecorded = await next.consent;
+            // Overflow can evict an event while its consent lookup is pending.
+            if (transportQueue[0] !== next) continue;
+            if (!enabledWhenRecorded || Date.now() - next.queuedAt > TRANSPORT_HOLD_MS) {
+                transportQueue.shift();
+                continue;
+            }
+            if (!process.env.DC_TELEMETRY_URL) break;
+            transportQueue.shift();
+            await sendTransport(next.event, next.properties, next.userId);
+        }
+    } finally {
+        transportDraining = false;
+    }
+    const now = Date.now();
+    while (transportQueue.length > 0 && now - transportQueue[0].queuedAt > TRANSPORT_HOLD_MS) {
+        transportQueue.shift();
+    }
+    if (transportQueue.length === 0 && transportRetryTimer) {
+        clearTimeout(transportRetryTimer);
+        transportRetryTimer = undefined;
+    }
+    scheduleTransportRetry();
+};
+
 /**
  * Send only contract-validated transport fields through the existing proxy sender,
  * redacted like every other event (known paths, path properties, error text).
+ * Only to the address the Remote MCP server gave, never to the built-in production
+ * address: an event that arrives before the address is set is held until it is.
  */
 export const captureTransport = async (event: string, properties: TransportParams, userId: string) => {
-    if (isInsideUiOriginCall() || isTelemetryDisabledByEnv()) {
-        return;
-    }
-    void (async () => {
-        try {
-            const telemetryEnabled = await configManager.getValue('telemetryEnabled');
-            if (isTelemetryDisabledValue(telemetryEnabled)) {
-                return;
-            }
-            if (uniqueUserId === 'unknown') {
-                uniqueUserId = await configManager.getOrCreateClientId();
-            }
-            const eventProperties = sanitizeEventProperties(properties, await knownEventPaths())
-
-            const payload = JSON.stringify({
-                client_id: uniqueUserId,
-                user_id: userId,
-                telemetry_type: 'transport',
-                timestamp_micros: Date.now() * 1000,
-                events: [{
-                    name: event,
-                    params: eventProperties
-                }]
-            });
-
-            const sent = await postTelemetryPayload(TELEMETRY_PROXY_URL, payload);
-            if (!sent) {
-                await postTelemetryPayload(TELEMETRY_PROXY_FALLBACK_URL, payload);
-            }
-        } catch(_error) {
-            // Telemetry must not affect command handling.
-        }
-    })();
+    if (isInsideUiOriginCall() || isTelemetryDisabledByEnv()) return;
+    // Start consent at observation time, but enqueue synchronously so a slower
+    // lookup cannot let a later event overtake it. A failed lookup grants none.
+    const consent = configManager.getValue('telemetryEnabled')
+        .then(value => !isTelemetryDisabledValue(value)).catch(() => false);
+    transportQueue.push({ event, properties, userId, queuedAt: Date.now(), consent });
+    if (transportQueue.length > TRANSPORT_QUEUE_LIMIT) transportQueue.shift();
+    // Keep the five-second clock anchored to observation, not an async lookup.
+    scheduleTransportRetry();
+    void drainTransportQueue();
 };
 
 export const capture_call_tool = capture;
