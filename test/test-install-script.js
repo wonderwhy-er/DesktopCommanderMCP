@@ -4,8 +4,26 @@ import { randomUUID } from 'crypto';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { runInstallScript } from './helpers/install-script.js';
+import * as installHarness from './helpers/install-script.js';
 import { runIfMain } from './helpers/run-if-main.js';
+const { runInstallScript } = installHarness;
+
+/** Permission fixtures must distinguish UID 0 from ordinary users and platforms without Unix UIDs. */
+function rootUserDetection() {
+  assert.strictEqual(typeof installHarness.isRoot, 'function', 'the shared root precondition exists');
+  const getuid = process.getuid;
+  try {
+    process.getuid = () => 0;
+    assert.strictEqual(installHarness.isRoot(), true, 'UID 0 bypasses chmod write denial');
+    process.getuid = () => 1000;
+    assert.strictEqual(installHarness.isRoot(), false, 'ordinary users retain permission assertions');
+    process.getuid = undefined;
+    assert.strictEqual(installHarness.isRoot(), false, 'no Unix UID is not root');
+  } finally {
+    if (getuid === undefined) delete process.getuid;
+    else process.getuid = getuid;
+  }
+}
 
 /** A missing executable emits an asynchronous error; the harness must still finish its cleanup. */
 async function failedSpawnCleansTemporaryDirectories() {
@@ -34,6 +52,7 @@ async function failedSpawnCleansTemporaryDirectories() {
 }
 
 export default async function run() {
+  rootUserDetection();
   await failedSpawnCleansTemporaryDirectories();
 }
 
