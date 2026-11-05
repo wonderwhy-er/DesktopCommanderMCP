@@ -182,9 +182,12 @@ export default async function runTests(t) {
   const failures = [];
   let checks = 0;
   for (const testCase of CASES) {
-    const reason = testCase.windows === true && process.platform !== 'win32' ? 'Windows only'
-      : testCase.windows === false && process.platform === 'win32' ? 'not on Windows' : false;
-    const skipped = reason && `PowerShell profile, ${testCase.what}: ${reason}`;
+    let skipped = false;
+    if (testCase.windows === true && process.platform !== 'win32') {
+      skipped = `PowerShell profile, ${testCase.what}: Windows only`;
+    } else if (testCase.windows === false && process.platform === 'win32') {
+      skipped = `PowerShell profile, ${testCase.what}: not on Windows`;
+    }
     await t.test(testCase.what, { skip: skipped }, async () => {
       const previousFailures = failures.length;
       for (const file of profiles) {
