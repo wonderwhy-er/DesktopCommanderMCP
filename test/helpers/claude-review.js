@@ -116,7 +116,7 @@ export async function askClaude({ prompt, key, folder, out, calls = 8, maxTurns 
             : await readTool({ ...readOptions, folder, name: params.name, args: params.arguments });
         const failed = /^(Read denied|Read failed|Tool denied|Tool budget)/.test(output);
         if (!failed) successful++;
-        if (!failed && output.trim() && params.name === 'read_file'
+        if (!failed && output.replace(/^\d+: /gm, '').trim() && params.name === 'read_file'
           && path.posix.normalize(String(params.arguments?.path ?? '')).startsWith('pr/')) sourceReads++;
         methodResponse = { content: [{ type: 'text', text: redact(output) }], isError: failed };
         session.push({ name: params.name, arguments: params.arguments, result: methodResponse });
