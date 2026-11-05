@@ -523,7 +523,13 @@ type Started = Pick<FoundCommand, 'words' | 'written' | 'wordTexts'>;
  */
 export function withStartedPrograms(commands: FoundCommand[], shell: string): FoundCommand[] {
   const running: FoundCommand[] = [];
+  // Each program once: readings of nested wrappers reach the same one many ways (find . -exec find . -exec … echo
+  // finds each level's program from every level before it), and another copy adds no answer
+  const seen = new Set<string>();
   const add = (command: FoundCommand): void => {
+    const key = JSON.stringify([command.start, command.words, command.written]);
+    if (seen.has(key)) return;
+    seen.add(key);
     running.push(command);
     if (command.nameAtRunTime) return;
     for (const { words, written, wordTexts } of startedPrograms(command, shell)) {

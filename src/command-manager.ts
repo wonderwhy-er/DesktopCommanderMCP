@@ -373,7 +373,27 @@ class CommandManager {
      *   PowerShell or start_process answers. A command given to a PowerShell the
      *   check can't find, from a shell that isn't PowerShell, can't be read either.
      */
-    async checkCommand(command: string, shell: string): Promise<CommandCheck> {
+    checkCommand(command: string, shell: string): Promise<CommandCheck> {
+        return this.checkText(command, shell, new Map());
+    }
+
+    /**
+     * checkCommand() for a command, or for a command text in it: each text is
+     * checked once per command in each shell, however many readings give it.
+     * In pwsh $a pwsh $a … each text gives every later one again, so without
+     * this the work doubled with each pair.
+     */
+    private checkText(command: string, shell: string, checked: Map<string, Promise<CommandCheck>>): Promise<CommandCheck> {
+        const key = `${shell}\0${command}`;
+        let check = checked.get(key);
+        if (check === undefined) {
+            check = this.checkOnce(command, shell, checked);
+            checked.set(key, check);
+        }
+        return check;
+    }
+
+    private async checkOnce(command: string, shell: string, checked: Map<string, Promise<CommandCheck>>): Promise<CommandCheck> {
         try {
             const config = await configManager.getConfig();
             const blockedCommands = config.blockedCommands || [];
@@ -424,7 +444,7 @@ class CommandManager {
                         : [runs, shell].find((candidate) => getShellType(candidate) === 'powershell' && isShellAvailable(candidate));
                     const inner: CommandCheck = reader === undefined
                         ? { verdict: 'failed', reason: `${runs} isn't installed here, so the command given to it can't be read` }
-                        : await this.checkCommand(text, reader);
+                        : await this.checkText(text, reader, checked);
                     if (inner.verdict === 'blocked') return inner;
                     if (inner.verdict === 'failed') unreadable ??= inner;
                     if (inner.verdict === 'unseen') unseen.push(...inner.unseen);

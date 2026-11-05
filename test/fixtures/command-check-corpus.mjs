@@ -642,4 +642,12 @@ export const CORPUS = [
   { id: 'cmd_for_f_pipe', group: 'bypass', shell: 'cmd', expect: 'sc', command: "for /f %i in ('echo x ^| sc query') do @echo %i", note: 'outer caret is consumed before the child cmd reads its pipeline' },
   { id: 'cmd_for_f_literal', group: 'case', shell: 'cmd', expect: null, command: 'for /f %i in ("sc query") do @echo %i', note: 'double-quoted default set is literal text' },
   { id: 'cmd_for_f_backq_literal', group: 'case', shell: 'cmd', expect: null, command: "for /f \"usebackq\" %i in ('sc query') do @echo %i", note: 'single-quoted usebackq set is literal text' },
+
+  // Current command-name and FOR /F parsing regressions.
+  { id: 'inline_bash_rcfile', group: 'inline', shell: 'bash', expect: 'unknowable', command: "bash --rcfile ./startup.sh -ic 'echo ready'", note: 'an interactive bash runs ./startup.sh first; its commands are in that file' },
+  { id: 'inline_bash_init_file', group: 'inline', shell: 'bash', expect: 'unknowable', command: "bash --init-file ./startup.sh -ic 'echo ready'", note: '--init-file is --rcfile by another name' },
+  { id: 'inline_bash_rcfile_runtime', group: 'inline', shell: 'bash', expect: 'unknowable', command: `bash --rcfile "$RC" -ic 'echo ready'`, note: 'the startup file is known only at run time' },
+  { id: 'inline_bash_rcfile_sudo', group: 'inline', shell: 'bash', expect: 'sudo', command: "bash --rcfile ./startup.sh -ic 'sudo ls'", note: 'the command text is still read: it runs sudo' },
+  { id: 'inline_bash_ic_ok', group: 'inline', shell: 'bash', expect: null, command: "bash -ic 'echo ready'", note: "no startup file is named: bash runs the user's own ~/.bashrc, like a PowerShell profile" },
+  { id: 'inline_bash_rcfile_arg_ok', group: 'inline', shell: 'bash', expect: null, command: "bash -c 'echo ready' x --rcfile ./startup.sh", note: "after -c the words are the text's arguments: --rcfile there is no option" },
 ];

@@ -5,7 +5,8 @@ import path from 'path';
 const TEST_HOME_PREFIX = 'dc-test-home-';
 // The variables a test process doesn't inherit (see createTestEnv); the test-home hook removes them too
 export const LEFT_OUT = ['FORCE_COLOR', 'WSL_DISTRO_NAME', 'XDG_CONFIG_HOME'];
-const NO_WSL_INTEROP = new URL('../fixtures/no-wsl-interop-preload.mjs', import.meta.url).href;
+// Hides WSL's interop entry from a test process on Linux (see createTestEnv); the test-home hook loads it too
+export const NO_WSL_INTEROP = new URL('../fixtures/no-wsl-interop-preload.mjs', import.meta.url).href;
 
 /**
  * Environment for one test process. The runners start every test file with it:
@@ -17,13 +18,13 @@ const NO_WSL_INTEROP = new URL('../fixtures/no-wsl-interop-preload.mjs', import.
  *   production server
  * - no FORCE_COLOR, so processes the tests start print the same plain text
  *   whichever terminal launched the run
+ * - no XDG_CONFIG_HOME, so a tool that reads it (pwsh, for its profile) keeps
+ *   its settings under the test home, not where the machine says (GitHub's
+ *   Linux runner sets it to the real ~/.config)
  * - on Linux, no WSL: no WSL_DISTRO_NAME, and WSL's interop entry hidden from
  *   every test process (NODE_OPTIONS preloads fixtures/no-wsl-interop-preload.mjs),
  *   so in WSL command names are read as on any other Linux machine; a test of
  *   WSL's reading sets them itself
- * - no XDG_CONFIG_HOME, so a tool that reads it (pwsh, for its profile) keeps
- *   its settings under the test home, not where the machine says (GitHub's
- *   Linux runner sets it to the real ~/.config)
  * Values already set by the caller win; tests that need others set them themselves.
  */
 export function createTestEnv() {

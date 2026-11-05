@@ -202,18 +202,19 @@ export function detectAvailableShells(): string[] {
 
 // WSL's entry in binfmt_misc that lets Linux run Windows programs. Distros that run systemd get it late, under the second name
 const WSL_INTEROP_ENTRIES = ['/proc/sys/fs/binfmt_misc/WSLInterop', '/proc/sys/fs/binfmt_misc/WSLInterop-late'];
-let wslInterop: boolean | undefined; // undefined = not read yet
+let wslInterop = false; // true once the entry was found
 
 /**
  * Whether this is WSL, which runs Windows programs from Linux. WSL sets
  * WSL_DISTRO_NAME for what it starts. What runs without it, through sudo
  * (which clears the environment) or as a service, is known by WSL's interop
- * entry, read once. A Docker container on WSL's kernel has no such entry and
- * can't run Windows programs.
+ * entry. Once found it is remembered; while missing it is looked for again,
+ * since WSL can register it again after it was gone. A Docker container on
+ * WSL's kernel has no such entry and can't run Windows programs.
  */
 function isWsl(): boolean {
   if (process.env.WSL_DISTRO_NAME) return true;
-  wslInterop ??= WSL_INTEROP_ENTRIES.some((entry) => fs.existsSync(entry));
+  wslInterop ||= WSL_INTEROP_ENTRIES.some((entry) => fs.existsSync(entry));
   return wslInterop;
 }
 

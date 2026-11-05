@@ -93,7 +93,7 @@ async function inWslANameIsReadAsOnWindows() {
   ]));
 }
 
-/** The names programName() gives in another node, started without WSL_DISTRO_NAME and with the interop entry there or not */
+/** The names programName() gives in another node, started without WSL_DISTRO_NAME and with the interop entry there or not (or an expression that says so at each look) */
 function namesInAnotherNode(withInteropEntry, names) {
   const { WSL_DISTRO_NAME, ...env } = process.env;
   const shell = new URL('../dist/utils/shell.js', import.meta.url).href;
@@ -115,6 +115,18 @@ function wslIsKnownByItsInteropEntryToo() {
   const names = ['sc.exe', '/mnt/c/Windows/System32/SC.EXE', 'format.com'];
   assert.deepStrictEqual(namesInAnotherNode(true, names), ['sc', 'sc', 'format'], 'with the interop entry');
   assert.deepStrictEqual(namesInAnotherNode(false, names), isWindows ? ['sc', 'sc', 'format'] : ['sc.exe', 'sc.exe', 'format.com'], 'without it');
+}
+
+/**
+ * WSL can register its interop entry again after it was gone, so a missing
+ * entry isn't remembered: with the entry there from the second read on, the
+ * second name is read as in WSL.
+ */
+function aMissingInteropEntryIsReadAgain() {
+  if (isWindows) return skip('a missing interop entry is read again: on Windows a name is read as on Windows anyway');
+  // Each read looks for both entries (WSLInterop, WSLInterop-late): the first read finds neither, later ones the first
+  const thereFromTheSecondRead = '(globalThis.dcInteropReads = (globalThis.dcInteropReads ?? 0) + 1) > 2';
+  assert.deepStrictEqual(namesInAnotherNode(thereFromTheSecondRead, ['sc.exe', 'sc.exe']), ['sc.exe', 'sc']);
 }
 
 /**
@@ -145,7 +157,7 @@ async function anEntryIsComparedInTheSameForm() {
 
 export default async function runTests() {
   const failures = [];
-  for (const check of [thePathIsRemoved, theNameIsLowercased, anExtensionIsDropped, inWslANameIsReadAsOnWindows, wslIsKnownByItsInteropEntryToo, anEntryIsComparedInTheSameForm]) {
+  for (const check of [thePathIsRemoved, theNameIsLowercased, anExtensionIsDropped, inWslANameIsReadAsOnWindows, wslIsKnownByItsInteropEntryToo, aMissingInteropEntryIsReadAgain, anEntryIsComparedInTheSameForm]) {
     try {
       console.log(`${await check() === SKIPPED ? '- skipped:' : '✓'} ${check.name}`);
     } catch (error) {
