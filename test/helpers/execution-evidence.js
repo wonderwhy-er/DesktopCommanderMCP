@@ -54,6 +54,7 @@ export function artifactAttempt({ receipt, jobs, artifacts, resultName, coverage
     try {
       return executionKey(job) === latestKey;
     } catch {
+      // Cancelled or unstarted older jobs lack execution stamps and cannot be retained origins.
       return false;
     }
   });
