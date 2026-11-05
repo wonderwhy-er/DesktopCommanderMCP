@@ -381,7 +381,7 @@ async function sourceVerify() {
   const checked = await verifyPriorRun({ raw: process.env.SOURCE_RUN_JSON, repo,
     head: process.env.HEAD_SHA, base: process.env.BASE_SHA, github });
   fs.writeFileSync('ci-source-manifest.json', `${JSON.stringify(checked, null, 2)}\n`);
-  output(`run=${checked.run}\nartifacts=${checked.artifacts.map(a => a.id).join(',')}`);
+  output(`run=${checked.run}\nartifacts=${[...new Set(checked.artifacts.map(a => a.id))].join(',')}`);
 }
 
 async function sourceStage() {

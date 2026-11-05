@@ -59,7 +59,7 @@ on:
         required: false
         default: ''
       source_run:
-        description: Optional pinned prior CI unit-run/attempt/artifact manifest (16 KiB maximum)
+        description: Optional pinned prior CI run/attempt/selected-artifact manifest (16 KiB maximum)
         type: string
         required: false
         default: ''
@@ -150,6 +150,7 @@ jobs:
             /test/ci-review.js
             /test/helpers/claude-review.js
             /test/helpers/review-tools.js
+            /test/run-ci.js
             /test/check-coverage-report.js
             /test/helpers/node-test-runner.js
             /test/helpers/ci-platforms.js
@@ -207,7 +208,7 @@ jobs:
           path: ci-source
           merge-multiple: false
           digest-mismatch: error
-      - name: Stage only the verified unit results and coverage
+      - name: Stage verified results with their actual selected part scope
         if: inputs.source_run != ''
         run: node test/ci-review.js source-stage
       # Without the secret it stops at once and fails, so the review never passes unseen

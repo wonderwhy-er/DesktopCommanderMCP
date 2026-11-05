@@ -81,6 +81,7 @@ test('the prior-run input is explicitly wired before the existing provider step'
   assert.ok(workflow.includes('artifact-ids: ${{ steps.source.outputs.artifacts }}'));
   assert.ok(workflow.includes('run-id: ${{ steps.source.outputs.run }}'));
   assert.ok(workflow.includes('node test/ci-review.js source-stage'));
+  assert.ok(workflow.includes('/test/run-ci.js'), 'default-scope verification has the trusted producer in sparse checkout');
 });
 
 test('prior CI checks product checkout separately from harness and retains standard suite/LCOV data', async t => {
@@ -145,5 +146,22 @@ test('default CI rejects wrong trees, false merge parents, false TESTS values an
     const fixture = defaultFixture(options);
     await assert.rejects(verifyPriorRun({ raw: JSON.stringify(fixture.input), repo: 'owner/repo',
       head: HEAD, base: BASE, github: fixture.github }), /Review source:/);
+  }
+});
+
+test('logged files and changed selectors use the trusted producer without silently changing their values', async () => {
+  const { verifyPriorRun } = await import('./helpers/review-source.js');
+  for (const selector of ['test', 'files:test-one.js', 'changed:old..new']) {
+    const fixture = defaultFixture({ testsValue: selector }); fixture.input.scope = selector;
+    if (selector === 'test' || selector.startsWith('files:')) {
+      fixture.input.artifacts = fixture.input.artifacts.filter(a => a.name.startsWith('coverage-') ||
+        a.file.path === 'suite/results.json');
+    }
+    const checked = await verifyPriorRun({ raw: JSON.stringify(fixture.input), repo: 'owner/repo',
+      head: HEAD, base: BASE, github: fixture.github });
+    assert.equal(checked.jobs[0].producer.tests, selector);
+    assert.equal(checked.scope, selector);
+    assert.deepEqual(checked.jobs[0].producer.parts.sort(), selector.startsWith('changed:')
+      ? [...defaultParts].sort() : ['suite']);
   }
 });

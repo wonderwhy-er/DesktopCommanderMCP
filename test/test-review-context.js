@@ -143,7 +143,7 @@ async function runOffline({ raw = JSON.stringify(context), useFile = false, prov
     for (const [name, text] of Object.entries(files)) {
       fs.mkdirSync(path.dirname(path.join(ci, name)), { recursive: true }); fs.writeFileSync(path.join(ci, name), text);
     }
-    fs.writeFileSync(path.join(ci, 'review-source.json'), JSON.stringify({ origin: 'github-actions', head: HEAD,
+    fs.writeFileSync(path.join(ci, 'review-source.json'), JSON.stringify({ origin: 'github-actions', scope: 'suite', head: HEAD,
       base: BASE, run: 100, attempt: 1, workflowHead: 'c'.repeat(40), artifacts: [],
       jobs: [{ id: 301, checkoutHead: HEAD, logSha256: digest('actual-source-log fixture') }],
       selected: [{ platform: 'ubuntu-latest', files: ['test/test-a.js'], excluded: [],

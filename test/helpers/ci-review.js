@@ -339,8 +339,14 @@ function testsPart(tests, context) {
     const source = tests.provenance;
     scope = [`Prior GitHub Actions scope: ${oneLine(source.scope)}`,
       `Source run ${source.attempt.id}, attempt ${source.attempt.number}; product ${source.productCommit}; workflow ${source.workflowHead}.`,
-      ...source.summaries.map(({ platform, summary }) =>
-        `${platform}: ${summary.files} selected unit files; ${summary.passed} passed, ${summary.failed} failed, ${summary.skippedChecks} skipped checks.`),
+      ...[...new Set(source.jobs?.map(job => job.checkoutHead) ?? [])].filter(head => head !== source.productCommit)
+        .map(head => `Tested checkout ${head}: API-verified equal product tree; this is not a new post-retarget merged-result run.`),
+      ...source.summaries.map(({ platform, part, summary, notRun }) => {
+        const name = part ? `${platform} ${part}` : platform;
+        if (summary.files === 0) return `${name}: 0 files, not run (${oneLine(notRun ?? 'no files')}).`;
+        const kind = part ? 'files' : 'unit files';
+        return `${name}: ${summary.files} selected ${kind}; ${summary.passed} passed, ${summary.failed} failed, ${summary.skippedChecks} skipped checks.`;
+      }),
       'The complete selected manifests and provenance are in review/tests.json; these are prior CI results, not native measurements.', ''];
   } else if (tests?.provenance) {
     scope = [`Selected native scope: ${oneLine(tests.provenance.scope)}`, '',
