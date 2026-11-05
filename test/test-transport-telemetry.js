@@ -134,6 +134,7 @@ try {
     delete process.env.DC_TELEMETRY_URL;
     sent.length = 0;
     received({ ...target, call_id: 'call-no-url' });
+    // This absence check needs an observation window; queue tests cover five-second retries with a fake clock.
     await new Promise(resolve => setTimeout(resolve, 200));
     assert.equal(sent.length, 0);
 } finally {

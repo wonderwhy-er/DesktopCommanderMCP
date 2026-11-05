@@ -629,7 +629,13 @@ const TRANSPORT_QUEUE_LIMIT = 100;
 /** The longest a transport event is held; after that it is dropped, so the retry ends for a server that never names an address */
 const TRANSPORT_HOLD_MS = 10 * 60 * 1000;
 
-const transportQueue: { event: string; properties: TransportParams; userId: string; queuedAt: number; consent: Promise<boolean> }[] = [];
+const transportQueue: {
+    event: string;
+    properties: TransportParams;
+    userId: string;
+    queuedAt: number;
+    consent: Promise<boolean>;
+}[] = [];
 let transportRetryTimer: NodeJS.Timeout | undefined;
 
 /** Sends one transport event, redacted like every other event (known paths, path properties, error text) */

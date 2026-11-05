@@ -52,7 +52,9 @@ async function localServerGetsDeviceEnvironment() {
   }
 }
 
-async function telemetryAddressBeforeLocalServer({ name, telemetryUrl, initialAddress, expectedAddress, warns = false }) {
+async function telemetryAddressBeforeLocalServer({
+  name, telemetryUrl, initialAddress, expectedAddress, warns = false,
+}) {
   const standIn = await startRemoteStandIn({ telemetryUrl });
   const original = { serverUrl: process.env.MCP_SERVER_URL, telemetryUrl: process.env.DC_TELEMETRY_URL };
   const warning = mock.method(console, 'warn', () => {});
@@ -86,7 +88,8 @@ async function telemetryAddressBeforeLocalServer({ name, telemetryUrl, initialAd
 export default async function runTests() {
   await localServerGetsDeviceEnvironment();
   const cases = [
-    { name: 'HTTPS address reaches the child before initialization', telemetryUrl: TELEMETRY_URL, expectedAddress: TELEMETRY_URL },
+    { name: 'HTTPS address reaches the child before initialization',
+      telemetryUrl: TELEMETRY_URL, expectedAddress: TELEMETRY_URL },
     { name: 'HTTP port and query are preserved', telemetryUrl: 'http://telemetry.example.test:8080/collect?key=x',
       expectedAddress: 'http://telemetry.example.test:8080/collect?key=x' },
     { name: 'HTTPS port and query are preserved', telemetryUrl: 'https://telemetry.example.test:8443/collect?key=x',
@@ -100,7 +103,8 @@ export default async function runTests() {
     { name: 'empty server address leaves the environment unset', telemetryUrl: '' },
     { name: 'absent server address preserves an existing environment override', initialAddress: TELEMETRY_URL,
       expectedAddress: TELEMETRY_URL },
-    { name: 'invalid server address does not replace an existing environment override', telemetryUrl: {},
+    { name: 'invalid server address does not replace an existing environment override',
+      telemetryUrl: {},
       initialAddress: TELEMETRY_URL, expectedAddress: TELEMETRY_URL, warns: true },
   ];
   for (const scenario of cases) await telemetryAddressBeforeLocalServer(scenario);
