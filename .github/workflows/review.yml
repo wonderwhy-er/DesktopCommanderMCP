@@ -88,7 +88,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
         with:
-          ref: 48e9bc6b554c1b82583199fd42c44f221d172e98
+          ref: c419302c4279f6655b5e2674bc1dca5cf1027ab9
           persist-credentials: false
           sparse-checkout: |
             /package.json
@@ -141,7 +141,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
         with:
-          ref: 48e9bc6b554c1b82583199fd42c44f221d172e98
+          ref: c419302c4279f6655b5e2674bc1dca5cf1027ab9
           persist-credentials: false
           sparse-checkout: |
             /package.json
@@ -263,7 +263,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
         with:
-          ref: 48e9bc6b554c1b82583199fd42c44f221d172e98
+          ref: c419302c4279f6655b5e2674bc1dca5cf1027ab9
           persist-credentials: false
           sparse-checkout: |
             /package.json
