@@ -251,7 +251,7 @@ class CmdReader {
       this.commands.push(...reader.commands.map(found => ({ ...found, start: offsets[found.start] })));
     }
     // Retain a balanced placeholder so the existing DO/body/group logic still applies.
-    words.push(open, { kind: 'close', value: ')', start: close, atRunTime: false });
+    words.push(open, { kind: 'close', value: ')', text: ')', start: close, atRunTime: false });
     while (this.position < this.tokens.length && this.tokens[this.position].start <= close) this.position++;
     return true;
   }
