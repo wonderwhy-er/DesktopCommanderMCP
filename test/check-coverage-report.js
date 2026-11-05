@@ -87,7 +87,8 @@ export function countedFiles() {
 }
 
 // Real paths on both sides: started through a symlink or junction, the check still runs
-const isMain = process.argv[1] && fs.realpathSync.native(process.argv[1]) === fs.realpathSync.native(fileURLToPath(import.meta.url));
+const isMain = process.argv[1]
+  && fs.realpathSync.native(process.argv[1]) === fs.realpathSync.native(fileURLToPath(import.meta.url));
 if (isMain) {
   const summaryFile = path.resolve(process.argv[2] ?? path.join(ROOT, 'coverage', 'coverage-summary.json'));
   if (!fs.existsSync(summaryFile)) {

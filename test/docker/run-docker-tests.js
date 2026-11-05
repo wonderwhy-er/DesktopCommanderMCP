@@ -36,6 +36,11 @@ async function main() {
   const argv = process.argv.slice(2);
   const notRunAt = argv.indexOf('--not-run');
   const reason = notRunAt >= 0 ? argv.splice(notRunAt, 2)[1] : undefined;
+  // Without its reason, the run would go on to every Docker test, or record the next option as the reason
+  if (notRunAt >= 0 && (reason === undefined || reason.startsWith('--'))) {
+    console.error('--not-run needs a reason after it, such as "GitHub\'s macOS runner has no Docker"');
+    process.exit(1);
+  }
   const options = readRunnerArgs(argv, path.join(ROOT, 'test-results', 'docker'));
   if (reason !== undefined) return notRun(options.outDir, reason);
 

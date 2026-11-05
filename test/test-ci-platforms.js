@@ -486,7 +486,7 @@ export default async function run() {
   for (const input of ['pr: ${{ needs.platforms.outputs.pr }}', 'sha: ${{ needs.platforms.outputs.sha }}', 'base: ${{ needs.platforms.outputs.base }}']) {
     assert.ok(reviewJob.includes(input), `it passes ${input}`);
   }
-  assert.deepStrictEqual([...new Set(jobLines(workflow, 'review').join('\n').match(/secrets\.\w+/g))], ['secrets.CLAUDE_CODE_OAUTH_TOKEN'], 'only the company Claude API key goes to it');
+  assert.deepStrictEqual([...new Set(jobLines(workflow, 'review').join('\n').match(/secrets\.\w+/g))], ['secrets.CLAUDE_CODE_OAUTH_TOKEN'], 'only the Gemini key goes to it');
   // A called workflow's jobs get no more than the calling job grants, or GitHub won't start the run
   const pairs = (lines) => lines.map((line) => line.split(':').map((part) => part.trim()));
   const granted = Object.fromEntries(pairs(blockUnder(jobLines(workflow, 'review'), 'permissions')));
@@ -509,7 +509,9 @@ export default async function run() {
     'a comment\'s or an on-demand run checks out exactly the commit the platforms job read');
   assert.ok(unit.some((line) => line.trim() === "cache: ${{ github.event_name == 'pull_request' && 'npm' || '' }}"),
     'no npm cache on a comment\'s or an on-demand run');
-  assert.ok(!commentJob.some((line) => line.trim().startsWith('ref:')), 'the comment job checks out main\'s script, never the PR\'s');
+  assert.ok(!commentJob.some((line) => line.trim().startsWith('ref:')),
+    'the comment job uses the event checkout: default branch on issue_comment, '
+    + 'PR merge on pull_request, selected ref on dispatch');
 
   // An on-demand run's inputs, and how they reach the scripts: only through the environment,
   // never written into a shell command, where a quote in an input would become code

@@ -93,3 +93,18 @@ test('native failure envelope and provider reason survive separately from the ad
   assert.ok(!artifacts.includes(options.key));
  } finally {fs.rmSync(folder,{recursive:true,force:true});}
 });
+
+
+test('a CLI that closes stdin before reading a large prompt fails without an unhandled EPIPE', async () => {
+ const {folder,options}=setup();
+ try {
+  fs.writeFileSync(options.cli, `const args=process.argv.slice(2);
+if(args.includes('--version')) { console.log('2.1.293'); process.exit(0); }
+if(args[0]==='auth') { console.log(JSON.stringify({loggedIn:true,authMethod:'api_key',apiProvider:'firstParty'})); process.exit(0); }
+process.stdin.destroy(); process.exit(17);`);
+  await assert.rejects(askClaude({...options,timeoutMs:15000,prompt:'x'.repeat(1024 * 1024)}), /no valid result/);
+  const receipt=JSON.parse(fs.readFileSync(path.join(options.out,'adapter-error.json'),'utf8'));
+  assert.match(receipt.error,/no valid result/);
+  assert.ok(!JSON.stringify(receipt).includes(options.key));
+ } finally { fs.rmSync(folder,{recursive:true,force:true}); }
+});
