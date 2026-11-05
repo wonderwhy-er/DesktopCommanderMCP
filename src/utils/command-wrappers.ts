@@ -109,7 +109,7 @@ interface PosixWrapper {
   /**
    * For a shell, the options that decide what the words after the options are: 'text' when the first of them is
    * the command text (bash -c 'sudo ls'), 'arguments' when they are the command's $1, $2 and so on, not a script
-   * file (bash -s, fish -c)
+   * file (bash -s, fish -c), or 'program' when they name a program and its arguments (runuser -u nobody env sudo ls)
    */
   operandRoles?: Record<string, OperandRole>;
   /** Whether options can also come after the words that aren't options, as GNU getopt allows (su root -c 'sudo ls') */
@@ -138,8 +138,8 @@ interface PosixWrapper {
   slash?: boolean;
 }
 
-/** What the words after a shell's options are, by its options: see PosixWrapper's operandRoles */
-type OperandRole = 'text' | 'arguments';
+/** What the words after the options are, by their roles: see PosixWrapper's operandRoles */
+type OperandRole = 'text' | 'arguments' | 'program';
 
 /** tmux's commands that start the program after their options (tmux new-session -d sudo ls), by name and alias */
 const TMUX_NEW_SESSION: PosixWrapper = { letters: 'cefFnstxy', flags: 'AdDEPX' };
@@ -451,7 +451,7 @@ const FISH_OPTIONS: PosixWrapper = {
  * are from OpenBSD's tmux(1).
  * - su, runuser and script run the text of -c (--command) in the user's
  *   shell, and -c can come after the user or the file too; runuser -u runs
- *   the program after the user itself, which is read the same way;
+ *   the program after the user directly, without reading it as a shell text;
  * - sg runs its command with sh -c, given with -c or not, after its group;
  * - flock runs -c's text with sh -c, or the program after the lock file;
  * - watch runs its words with sh -c;
@@ -473,7 +473,7 @@ const TEXT_PROGRAMS = new Map<string, { rules: PosixWrapper; shell: string }>([
     letters: 'gGswu', flags: 'flmpP', long: ['group', 'supp-group', 'shell', 'whitelist-environment', 'user'],
     longFlags: ['fast', 'login', 'preserve-environment', 'pty', 'help', 'version'],
     texts: { letters: 'c', long: ['command', 'session-command'] }, optionsAfterTexts: true, permute: true,
-    operandRoles: { u: 'text', user: 'text' },
+    operandRoles: { u: 'program', user: 'program' },
   } }],
   ['sg', { shell: 'sh', rules: { texts: { letters: 'c', long: [] }, optionsAfterTexts: true, permute: true, textOperands: 1 } }],
   ['script', { shell: 'sh', rules: {
@@ -546,12 +546,21 @@ function startedPrograms(command: FoundCommand, shell: string): Started[] {
   const name = programName(command.name);
   const { words, written, wordTexts } = command;
   const from = (at: number): Started => ({ words: words.slice(at), written: written.slice(at), wordTexts: wordTexts.slice(at) });
+  // runuser -u starts the program and its arguments directly, without a shell's text parsing.
+  if (name === 'runuser') {
+    const readings = readOptions(words, TEXT_PROGRAMS.get(name)!.rules);
+    return readings.programs.flatMap(({ at }) => at === undefined ? [] : [from(at)]);
+  }
   const posix = PROGRAMS.get(name)
     ?? (shellType === 'posix' ? POSIX_SHELL_COMMANDS.get(name) : undefined)
     ?? (programName(shell) === 'fish' ? FISH_COMMANDS.get(name) : undefined);
   if (posix) return posixPrograms(command, posix);
   // Its own arguments are in -ArgumentList, a text the check doesn't read, so a program Start-Process starts has only its name
-  if (shellType === 'powershell' && name === 'start-process') return (command.filePaths ?? []).map(({ word, written }) => ({ words: [word], written: [written], wordTexts: [word ?? written] }));
+  if (shellType === 'powershell' && name === 'start-process') {
+    return (command.filePaths ?? []).map(({ word, written }) => ({
+      words: [word], written: [written], wordTexts: [word ?? written],
+    }));
+  }
   if (shellType === 'cmd' && name === 'start') return cmdStartProgramsAt(command).map(from);
   return [];
 }
@@ -740,6 +749,10 @@ function readOptions(words: (string | null)[], rules: PosixWrapper): OptionReadi
       if (i < words.length) readings.texts.push({ text: words[i], at: i, after: i + 1 });
       return false;
     }
+    if (role === 'program') {
+      if (i < words.length) readings.programs.push({ program: words[i], at: i });
+      return false;
+    }
     if (role === 'arguments') return false;
     if (count === rules.textOperands) {
       // The text goes on to the end, or to a word that ends it (parallel's :::)
@@ -787,6 +800,7 @@ function readOptions(words: (string | null)[], rules: PosixWrapper): OptionReadi
         if (rules.optionsAfterTexts) readFrom(i + 2, role, count);
       }
       if (Object.values(rules.operandRoles ?? {}).includes('text')) readFrom(i + 1, 'text', count);
+      if (Object.values(rules.operandRoles ?? {}).includes('program')) readFrom(i + 1, 'program', count);
       return;
     }
     if (!isOption(word)) {

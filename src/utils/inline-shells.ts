@@ -89,7 +89,7 @@ function isPowerShellParameter(word: string | null): boolean {
  * counts. bash's --rcfile or --init-file names a file it runs too.
  */
 function posixShellRuns(found: FoundCommand, program: string): ShellRun {
-  const run = readingsRun(shellOptionReadings(program, found.words), found, true);
+  const run = readingsRun(shellOptionReadings(program, found.words), found, { script: true });
   if (program !== 'bash') return run;
   // bash takes its long options first, before the single-letter ones, and an interactive bash runs the file
   // --rcfile or --init-file names before its command (bash --rcfile ./startup.sh -ic 'echo ready'): that file's
@@ -111,7 +111,7 @@ function posixShellRuns(found: FoundCommand, program: string): ShellRun {
  */
 function textProgramRuns(found: FoundCommand, program: string): ShellRun {
   const text = textProgramReadings(program, found.words);
-  return text ? { ...readingsRun(text.readings, found, false), shell: text.shell } : { texts: [] };
+  return text ? { ...readingsRun(text.readings, found, { script: false }), shell: text.shell } : { texts: [] };
 }
 
 /**
@@ -123,9 +123,12 @@ function textProgramRuns(found: FoundCommand, program: string): ShellRun {
  * texts that aren't among its words at all (parallel :::: jobs.txt): the
  * command is noted then (file null).
  */
-function readingsRun({ operands, texts, hidden }: OptionReadings, { words, wordTexts }: FoundCommand, script: boolean): ShellRun {
-  const textOf = ({ text, at, to }: OptionReadings['texts'][number]): string =>
-    (at === undefined ? text ?? '' : to !== undefined ? wordTexts.slice(at, to).join(' ') : wordTexts[at]);
+function readingsRun({ operands, texts, hidden }: OptionReadings, { words, wordTexts }: FoundCommand, { script }: { script: boolean }): ShellRun {
+  const textOf = ({ text, at, to }: OptionReadings['texts'][number]): string => {
+    if (at === undefined) return text ?? '';
+    if (to !== undefined) return wordTexts.slice(at, to).join(' ');
+    return wordTexts[at];
+  };
   const after = [...new Set(operands.filter((at) => at < words.length).map((at) => words[at]))];
   const atRunTime = hidden || texts.some(({ text, at }) => at !== undefined && text === null) || after.includes(null)
     || (script && after.length > 1);
@@ -271,7 +274,7 @@ export function sameShellTexts(found: FoundCommand, shellType: ShellType): Shell
   const program = programName(name);
   const sameShell = sameShellProgramReadings(program, words);
   if (sameShell) {
-    const run = readingsRun(sameShell, found, false);
+    const run = readingsRun(sameShell, found, { script: false });
     return run.texts.includes('!!') ? { texts: [], file: null } : run;
   }
   if (shellType === 'posix' && program === 'eval') {
@@ -287,7 +290,7 @@ export function sameShellTexts(found: FoundCommand, shellType: ShellType): Shell
     // -Command:'net user' (-c: 'net user'): the command without the parameter's name runs the same, and is shorter
     const withColon = words.flatMap((word) => {
       const colon = word === null ? null : /^[-\u2013\u2014\u2015]([a-z]+):(.*)$/is.exec(word);
-      return colon && 'command'.startsWith(colon[1].toLowerCase()) ? [`${wordTexts[0]} ${colon[2]}`] : [];
+      return colon && colon[2] !== '' && 'command'.startsWith(colon[1].toLowerCase()) ? [`${wordTexts[0]} ${colon[2]}`] : [];
     });
     return {
       texts: [...at.map((i) => wordTexts[i]), ...withColon],
