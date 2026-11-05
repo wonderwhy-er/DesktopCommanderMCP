@@ -10,10 +10,12 @@ import assert from 'assert';
 import fs from 'fs';
 import path from 'path';
 import { runInstallScript } from './helpers/install-script.js';
+import { assertTelemetryRequests } from './helpers/install-telemetry-assertions.js';
 import { runIfMain, skip } from './helpers/run-if-main.js';
 
 const CALLS = 'test/fixtures/track-installation-calls.js';
 const PROXY = 'https://telemetry.desktopcommander.app/mp/collect';
+const FALLBACK = 'https://dc-telemetry-proxy-83847352264.europe-west1.run.app/mp/collect';
 // What it reads, left out so each run sets only what it tests
 const CLEAN = Object.fromEntries([
   'npm_config_user_agent', 'npm_execpath', 'npm_command', 'npm_lifecycle_event', 'npm_version',
@@ -33,6 +35,7 @@ const ownConfig = (config) => (home) => {
   fs.writeFileSync(path.join(home, '.claude-server-commander', 'config.json'), text);
 };
 
+/** Checks installation-source priority using controlled environment, parent-command and Docker-marker inputs. */
 async function sources() {
   // /.dockerenv as told (the fs stand-in), so the machine this runs on doesn't decide
   const outside = { dockerenv: false };
@@ -72,8 +75,10 @@ async function sources() {
   console.log('✓ where it was installed from: npm\'s variables, the environment, the parent process');
 }
 
+/** Checks client identity, consent defaults and exact telemetry transport/fallback behavior without network access. */
 async function posts() {
   const run = await track({ prepare: ownConfig({ clientId: 'mine' }) });
+  assertTelemetryRequests(run.posts);
   assert.deepStrictEqual(run.posts.map((post) => post.post), [PROXY], 'one post, to the proxy');
   const body = JSON.parse(run.posts[0].body);
   assert.strictEqual(body.client_id, 'mine', 'Desktop Commander\'s client id');
@@ -86,11 +91,13 @@ async function posts() {
     const refused = await track({ telemetry: { byEvent: { package_installed: [answer, 'ok'] } } });
     assert.strictEqual(refused.code, 0, `${answer}: the install goes on`);
     assert.strictEqual(refused.posts.length, 2, `${answer}: the proxy, then the fallback`);
-    assert.notStrictEqual(refused.posts[1].post, PROXY);
+    assertTelemetryRequests(refused.posts);
+    assert.strictEqual(refused.posts[1].post, FALLBACK, `${answer}: the configured fallback`);
   }
   console.log('✓ one post with Desktop Commander\'s client id, or a new one; the fallback when the proxy refuses');
 }
 
+/** Checks both Docker branches use unknown for absent or empty hostnames while keeping Docker as the source. */
 async function dockerWithoutHostname() {
   const cases = [
     { env: { DOCKER_CONTAINER: '1', HOSTNAME: null }, fs: { dockerenv: false } },
@@ -111,6 +118,7 @@ async function dockerWithoutHostname() {
   console.log('✓ Docker: an absent or empty hostname uses the unknown container id');
 }
 
+/** Checks debug controls expose diagnostic output only when explicitly enabled. */
 async function debugOutput() {
   const debugging = [{ DEBUG: 'desktop-commander' }, { DEBUG: '*' }, { NODE_ENV: 'development' }, { DC_DEBUG: 'true' }];
   for (const env of debugging) {
@@ -120,10 +128,11 @@ async function debugOutput() {
     assert.ok(says('Could not get parent process info') && says('Error reading config file'), run.stdout);
   }
   const quiet = await track();
-  assert.ok(!quiet.stdout.includes('[Desktop Commander]'), 'quiet without DEBUG');
+  assert.ok(!quiet.stdout.includes('[Desktop Commander'), 'quiet without DEBUG');
   console.log('✓ DEBUG, NODE_ENV=development or DC_DEBUG: it says what it found; otherwise quiet');
 }
 
+/** Checks the directly launched entry point where supported and records the known Windows entry-point skip. */
 async function postinstall() {
   // npm runs `node dist/track-installation.js`: started directly, it tracks once. On Windows it doesn't yet: it
   // compares its file: URL with `file://` and the path, which never match there (file:///C:/… against file://C:\…)

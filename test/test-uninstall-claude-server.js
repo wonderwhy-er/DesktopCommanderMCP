@@ -10,7 +10,7 @@
 import assert from 'assert';
 import fs from 'fs';
 import path from 'path';
-import { CLAUDE_CONFIG, runInstallScript } from './helpers/install-script.js';
+import { CLAUDE_CONFIG, isRoot, runInstallScript } from './helpers/install-script.js';
 import { runIfMain, skip } from './helpers/run-if-main.js';
 
 const SCRIPT = 'uninstall-claude-server.js';
@@ -35,6 +35,7 @@ const homeWith = ({ claude, own, platform = 'linux' }) => (home) => {
   if (own !== undefined) put(home, OWN_CONFIG, JSON.stringify(own));
 };
 
+/** Checks removal preserves the other servers and a backup at each supported config location. */
 async function eachPlatform() {
   for (const platform of Object.keys(CLAUDE_CONFIG)) {
     const run = await uninstall({ platform, prepare: homeWith({ claude: { mcpServers: SERVERS }, platform }) });
@@ -49,6 +50,7 @@ async function eachPlatform() {
   console.log('✓ each platform: Desktop Commander removed from Claude\'s config, the rest kept, a backup made');
 }
 
+/** Checks each already-absent configuration remains a successful, observable no-op. */
 async function nothingToRemove() {
   const cases = [
     [undefined, 'uninstall_config_not_found'],
@@ -65,6 +67,7 @@ async function nothingToRemove() {
   console.log('✓ nothing to remove (no config, no servers, not among them): said, and done');
 }
 
+/** Checks invalid and failed config writes preserve recovery behavior, including an injected transient lock. */
 async function failures() {
   const telemetry = { telemetryEnabled: true };
   const unreadable = await uninstall({ prepare: homeWith({ claude: '{ not json', own: telemetry }) });
@@ -77,11 +80,15 @@ async function failures() {
     homeWith({ claude: { mcpServers: SERVERS }, own: telemetry })(home);
     fs.chmodSync(path.join(home, CLAUDE_CONFIG.linux), 0o444);
   };
-  const unwritable = await uninstall({ prepare: readOnly });
-  assert.strictEqual(unwritable.code, 1, 'a config it can\'t write: exit 1');
-  const failed = ['uninstall_config_write_error', 'uninstall_backup_restore_failed', 'uninstall_config_error'];
-  assert.ok(sent(unwritable, ...failed), events(unwritable).join(', '));
-  assert.ok(said(unwritable, 'backup restoration failed'), unwritable.stdout);
+  if (isRoot()) {
+    skip('Root bypasses chmod write denial: read-only uninstall config update not checked');
+  } else {
+    const unwritable = await uninstall({ prepare: readOnly });
+    assert.strictEqual(unwritable.code, 1, 'a config it can\'t write: exit 1');
+    const failed = ['uninstall_config_write_error', 'uninstall_backup_restore_failed', 'uninstall_config_error'];
+    assert.ok(sent(unwritable, ...failed), events(unwritable).join(', '));
+    assert.ok(said(unwritable, 'backup restoration failed'), unwritable.stdout);
+  }
   // The write fails once, as a briefly locked file does: the backup goes back, and it still exits 1
   const locked = await uninstall({
     prepare: homeWith({ claude: { mcpServers: SERVERS }, own: telemetry }),
@@ -94,9 +101,11 @@ async function failures() {
   console.log('✓ a config it can\'t read or write: the backup put back when it can, exit 1');
 }
 
+/** Checks update behavior when a backup cannot be created, where the OS can enforce read-only permissions. */
 async function noBackup() {
   // A folder it can't write in: no backup, and on it goes (Windows can't make a folder read-only)
   if (process.platform === 'win32') return skip('Windows can\'t make a folder read-only: no failed backup checked');
+  if (isRoot()) return skip('Root bypasses chmod write denial: read-only backup folder not checked');
   const lockFolder = (home) => fs.chmodSync(path.dirname(path.join(home, CLAUDE_CONFIG.linux)), 0o555);
   const prepare = (home) => {
     homeWith({ claude: { mcpServers: SERVERS }, own: { telemetryEnabled: true } })(home);
@@ -117,6 +126,7 @@ async function noBackup() {
   return undefined;
 }
 
+/** Checks client identity and telemetry consent independently of Claude's server configuration. */
 async function ownConfig() {
   // Its own config without a client id, or unreadable: telemetry stays as the config says, off when unreadable
   const noId = await uninstall({
@@ -124,6 +134,11 @@ async function ownConfig() {
   });
   const clientId = JSON.parse(noId.posts[0].body).client_id;
   assert.match(clientId, /^[0-9a-f-]{36}$/, 'a new client id when its config has none');
+  const disabled = await uninstall({
+    prepare: homeWith({ claude: { mcpServers: SERVERS }, own: { telemetryEnabled: false, clientId: 'mine' } }),
+  });
+  assert.strictEqual(disabled.code, 0, disabled.stderr);
+  assert.deepStrictEqual(disabled.posts, [], 'an explicit telemetry opt-out sends no requests');
   const unreadable = await uninstall({
     prepare: (home) => {
       homeWith({ claude: { mcpServers: SERVERS } })(home);

@@ -9,9 +9,9 @@
 import assert from 'assert';
 import fs from 'fs';
 import path from 'path';
-import { CLAUDE_CONFIG, runInstallScript } from './helpers/install-script.js';
+import { CLAUDE_CONFIG, isRoot, runInstallScript } from './helpers/install-script.js';
 import { ROOT } from './helpers/node-test-runner.js';
-import { runIfMain } from './helpers/run-if-main.js';
+import { runIfMain, skip } from './helpers/run-if-main.js';
 
 const SCRIPT = 'setup-claude-server.js';
 const ANSWERED = {
@@ -41,6 +41,7 @@ const put = (home, file, text) => {
   fs.writeFileSync(path.join(home, file), text);
 };
 
+/** Checks platform config locations and restart commands without touching the user's home or Claude process. */
 async function eachPlatform() {
   const shells = { linux: '/bin/sh', darwin: '/bin/sh', win32: 'cmd.exe', freebsd: '/bin/sh' };
   const commands = {
@@ -68,6 +69,7 @@ async function eachPlatform() {
   console.log('✓ each platform: its config file, a new config, Claude stopped and started');
 }
 
+/** Checks that replacing Desktop Commander's entry preserves another server and the existing client identity. */
 async function existingConfigs() {
   const servers = { desktopCommander: { command: 'old' }, other: { command: 'x' } };
   const prepare = (home) => {
@@ -78,6 +80,7 @@ async function existingConfigs() {
   assert.strictEqual(run.code, 0, run.stderr);
   const names = Object.keys(claudeConfig(run, 'linux').mcpServers).sort();
   assert.deepStrictEqual(names, ['desktop-commander', 'other'], 'the old name gone, others kept');
+  assert.deepStrictEqual(claudeConfig(run, 'linux').mcpServers.other, servers.other, 'the other server value kept');
   assert.ok(sent(run, 'npx_setup_remove_old_config', 'npx_setup_config_file_read'));
   assert.deepStrictEqual(ownConfig(run), { clientId: 'kept' }, 'its own config kept');
   const withVersion = await setup({ platform: 'linux', env: { npm_package_version: '9.9.9' } });
@@ -85,6 +88,7 @@ async function existingConfigs() {
   console.log('✓ an existing config: the old entry replaced, the rest kept');
 }
 
+/** Checks package/version selection and debugger arguments for the different installation entry points. */
 async function npxAndDebug() {
   const npx = { npm_lifecycle_event: 'npx' };
   const spec = '@wonderwhy-er/desktop-commander';
@@ -111,6 +115,7 @@ async function npxAndDebug() {
   console.log('✓ npx with a tag, npx\'s own spec or latest, and the debugger, from npx or the checkout');
 }
 
+/** Checks recoverable restart failures leave a successful installation and tell the user to restart Claude. */
 async function restartFails() {
   const answering = (command, answer) => setup({ platform: 'linux', commands: { ...ANSWERED, [command]: answer } });
   const notRunning = await answering('pkill', { error: 'no process' });
@@ -123,6 +128,7 @@ async function restartFails() {
   console.log('✓ Claude not running, or not starting again: setup still succeeds and says so');
 }
 
+/** Checks invalid config/path failures and reports permission-dependent cases only where chmod can deny writes. */
 async function configErrors() {
   const failed = async (prepare, event) => {
     const run = await setup({ platform: 'linux', prepare });
@@ -138,9 +144,13 @@ async function configErrors() {
     put(home, CLAUDE_CONFIG.linux, '{}');
     fs.chmodSync(path.join(home, CLAUDE_CONFIG.linux), 0o444);
   };
-  const updated = await failed(readOnly, 'npx_setup_update_config_error');
   const finalError = (run) => JSON.parse(run.posts.find((post) => post.event === 'npx_setup_final_error').body);
-  assert.notStrictEqual(finalError(updated).events[0].params.last_successful_step, 'none', 'its last step done, named');
+  if (isRoot()) {
+    skip('Root bypasses chmod write denial: read-only setup config update not checked');
+  } else {
+    const updated = await failed(readOnly, 'npx_setup_update_config_error');
+    assert.notStrictEqual(finalError(updated).events[0].params.last_successful_step, 'none', 'its last step done, named');
+  }
   // Nothing done yet when it fails (no npm, no telemetry, no config folder): the report says none
   const nothing = await setup({
     platform: 'linux',

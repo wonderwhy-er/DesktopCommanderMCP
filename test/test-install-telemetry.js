@@ -12,6 +12,7 @@ import assert from 'assert';
 import fs from 'fs';
 import path from 'path';
 import { runInstallScript } from './helpers/install-script.js';
+import { assertTelemetryRequests } from './helpers/install-telemetry-assertions.js';
 import { ROOT } from './helpers/node-test-runner.js';
 import { runIfMain, skip } from './helpers/run-if-main.js';
 
@@ -23,6 +24,7 @@ const CLEAN = Object.fromEntries([
   'npm_lifecycle_event', 'npm_execpath', '_', 'npm_config_global', 'npm_lifecycle_script', 'npm_package_version',
 ].map((name) => [name, null]));
 const PROXY = 'https://telemetry.desktopcommander.app/mp/collect';
+const FALLBACK = 'https://dc-telemetry-proxy-83847352264.europe-west1.run.app/mp/collect';
 // Uninstall sends telemetry only when Desktop Commander's config says so
 const telemetryOn = (home) => {
   const folder = path.join(home, '.claude-server-commander');
@@ -39,6 +41,7 @@ const runner = (script) => (options = {}) => runInstallScript(script.file, {
 });
 const params = (run) => JSON.parse(run.posts[0].body).events[0].params;
 
+/** Checks shell metadata comes from the supplied platform/environment rather than the developer's terminal. */
 async function shells(run) {
   const windows = [
     [{ TERM_PROGRAM: 'vscode' }, 'vscode-terminal'], [{ WT_SESSION: '1' }, 'windows-terminal'],
@@ -58,6 +61,7 @@ async function shells(run) {
   assert.strictEqual(params(await run()).shell, 'unknown-shell');
 }
 
+/** Checks install origin, CI and version metadata plus the actual HTTP method and payload headers. */
 async function howStarted(run, script) {
   const contexts = [
     [{ npm_lifecycle_event: 'npx' }, 'npx'], [{ npm_config_global: 'true' }, 'global'],
@@ -67,7 +71,9 @@ async function howStarted(run, script) {
   for (const CI of ['CI', 'GITHUB_ACTIONS', 'TRAVIS', 'CIRCLECI']) {
     assert.strictEqual(params(await run({ env: { [CI]: '1' } })).is_ci, true, CI);
   }
-  const first = params(await run());
+  const firstRun = await run();
+  assertTelemetryRequests(firstRun.posts);
+  const first = params(firstRun);
   const { is_ci: ci, npm_version: npm, platform } = first;
   assert.ok(ci === false && npm === '10.9.0' && platform === 'linux', JSON.stringify(first));
   assert.strictEqual(params(await run({ env: { npm_package_version: '9.9.9' } })).app_version, '9.9.9', 'npm\'s');
@@ -90,11 +96,14 @@ async function howStarted(run, script) {
   assert.ok(broken.error && !('npm_version' in broken), 'properties that can\'t be read: the error instead');
 }
 
+/** Checks proxy/fallback retries and progress after hanging requests; this is not a wall-clock deadline test. */
 async function failedPosts(run, script) {
   const first = await run({ telemetry: { byEvent: { [script.first]: ['error', 'ok'] } } });
   const tries = first.posts.filter((post) => post.event === script.first);
+  assertTelemetryRequests(first.posts);
   assert.strictEqual(tries[0].post, PROXY, 'the proxy first');
-  assert.ok(tries.length === 2 && tries[1].post !== PROXY, 'then the fallback');
+  assert.strictEqual(tries.length, 2, 'the proxy and one fallback');
+  assert.strictEqual(tries[1].post, FALLBACK, 'then the configured fallback');
   for (const answer of ['status', 'hang', 'response-error', 'close']) {
     const refused = await run({ telemetry: { byEvent: { [script.first]: answer } } });
     assert.strictEqual(refused.code, 0, `${answer}: the script still succeeds\n${refused.stderr}`);
@@ -109,6 +118,7 @@ async function failedPosts(run, script) {
   assert.ok(held.posts.some((post) => post.event === script.first || post.event.endsWith('_complete')), 'and goes on');
 }
 
+/** Checks otherwise-unhandled command errors are reported before the installer exits with failure. */
 async function uncaught(run, script) {
   const cases = [[{ uncaught: 'boom' }, 'uncaught_exception'], [{ unhandled: 'boom' }, 'unhandled_rejection']];
   for (const [answer, kind] of cases) {
@@ -119,6 +129,7 @@ async function uncaught(run, script) {
   }
 }
 
+/** Checks a failed checkout-local log write is reported without stopping the remaining installer flow. */
 async function blockedLog(run) {
   // setup.log can't be written (a folder in its place): said on stderr, and the script goes on
   const log = path.join(ROOT, 'setup.log');

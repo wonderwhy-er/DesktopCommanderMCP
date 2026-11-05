@@ -7,7 +7,8 @@
  * each command and answer as told. It runs in a fresh temporary home, can take
  * another process.platform, and runs its timers 100 times faster (a restart
  * waits 3 s, a telemetry retry 1-2 s). The setup.log a run starts next to the
- * script is removed after it.
+ * script is removed after it. Run install tests serially within one checkout:
+ * setup and uninstall share that checkout's setup.log; parallel workers use separate checkouts.
  */
 import { spawn } from 'child_process';
 import fs from 'fs';
@@ -25,6 +26,11 @@ export const CLAUDE_CONFIG = {
   freebsd: '.claude_desktop_config.json',
 };
 
+/** UID 0 bypasses chmod write denial, so read-only permission fixtures cannot assert a failure there. */
+export function isRoot() {
+  return process.getuid?.() === 0;
+}
+
 // Before the script: another platform when asked, and timers scaled down
 const PRELOAD = [
   'const { platform, timeScale } = JSON.parse(process.env.DC_STAND_INS);',
@@ -35,7 +41,7 @@ const PRELOAD = [
 
 /**
  * Runs `script` (its path from the root) with `args`, and resolves with { code,
- * stdout, stderr, posts: [{ post, event, answer, body }], commands: [command],
+ * stdout, stderr, posts: [{ post, method, headers, event, answer, body }], commands: [command],
  * home: { file: text } }. telemetry, commands and fs are the stand-ins' answers
  * (install-stand-ins.js; fs only when given); `env` adds to the test
  * environment; `prepare(home)` runs before the script
@@ -63,13 +69,17 @@ export async function runInstallScript(script, {
     const isGiven = (name) => Object.keys(given).some((each) => sameName(each, name));
     const inherited = Object.entries(testEnv.env).filter(([name]) => !isGiven(name));
     const childEnv = Object.fromEntries([...inherited, ...Object.entries(given)].filter(([, value]) => value != null));
-    const exited = await new Promise((resolve) => {
+    const exited = await new Promise((resolve, reject) => {
       const child = spawn(process.execPath, argv, { cwd: ROOT, env: childEnv });
       let stdout = '';
       let stderr = '';
       child.stdout.on('data', (chunk) => { stdout += chunk; });
       child.stderr.on('data', (chunk) => { stderr += chunk; });
       const timer = setTimeout(() => child.kill(), timeoutMs);
+      child.on('error', (error) => {
+        clearTimeout(timer);
+        reject(error);
+      });
       child.on('close', (code) => {
         clearTimeout(timer);
         resolve({ code, stdout, stderr });
@@ -88,7 +98,7 @@ export async function runInstallScript(script, {
   }
 }
 
-/** Makes a folder and everything in it writable by its owner */
+/** Restores owner permissions so cleanup can remove the read-only files made by permission fixtures. */
 function writable(dir) {
   fs.chmodSync(dir, 0o755);
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
