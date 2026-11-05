@@ -359,6 +359,11 @@ class CommandManager {
         if (shellType === 'powershell' && /\.ps1$/i.test(cmd.name)) {
             return [hidden(cmd.name)];
         }
+        // PowerShell text and file modes use the same host-option readings.
+        if (getShellType(cmd.name) === 'powershell') {
+            const file = shellRuns(cmd).file;
+            return file === undefined ? [] : [hidden(file)];
+        }
         return shellScriptFiles(program, args).map(hidden);
     }
 
