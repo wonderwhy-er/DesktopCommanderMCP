@@ -63,22 +63,25 @@ async function theNameIsLowercased() {
   ]));
 }
 
-/** POSIX shells keep quoted backslashes in a program's name; they are not folder separators. */
+/** POSIX shells outside Windows keep quoted backslashes; Git Bash still accepts Windows paths. */
 async function posixBackslashesStayInTheName() {
   const literal = String.raw`bin\sudo`;
-  assert.strictEqual(programName(literal, 'posix'), literal);
+  assert.strictEqual(programName(literal, 'posix'), isWindows ? 'sudo' : literal);
   assert.strictEqual(programName('/usr/bin/sudo', 'posix'), 'sudo');
   assert.strictEqual(programName(literal, 'cmd'), 'sudo');
   assert.strictEqual(programName(literal, 'powershell'), 'sudo');
   if (!isTestHome()) return skip('blocked entry checks need the runner test home');
   await configManager.setValue('blockedCommands', ['sudo']);
-  for (const command of [String.raw`bin\sudo ls`, String.raw`'bin\sudo' ls`, String.raw`"bin\sudo" ls`, String.raw`bin\\sudo ls`]) {
-    assert.strictEqual((await commandManager.checkCommand(command, 'bash')).verdict, 'allowed', command);
+  assert.strictEqual((await commandManager.checkCommand(String.raw`bin\sudo ls`, 'bash')).verdict, 'allowed');
+  for (const command of [String.raw`'bin\sudo' ls`, String.raw`"bin\sudo" ls`, String.raw`bin\\sudo ls`]) {
+    assert.strictEqual((await commandManager.checkCommand(command, 'bash')).verdict,
+      isWindows ? 'blocked' : 'allowed', command);
   }
   assert.strictEqual((await commandManager.checkCommand('/usr/bin/sudo ls', 'bash')).verdict, 'blocked');
   await configManager.setValue('blockedCommands', [literal]);
   assert.strictEqual((await commandManager.checkCommand(String.raw`'bin\sudo' ls`, 'bash')).verdict, 'blocked');
-  assert.strictEqual((await commandManager.checkCommand('sudo ls', 'bash')).verdict, 'allowed');
+  assert.strictEqual((await commandManager.checkCommand('sudo ls', 'bash')).verdict,
+    isWindows ? 'blocked' : 'allowed');
 }
 
 async function anExtensionIsDropped() {

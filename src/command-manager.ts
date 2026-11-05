@@ -326,8 +326,8 @@ class CommandManager {
             for (const found of running) {
                 // A name known only at run time ($tool) names no program the list could match
                 if (found.nameAtRunTime) continue;
-                const program = programName(found.name);
-                const entry = entries.find((entry) => programName(entry) === program);
+                const program = programName(found.name, shellType);
+                const entry = entries.find((candidate) => programName(candidate, shellType) === program);
                 if (entry !== undefined) return { verdict: 'blocked', name: entry };
             }
             return { verdict: 'allowed' };
