@@ -98,6 +98,50 @@ export default async function run() {
       `the comment from the artifacts, \`everything\` for an empty TESTS, no minutes without the run's jobs:\n${local.stdout}`);
     console.log('✓ without a PR or a token: the comment in the summary only');
 
+    // A selected unit run may upload a repro report left by a suite self-test.
+    const selectedRun = createTempDir('dc-ci-comment-selected-');
+    try {
+      const selectedDir = path.join(selectedRun, '41896566379');
+      artifacts(selectedDir);
+      const rawReports = [];
+      const writeResult = (folder, part, files) => {
+        const file = path.join(folder, part, 'results.json');
+        fs.mkdirSync(path.dirname(file), { recursive: true });
+        const contents = JSON.stringify({ suite: part, files, excluded: [] });
+        fs.writeFileSync(file, contents);
+        rawReports.push([file, contents]);
+      };
+      const passing = (count, skips = 0) => Array.from({ length: count }, (_, i) => ({
+        path: `test/test-${i}.js`, success: true, skipped: i < skips ? ['conditional check'] : [],
+      }));
+      for (const [os, skips] of [['ubuntu-latest', 10], ['windows-latest', 8], ['macos-latest', 8]]) {
+        writeResult(path.join(selectedDir, `results-${os}`), 'suite', passing(204, skips));
+        writeResult(path.join(selectedDir, `results-${os}`), 'repro', [{
+          path: 'test/repro/test-env-threadpool-timing.js', success: true, skipped: [],
+        }]);
+        writeResult(path.join(selectedRun, '41874725895', `results-${os}`), 'suite', passing(226));
+      }
+      const coverageFile = path.join(selectedDir, 'coverage-ubuntu-latest', 'coverage-summary.json');
+      const coverageBefore = fs.readFileSync(coverageFile, 'utf8');
+      const selected = await comment(selectedDir, { PR: '', GH_TOKEN: '', TESTS: 'test', RUN_ID: '41896566379' });
+      assert.strictEqual(selected.code, 0, selected.stderr);
+      const selectedData = dataOf(selected.stdout);
+      for (const [os, skips] of [['linux', 10], ['windows', 8], ['macos', 8]]) {
+        assert.strictEqual(selectedData[os].tests.files, 204, `${os}: only the selected suite is counted`);
+        assert.strictEqual(selectedData[os].tests.passed, 204);
+        assert.strictEqual(selectedData[os].tests.skipped, skips);
+        assert.strictEqual(selectedData[os].ran, 'test');
+        assert.ok(selectedData[os].links.run.endsWith('/41896566379'), 'the selected run identity stays current');
+      }
+      assert.ok(!selected.stdout.includes('205 of 205') && !selected.stdout.includes('226 of 226'));
+      assert.deepStrictEqual(selectedData.linux.coverage.lines, [30, 40], 'coverage provenance is unchanged');
+      assert.strictEqual(fs.readFileSync(coverageFile, 'utf8'), coverageBefore);
+      for (const [file, contents] of rawReports) assert.strictEqual(fs.readFileSync(file, 'utf8'), contents);
+    } finally {
+      fs.rmSync(selectedRun, { recursive: true, force: true });
+    }
+    console.log('✓ unit-only results: 204 selected, supplementary repro retained, other-run 226 excluded');
+
     // tests=timed: one job per timed test, each with its own results artifact; the platform's row counts them all
     const timedDir = createTempDir('dc-ci-comment-timed-');
     try {
