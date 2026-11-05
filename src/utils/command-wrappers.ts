@@ -446,7 +446,7 @@ const FISH_OPTIONS: PosixWrapper = {
  * The programs that run one command text in a shell, as bash -c does, with
  * the shell that reads it: shellRuns() gives their texts to the check. Their
  * options are from their --help on Debian 12 (util-linux's su, runuser,
- * script and flock, procps' watch, sg from login) and on this PC (runas);
+ * script and flock, procps' watch, sg from login) and from Windows' runas /? help;
  * wsl's, tmux's and parallel's are their rows in PROGRAMS, and display-popup's
  * are from OpenBSD's tmux(1).
  * - su, runuser and script run the text of -c (--command) in the user's

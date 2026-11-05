@@ -283,7 +283,14 @@ class CommandManager {
         return {
             ...read,
             commands: (names.length > 0 ? names : [this.getBaseCommand(command)])
-                .map((name, start) => ({ name, words: [name], written: [name], wordTexts: [name], start, nameAtRunTime: false })),
+                .map((name, start) => ({
+                    name,
+                    words: [name],
+                    written: [name],
+                    wordTexts: [name],
+                    start,
+                    nameAtRunTime: false
+                })),
         };
     }
 
