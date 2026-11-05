@@ -134,7 +134,8 @@ const timedId = (test) => `timed-${test.replaceAll('/', '-')}`;
  * (<runner>), results-<runner>-timed-<test> for a timed run's unit (<runner>, <test>)
  */
 export function resultsArtifactOf(job, os) {
-  const test = job.name.startsWith(`unit (${os}, `) ? job.name.slice(`unit (${os}, `.length, -1) : undefined;
+  const name = unitJobName(job.name);
+  const test = name.startsWith(`unit (${os}, `) ? name.slice(`unit (${os}, `.length, -1) : undefined;
   return { test, artifact: test ? `results-${os}-${timedId(test)}` : `results-${os}` };
 }
 
@@ -217,7 +218,12 @@ export function minutesOf(startedAt, completedAt) {
 }
 
 /** A run's test jobs for one platform: unit (<runner>), or a timed run's unit (<runner>, <test>) */
-export const platformJobs = (jobs, os) => jobs.filter((job) => job.name === `unit (${os})` || job.name.startsWith(`unit (${os}, `));
+// Reusable callers prefix display names; execution identity keeps the full original name.
+const unitJobName = (name) => String(name).split(' / ').at(-1);
+export const platformJobs = (jobs, os) => jobs.filter((job) => {
+  const name = unitJobName(job.name);
+  return name === `unit (${os})` || name.startsWith(`unit (${os}, `);
+});
 
 /**
  * A platform's minutes in a run: from its first test job's start to its last one's

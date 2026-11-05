@@ -19,7 +19,9 @@ export function artifactAttempt({receipt,jobs,artifacts,resultName,coverageName,
   if (!/^[1-9]\d*$/.test(receipt?.attempt??'') || !/^[1-9]\d*$/.test(expected.attempt??'')) throw Error('Invalid producer attempt');
   const candidates=platformJobs(jobs,os).filter(job=>resultsArtifactOf(job,os).artifact===resultName);
   if (!candidates.length || candidates.some(job=>String(job.run_id)!==expected.run || !Number.isSafeInteger(job.run_attempt) || job.run_attempt<1)) throw Error('Missing producer job metadata');
-  const latest=latestExecutionJobs(candidates)[0];
+  const latestProducers=latestExecutionJobs(candidates);
+  if (latestProducers.length!==1) throw Error('Ambiguous eligible producer jobs');
+  const latest=latestProducers[0];
   if (latest.run_attempt>Number(expected.attempt)) throw Error('A newer producer attempt exists');
   const executionKey=job=> {
     const start=Date.parse(job.started_at),end=Date.parse(job.completed_at);
