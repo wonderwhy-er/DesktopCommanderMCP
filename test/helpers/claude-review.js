@@ -4,9 +4,12 @@ import http from 'node:http';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { readTool, readTools } from './review-tools.js';
+import { CREDENTIAL } from './review-context.js';
 
 export const CLAUDE_MODEL = 'claude-haiku-5-5';
 export const CLAUDE_VERSION = '2.1.293';
+const PRIVATE_KEY_BLOCK = new RegExp('-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----'
+  + '[\\s\\S]*?(?:-----END (?:RSA |EC |OPENSSH )?PRIVATE KEY-----|$)', 'g');
 
 function childEnvironment(environment, key, home) {
   const names = ['PATH', 'Path', 'SystemRoot', 'WINDIR', 'PATHEXT', 'TMP', 'TEMP'];
@@ -63,17 +66,22 @@ export async function askClaude({ prompt, key, folder, out, calls = 8, maxTurns 
     .filter(([name, value]) => /KEY|TOKEN|SECRET|PASSWORD/i.test(name) && value?.length >= 8)
     .map(([, value]) => value)].filter(Boolean);
   const redact = (text) => [...new Set(secrets)]
-    .reduce((value, secret) => value.split(secret).join('<redacted>'), String(text));
+    .reduce((value, secret) => value.split(secret).join('<redacted>'), String(text))
+    .replace(PRIVATE_KEY_BLOCK, '<redacted>')
+    .replace(new RegExp(CREDENTIAL.source, 'g'), '<redacted>');
+  const json = (value, space) => JSON.stringify(value,
+    (_name, field) => typeof field === 'string' ? redact(field) : field, space);
   if (redact(prompt) !== prompt) throw new Error('Review input contains a credential: no request was sent.');
   const save = (name, value) => {
     if (!out) return;
     fs.mkdirSync(out, { recursive: true });
-    fs.writeFileSync(path.join(out, name), redact(JSON.stringify(value, null, 2)) + '\n');
+    fs.writeFileSync(path.join(out, name), json(value, 2) + '\n');
   };
   const home = fs.mkdtempSync(path.join(folder, 'claude-home-'));
   const started = Date.now();
   let used = 0;
   let successful = 0;
+  let sourceReads = 0;
   for (const name of ['answer.json', 'adapter-error.json', 'cli-stderr.txt', 'provider.json']) {
     if (out) fs.rmSync(path.join(out, name), { force: true });
   }
@@ -104,6 +112,8 @@ export async function askClaude({ prompt, key, folder, out, calls = 8, maxTurns 
             : await readTool({ ...readOptions, folder, name: params.name, args: params.arguments });
         const failed = /^(Read denied|Read failed|Tool denied|Tool budget)/.test(output);
         if (!failed) successful++;
+        if (!failed && params.name === 'read_file'
+          && path.posix.normalize(String(params.arguments?.path ?? '')).startsWith('pr/')) sourceReads++;
         methodResponse = { content: [{ type: 'text', text: redact(output) }], isError: failed };
         session.push({ name: params.name, arguments: params.arguments, result: methodResponse });
       } else {
@@ -155,7 +165,7 @@ export async function askClaude({ prompt, key, folder, out, calls = 8, maxTurns 
       throw new Error('Claude Code did not complete the review; inspect the redacted answer artifact.');
     if (redact(answer.result) !== answer.result)
       throw new Error('Claude Code answer contained a credential: review not done.');
-    if (successful === 0) throw new Error('Claude Code read no source: review not done.');
+    if (sourceReads === 0) throw new Error('Claude Code read no source: review not done.');
     const models = Object.entries(answer.modelUsage ?? {});
     if (models.length !== 1 || models[0][0] !== CLAUDE_MODEL)
       throw new Error('Claude Code effective model did not match the pinned Haiku model.');
@@ -175,7 +185,7 @@ export async function askClaude({ prompt, key, folder, out, calls = 8, maxTurns 
     if (out) {
       fs.mkdirSync(out, { recursive: true });
       fs.writeFileSync(path.join(out, 'session.jsonl'),
-        session.map((entry) => redact(JSON.stringify(entry))).join('\n') + '\n');
+        session.map((entry) => json(entry)).join('\n') + '\n');
     }
     server.closeAllConnections();
     await new Promise((resolve) => server.close(resolve));
