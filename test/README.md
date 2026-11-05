@@ -147,4 +147,4 @@ The review receives the run's tests and coverage through `--tests`, or a local c
 
 `tests.yml` runs the labelled platforms and then calls `review.yml` with the protected review credential. A maintainer may dispatch `review.yml` with `--ref <workflow-branch>`, `commit`, `base` and `check=code` or `check=text`. During cutover leave `REVIEW_POST_ENABLED` unset or `false`: artifacts are uploaded, and the job that posts review comments is skipped. Set it to exactly `true` after accepting the artifacts. Text checks always stay in the job summary and artifacts.
 
-The hosted workflow pins request, review and posting scripts to approved Haiku commit `a1d121d387052886ada0b9ba0751f4996b604a9f`; the requested product head is checked out separately.
+The hosted workflow pins request, review and posting scripts to approved Haiku commit `100ef96121cd32b3f466b965e0680027b90edc73`; the requested product head is checked out separately.

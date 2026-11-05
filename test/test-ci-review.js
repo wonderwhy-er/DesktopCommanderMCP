@@ -557,7 +557,7 @@ export default async function run() {
   assert.ok(postJob.some((line) => line.trim() === "if: inputs.check != 'text' && vars.REVIEW_POST_ENABLED == 'true'"), 'text checks never post and code posting needs the operator gate');
   assert.deepStrictEqual(blockUnder(postJob, 'permissions'), ['contents: read', 'pull-requests: write'], 'the job that writes');
   assert.ok(!postJob.some((line) => line.includes('secrets.')), 'holds no secret');
-  const runnerRef = 'ref: a1d121d387052886ada0b9ba0751f4996b604a9f';
+  const runnerRef = 'ref: 100ef96121cd32b3f466b965e0680027b90edc73';
   for (const [name, lines, expectedRefs] of [['request', requestJob, 1], ['review', reviewJob, 2], ['post', postJob, 1]]) {
     const refs = lines.map((line) => line.trim()).filter((line) => line.startsWith('ref:'));
     assert.strictEqual(refs.length, expectedRefs, `${name}: only the runner and separate product checkout are allowed`);
