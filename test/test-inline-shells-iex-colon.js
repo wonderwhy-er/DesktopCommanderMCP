@@ -35,4 +35,3 @@ export default function runTests() {
 }
 
 runIfMain(import.meta.url, runTests);
-
