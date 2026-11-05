@@ -1,5 +1,4 @@
 import { platform, homedir } from 'os';
-import * as http from 'http';
 import * as https from 'https';
 import { AsyncLocalStorage } from 'async_hooks';
 import type { TransportParams } from '@desktop-commander/telemetry-contract/transport';
@@ -526,7 +525,6 @@ export const buildEventProperties = async (properties?: any) => {
 /**
  * Send event to the telemetry proxy (direct BigQuery ingestion).
  * Uses the custom domain first and retries the generated Cloud Run URL on failure.
- * With DC_TELEMETRY_URL set, sends there instead, once.
  */
 const sendToTelemetryProxy = async (event: string, eventProperties: any) => {
     try {
@@ -543,13 +541,6 @@ const sendToTelemetryProxy = async (event: string, eventProperties: any) => {
             }]
         });
 
-        // Read on every send: a remote device sets it after this module is loaded
-        const configured = process.env.DC_TELEMETRY_URL;
-        if (configured) {
-            await postTelemetryPayload(configured, payload);
-            return;
-        }
-
         const sent = await postTelemetryPayload(TELEMETRY_PROXY_URL, payload);
         if (!sent) {
             await postTelemetryPayload(TELEMETRY_PROXY_FALLBACK_URL, payload);
@@ -559,12 +550,13 @@ const sendToTelemetryProxy = async (event: string, eventProperties: any) => {
     }
 };
 
-/** Sends to the address as given: http or https by its protocol, with its port and query. */
 const postTelemetryPayload = async (endpoint: string, payload: string): Promise<boolean> => {
     return await new Promise((resolve) => {
         const url = new URL(endpoint);
-        const client = url.protocol === 'http:' ? http : https;
         const options = {
+            hostname: url.hostname,
+            port: 443,
+            path: url.pathname,
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -572,9 +564,11 @@ const postTelemetryPayload = async (endpoint: string, payload: string): Promise<
             }
         };
 
-        const req = client.request(url, options, (res) => {
+        const req = https.request(options, (res) => {
             res.resume();
-            res.on('end', () => resolve(res.statusCode !== undefined && res.statusCode >= 200 && res.statusCode < 300));
+            res.on('end', () => {
+                resolve(res.statusCode !== undefined && res.statusCode >= 200 && res.statusCode < 300)
+            });
         });
         req.on('error', () => resolve(false));
         req.setTimeout(3000, () => {
@@ -610,15 +604,37 @@ export const capture = async (event: string, properties?: any) => {
  * Send only contract-validated transport fields through the existing proxy sender,
  * redacted like every other event (known paths, path properties, error text).
  */
-export const captureTransport = async (event: string, properties: TransportParams) => {
-    if (isInsideUiOriginCall() || isTelemetryDisabledByEnv()) return;
-    // Only to the address the Remote MCP server gave; never to the built-in production address
-    if (!process.env.DC_TELEMETRY_URL) return;
+export const captureTransport = async (event: string, properties: TransportParams, userId: string) => {
+    if (isInsideUiOriginCall() || isTelemetryDisabledByEnv()) {
+        return;
+    }
     void (async () => {
         try {
-            if (uniqueUserId === 'unknown') uniqueUserId = await configManager.getOrCreateClientId();
-            await sendToTelemetryProxy(event, sanitizeEventProperties(properties, await knownEventPaths()));
-        } catch {
+            const telemetryEnabled = await configManager.getValue('telemetryEnabled');
+            if (isTelemetryDisabledValue(telemetryEnabled)) {
+                return;
+            }
+            if (uniqueUserId === 'unknown') {
+                uniqueUserId = await configManager.getOrCreateClientId();
+            }
+            const eventProperties = sanitizeEventProperties(properties, await knownEventPaths())
+
+            const payload = JSON.stringify({
+                client_id: uniqueUserId,
+                user_id: userId,
+                telemetry_type: 'transport',
+                timestamp_micros: Date.now() * 1000,
+                events: [{
+                    name: event,
+                    params: eventProperties
+                }]
+            });
+
+            const sent = await postTelemetryPayload(TELEMETRY_PROXY_URL, payload);
+            if (!sent) {
+                await postTelemetryPayload(TELEMETRY_PROXY_FALLBACK_URL, payload);
+            }
+        } catch(_error) {
             // Telemetry must not affect command handling.
         }
     })();
