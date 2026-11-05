@@ -509,7 +509,9 @@ export default async function run() {
     'a comment\'s or an on-demand run checks out exactly the commit the platforms job read');
   assert.ok(unit.some((line) => line.trim() === "cache: ${{ github.event_name == 'pull_request' && 'npm' || '' }}"),
     'no npm cache on a comment\'s or an on-demand run');
-  assert.ok(!commentJob.some((line) => line.trim().startsWith('ref:')), 'the comment job checks out main\'s script, never the PR\'s');
+  assert.ok(!commentJob.some((line) => line.trim().startsWith('ref:')),
+    'the comment job uses the event checkout: default branch on issue_comment, '
+    + 'PR merge on pull_request, selected ref on dispatch');
 
   // An on-demand run's inputs, and how they reach the scripts: only through the environment,
   // never written into a shell command, where a quote in an input would become code
