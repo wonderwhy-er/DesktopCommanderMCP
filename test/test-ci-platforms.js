@@ -432,7 +432,7 @@ export default async function run() {
   console.log('✓ a PR opened with its labels: each platform once, the review label\'s event none');
 
   // A job that checks out a sparse list runs a script only with every file it imports in that list: a missing one
-  // stops the job before it does anything (c4590061: check-coverage-report.js, in three jobs' lists, so no platform ran)
+  // stops the job before it does anything; every review job must include check-coverage-report.js and its imports.
   const importsOf = (file, seen = new Set()) => {
     if (seen.has(file)) return seen;
     seen.add(file);
@@ -486,7 +486,7 @@ export default async function run() {
   for (const input of ['pr: ${{ needs.platforms.outputs.pr }}', 'sha: ${{ needs.platforms.outputs.sha }}', 'base: ${{ needs.platforms.outputs.base }}']) {
     assert.ok(reviewJob.includes(input), `it passes ${input}`);
   }
-  assert.deepStrictEqual([...new Set(jobLines(workflow, 'review').join('\n').match(/secrets\.\w+/g))], ['secrets.CLAUDE_CODE_OAUTH_TOKEN'], 'only the Gemini key goes to it');
+  assert.deepStrictEqual([...new Set(jobLines(workflow, 'review').join('\n').match(/secrets\.\w+/g))], ['secrets.CLAUDE_CODE_OAUTH_TOKEN'], 'only the company Anthropic API key goes to it');
   // A called workflow's jobs get no more than the calling job grants, or GitHub won't start the run
   const pairs = (lines) => lines.map((line) => line.split(':').map((part) => part.trim()));
   const granted = Object.fromEntries(pairs(blockUnder(jobLines(workflow, 'review'), 'permissions')));

@@ -7,6 +7,7 @@
  * structuredContent.pid got undefined.
  */
 import assert from 'assert';
+import { commandManager } from '../dist/command-manager.js';
 import { startProcess, interactWithProcess, forceTerminate } from '../dist/tools/improved-process-tools.js';
 import { runIfMain } from './helpers/run-if-main.js';
 
@@ -60,9 +61,28 @@ async function testInputWithoutWaiting() {
   }
 }
 
+/** A telemetry-only extraction failure must not prevent a valid session from starting. */
+async function testTelemetryExtractionFailure() {
+  const wasOwn = Object.hasOwn(commandManager, 'extractCommands');
+  const original = commandManager.extractCommands;
+  commandManager.extractCommands = () => { throw new Error('declared telemetry extraction failure'); };
+  let pid;
+  try {
+    const { started, pid: sessionPid } = await startNodeLocal();
+    pid = sessionPid;
+    assert(!started.isError, 'a telemetry-only failure must not reject the command');
+    assert.deepStrictEqual(started.structuredContent, { pid, status: 'waiting_for_input' });
+  } finally {
+    if (wasOwn) commandManager.extractCommands = original;
+    else delete commandManager.extractCommands;
+    if (pid !== undefined) await forceTerminate({ pid });
+  }
+}
+
+/** Continue after a failed case so the remaining session paths are still exercised. */
 export default async function runTests() {
   let failed = 0;
-  for (const test of [testNodeLocalStart, testNodeLocalScript, testInputWithoutWaiting]) {
+  for (const test of [testNodeLocalStart, testNodeLocalScript, testInputWithoutWaiting, testTelemetryExtractionFailure]) {
     try {
       await test();
     } catch (error) {

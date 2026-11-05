@@ -32,7 +32,6 @@
     "device:install": "cd src/remote-device && npm install",
     "device:start": "tsx src/remote-device/device.ts",
     "device:start:dev": "nodemon --watch src/remote-device --exec tsx src/remote-device/device.ts",
-    "device:start:local": "npm run build && DC_ENV=development MCP_SERVER_URL=http://mcp.localhost:3007 npm run device:start:dev",
     "sync-version": "node scripts/sync-version.js",
     "bump": "node scripts/sync-version.js --bump",
     "bump:minor": "node scripts/sync-version.js --bump --minor",
@@ -71,7 +70,8 @@
     "logs:clear": "npm run build && node scripts/clear-fuzzy-logs.js",
     "logs:export": "npm run build && node scripts/export-fuzzy-logs.js",
     "count-tokens": "npm run build && node scripts/count-tokens.js",
-    "count-tokens:json": "npm run build && node scripts/count-tokens.js --json"
+    "count-tokens:json": "npm run build && node scripts/count-tokens.js --json",
+    "device:start:local": "npm run build && DC_ENV=development MCP_SERVER_URL=http://mcp.localhost:3007 npm run device:start:dev"
   },
   "publishConfig": {
     "access": "public"
@@ -128,6 +128,7 @@
     "remark-parse": "^11.0.0",
     "sharp": "^0.35.5",
     "tiptap-markdown": "^0.9.0",
+    "unbash": "6.0.1",
     "unified": "^11.0.5",
     "unpdf": "~1.8.1",
     "zod": "^3.24.1",
