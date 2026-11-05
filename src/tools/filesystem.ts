@@ -446,7 +446,11 @@ function unmarkHung(absolutePath: string): void {
 
 /** The error for a path held up by `stalledPath` (a hung path, a stalled folder, or a folder whose every turn hung), with `stalledPath` as its `folder` */
 function stalledPathError(stalledPath: string, absolutePath: string): Error {
-    return Object.assign(new Error(`${stalledPath} isn't responding: a lookup there has waited more than ${FILE_OPERATION_TIMEOUTS.PATH_VALIDATION / 1000} seconds. Desktop Commander can't use ${absolutePath} until it answers. Other folders still work.`), { folder: stalledPath });
+    return Object.assign(new Error(
+        `${stalledPath} isn't responding: a lookup there has waited more than ` +
+        `${FILE_OPERATION_TIMEOUTS.PATH_VALIDATION / 1000} seconds. Desktop Commander can't use ` +
+        `${absolutePath} until it answers. Other folders still work.`
+    ), { folder: stalledPath });
 }
 
 /** Starts the lookups waiting in a folder's line while it has room, and forgets the folder once it has none left */

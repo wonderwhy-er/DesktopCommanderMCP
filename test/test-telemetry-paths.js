@@ -11,35 +11,15 @@
  * change as they found it.
  */
 import assert from 'assert';
-import { EventEmitter } from 'events';
-import https from 'https';
-import { syncBuiltinESMExports } from 'module';
 import os from 'os';
 import path from 'path';
 import { runIfMain, skip } from './helpers/run-if-main.js';
 import { isTestHome } from './helpers/test-env.js';
+import { captureTelemetryRequests } from './helpers/telemetry-requests.js';
 
 // Every telemetry payload this process would send
-const sent = [];
 let missingResponseCallbacks = 0;
-https.request = (url, options, callback) => {
-  if (typeof callback !== 'function') missingResponseCallbacks++;
-  const chunks = [];
-  const req = new EventEmitter();
-  req.write = (data) => { chunks.push(String(data)); return true; };
-  req.setTimeout = () => req;
-  req.destroy = () => {};
-  req.end = () => {
-    sent.push(JSON.parse(chunks.join('')));
-    const res = new EventEmitter();
-    res.statusCode = 204;
-    res.resume = () => res;
-    callback?.(res);
-    setImmediate(() => res.emit('end'));
-  };
-  return req;
-};
-syncBuiltinESMExports();
+const sent = captureTelemetryRequests(() => missingResponseCallbacks++);
 delete process.env.DESKTOP_COMMANDER_DISABLE_TELEMETRY;
 
 const { server } = await import('../dist/server.js');
@@ -68,6 +48,7 @@ function assertNothingSent(pieces) {
   }
 }
 
+/** Verify a rejected path stays readable in the tool answer but is redacted from telemetry. */
 async function testDeniedPath() {
   await configManager.setValue('telemetryEnabled', true);
   await configManager.setValue('allowedDirectories', [ALLOWED]);
@@ -87,6 +68,7 @@ async function testDeniedPath() {
   assertNothingSent(['private notes', 'notes.txt', 'allowed folder', 'dc-telemetry-test']);
 }
 
+/** Verify telemetry redacts the complete executable path, including spaces in its name. */
 async function testCommandThatStartsWithAPath() {
   const callTool = server._requestHandlers.get('tools/call');
   // A program in a folder with a space in its name (it doesn't exist: the shell fails at once)
@@ -100,6 +82,7 @@ async function testCommandThatStartsWithAPath() {
   assertNothingSent(['john', 'smith', 'run.sh']);
 }
 
+/** Run both redaction scenarios in the test home and restore the original configuration. */
 async function runTests() {
   if (!isTestHome()) {
     return skip('test-telemetry-paths.js changes config.json and runs tools: it runs only in a test home (node test/run-all-tests.js test-telemetry-paths.js)');
@@ -111,11 +94,11 @@ async function runTests() {
   let passed = true;
   try {
     await testDeniedPath();
-    console.log('✓ a denied path is replaced whole in telemetry, and the answer still names it');
+    console.log('âœ“ a denied path is replaced whole in telemetry, and the answer still names it');
     await testCommandThatStartsWithAPath();
-    console.log('✓ a command that starts with a path is sent as [PATH]');
+    console.log('âœ“ a command that starts with a path is sent as [PATH]');
   } catch (error) {
-    console.error('✗', error.message);
+    console.error('âœ—', error.message);
     passed = false;
   } finally {
     await configManager.setValue('telemetryEnabled', found.telemetryEnabled);
@@ -128,9 +111,9 @@ async function runTests() {
   try {
     assert.deepStrictEqual(left, found, 'the tests must leave the settings as they found them');
     assert.strictEqual(missingResponseCallbacks, 0, 'every request fake must receive its response callback');
-    console.log('✓ the settings are left as they were found');
+    console.log('âœ“ the settings are left as they were found');
   } catch (error) {
-    console.error('✗', error.message);
+    console.error('âœ—', error.message);
     passed = false;
   }
   return passed;
