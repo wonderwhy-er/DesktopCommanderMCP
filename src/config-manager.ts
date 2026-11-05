@@ -35,6 +35,7 @@ class ConfigChangedError extends Error {
 
 export interface ServerConfig {
   blockedCommands?: string[];
+  commandScopes?: Record<string, string[]>; // Command -> allowed directories override (#663)
   defaultShell?: string;
   allowedDirectories?: string[];
   telemetryEnabled?: boolean; // New field for telemetry control
