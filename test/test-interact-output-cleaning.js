@@ -66,7 +66,7 @@ const CASES = [
   ['a diff from a shell reading commands without a prompt', 'diff --git a/f b/f\n+added\n+ added\n-removed\n', 'git diff', 'diff --git a/f b/f\n+added\n+ added\n-removed', false],
   ['bash -i tracing a command (set -x)', '+ echo hi\nhi\n$ ', 'echo hi', '+ echo hi\nhi\n$'],
   // Program stderr can match a later input line; it remains output, even beside shell prompts.
-  ['bash -i printing a later silent command to stderr', 'bash-5.2$ a\ntrue\nbash-5.2$ ', "printf 'a\\ntrue\\n' >&2\ntrue", 'bash-5.2$ a\ntrue\nbash-5.2$', true, true],
+  ['bash -i printing a later silent command to stderr', 'bash-5.2$ a\ntrue\nbash-5.2$ ', "printf 'a\\ntrue\\n' >&2\ntrue", 'bash-5.2$ a\ntrue\nbash-5.2$', true],
   ['bash -i printing a later command to stderr', 'bash-5.2$ echo b\nbash-5.2$ b\nbash-5.2$ ', "printf 'echo b\\n' >&2\necho b", 'bash-5.2$ echo b\nbash-5.2$ b\nbash-5.2$'],
   // Prompts where the REPL printed them
   ['python -i, both prompts after the results', '1\n2\n>>> >>> ', '1\n2', '1\n2'],
@@ -91,9 +91,8 @@ function check(ok, message) {
 
 function testCleaning() {
   console.log('\n--- the output returned for an input ---');
-  for (const [what, output, input, expected, readAtPrompt = true, allStderr = false] of CASES) {
-    const sources = allStderr ? [{ start: 0, end: output.length }] : undefined;
-    const cleaned = cleanProcessOutput(output, input, readAtPrompt, sources);
+  for (const [what, output, input, expected, readAtPrompt = true] of CASES) {
+    const cleaned = cleanProcessOutput(output, input, readAtPrompt);
     check(cleaned === expected, `${what}: ${JSON.stringify(input)} should return ${JSON.stringify(expected)}, got ${JSON.stringify(cleaned)}`);
   }
 }

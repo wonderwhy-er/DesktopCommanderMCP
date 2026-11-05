@@ -13,10 +13,12 @@ const POWERSHELL_VALUE_OPTIONS = [
 ];
 const POWERSHELL_VALUE_ALIASES = new Set(['-ep', '-if', '-of', '-wd', '-ea']);
 
+/** Option values must not be mistaken for the shell's script filename. */
 function posixValueOption(arg: string): boolean {
     return POSIX_VALUE_OPTIONS.has(arg) || /^[-+][a-zA-Z]*[oO]/.test(arg);
 }
 
+/** Command/stdin mode owns later words, so only a positional file before that boundary is a script. */
 function posixScriptFile(args: FileWord[]): FileWord | undefined {
     for (let i = 0; i < args.length; i++) {
         const arg = args[i];
@@ -31,6 +33,7 @@ function posixScriptFile(args: FileWord[]): FileWord | undefined {
     return undefined;
 }
 
+/** A custom rcfile needs a note only when the explicit host options cause Bash to read it. */
 function bashStartupFile(args: FileWord[]): FileWord | undefined {
     let file: FileWord | undefined;
     let interactive = false;
@@ -62,6 +65,7 @@ function bashStartupFile(args: FileWord[]): FileWord | undefined {
     return file;
 }
 
+/** Host mode determines whether a later word is command text, a version value or a script path. */
 function powershellScriptFile(program: string, args: FileWord[]): FileWord | undefined {
     for (let i = 0; i < args.length; i++) {
         const arg = args[i];

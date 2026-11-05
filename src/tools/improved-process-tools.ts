@@ -195,6 +195,7 @@ export async function startProcess(args: unknown, maxWaitMs: number = MAX_PROCES
   return startedProcessResult(result, shellUsed, unseenMessage);
 }
 
+/** Fall back to base-name telemetry when detailed extraction fails; validation remains separate. */
 function captureProcessCommand(command: string): void {
   try {
     // Each command's first word as typed, so telemetry replaces a path whole
@@ -211,6 +212,7 @@ function captureProcessCommand(command: string): void {
   }
 }
 
+/** Virtual PIDs retain the same interaction/termination routing without spawning an OS process. */
 function startNodeSession(timeoutMs: number | undefined): ServerResult {
   const virtualPid = virtualPidCounter--;
   virtualNodeSessions.set(virtualPid, { timeout_ms: timeoutMs || 30000 });
@@ -234,6 +236,7 @@ function startNodeSession(timeoutMs: number | undefined): ServerResult {
   };
 }
 
+/** Text and structured facts must describe the same observed process state. */
 function startedProcessResult(
   result: ProcessStartResult, shellUsed: string, unseenMessage: string,
 ): ServerResult {

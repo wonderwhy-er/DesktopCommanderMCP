@@ -11,7 +11,7 @@
  * Parse-only: nothing here runs a shell or a process.
  */
 import assert from 'assert';
-import { braceWords, unquotedChars } from '../dist/utils/brace-expansion.js';
+import { braceWords, quotedChars, unquotedChars } from '../dist/utils/brace-expansion.js';
 import { runIfMain } from './helpers/run-if-main.js';
 
 // A word as written outside quotes, and the words bash makes of it (empty ones dropped)
@@ -51,6 +51,14 @@ const WORDS = [
 
 export default async function runTests() {
   const failures = [];
+
+  // Empty quotes survive expansion as a word, unlike an unquoted empty alternative.
+  assert.deepStrictEqual(braceWords([
+    ...unquotedChars('{'), ...quotedChars(''), ...unquotedChars(',sudo}'),
+  ]), ['', 'sudo']);
+  assert.deepStrictEqual(braceWords([
+    ...quotedChars(''), ...unquotedChars('{,sudo}'),
+  ]), ['', 'sudo']);
 
   for (const [word, want] of WORDS) {
     const got = braceWords(unquotedChars(word));
