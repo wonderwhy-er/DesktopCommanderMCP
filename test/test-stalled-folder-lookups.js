@@ -36,35 +36,16 @@
  * 20 seconds: a lookup's own time limit, twice. Runs as part of `npm test`, or
  * alone: node test/run-all-tests.js test-stalled-folder-lookups.js
  */
-import { EventEmitter } from 'events';
 import fs from 'fs';
 import fsPromises from 'fs/promises';
-import https from 'https';
-import { syncBuiltinESMExports } from 'module';
 import path from 'path';
 import { createTempDir, isTestHome } from './helpers/test-env.js';
 import { runIfMain, skip } from './helpers/run-if-main.js';
 import { waitUntil } from './helpers/wait.js';
+import { captureTelemetryRequests } from './helpers/telemetry-requests.js';
 
 // Every telemetry payload this process would send
-const sent = [];
-https.request = (options, callback) => {
-  const chunks = [];
-  const req = new EventEmitter();
-  req.write = (data) => { chunks.push(String(data)); return true; };
-  req.setTimeout = () => req;
-  req.destroy = () => {};
-  req.end = () => {
-    sent.push(JSON.parse(chunks.join('')));
-    const res = new EventEmitter();
-    res.statusCode = 204;
-    res.resume = () => res;
-    callback?.(res);
-    setImmediate(() => res.emit('end'));
-  };
-  return req;
-};
-syncBuiltinESMExports();
+const sent = captureTelemetryRequests();
 delete process.env.DESKTOP_COMMANDER_DISABLE_TELEMETRY;
 
 const { LOOKUPS_PER_FOLDER, validatePath } = await import('../dist/tools/filesystem.js');
@@ -144,6 +125,7 @@ function slowLookups(slows, ms) {
 /** validatePath's answer as { value } or { error }: it never rejects */
 const settle = (p) => validatePath(p).then((value) => ({ value }), (error) => ({ error }));
 
+/** Format a lookup answer for a failed check without changing the answer itself. */
 const errorText = (answer) => (answer.error instanceof Error ? answer.error.message : String(answer.error ?? `answered ${answer.value}`));
 
 /** Whether validatePath refused `p` because `folder` doesn't answer */
@@ -159,6 +141,11 @@ const timeoutEvents = () => sentEvents('server_path_validation_timeout').length;
 /** The error texts of the events the test sends after a lookup */
 const afterLookupErrors = () => sentEvents('test_after_lookup').map((params) => params.error);
 
+/**
+ * Exercise one ordered lookup lifecycle: queued calls, timeout, stalled paths,
+ * and recovery share pending lookups and telemetry. Keep these phases together
+ * so a later assertion observes the state created by the earlier phase.
+ */
 async function runTests() {
   if (!isTestHome()) {
     return skip('test-stalled-folder-lookups.js reads the config in the home; run it through the runner: node test/run-all-tests.js test-stalled-folder-lookups.js');
@@ -201,6 +188,7 @@ async function runTests() {
   const hungMounts = Array.from({ length: LOOKUPS_PER_FOLDER }, (_, i) => path.join(stalledRoot, `dc-stalled-mount-${process.pid}-${i}`));
 
   let failures = 0;
+  /** Keep checking the lifecycle after a failed assertion, then fail the file at the end. */
   function check(name, ok, detail) {
     if (ok) {
       console.log(`✓ ${name}`);

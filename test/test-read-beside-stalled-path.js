@@ -2,10 +2,8 @@
  * A read of a healthy local file must answer while reads of a path whose
  * lookup doesn't answer are still running.
  *
- * Seen in production (Windows, remote device 0.2.52, 20 Oct 2026): read_file
- * of a file on D: answered "Path validation operation timed out after 10
- * seconds", over and over, while other tools kept working. The same happened
- * on 0.3.0.
+ * Repeated lookups of an unresponsive path must not make a healthy local read
+ * fail with "Path validation operation timed out after 10 seconds".
  *
  * Expected: a folder whose lookups don't answer must not take every file
  * thread. validatePath() (src/tools/filesystem.ts) looks every path up with
@@ -92,6 +90,8 @@ async function createStalledPath(home) {
   // once, so each run takes a fresh host from the range
   for (let attempt = 0; attempt < 3; attempt++) {
     const share = `\\\\192.0.2.${1 + Math.floor(Math.random() * 254)}\\dc-test\\task.md`;
+    // A result or an expected unreachable-share error both mean the lookup
+    // finished; only a still-pending lookup can hold a file thread here.
     const answered = await Promise.race([
       fs.promises.realpath(share).then(() => true, () => true),
       new Promise((resolve) => setTimeout(() => resolve(false), 2000)),
@@ -105,6 +105,7 @@ async function readFile(client, filePath) {
   return client.callTool({ name: 'read_file', arguments: { path: filePath } }, undefined, { timeout: READ_DEADLINE_MS });
 }
 
+/** Check a healthy read before and during intentionally pending lookups, then release them. */
 async function runTests() {
   const testEnv = createTestEnv();
   const healthyFile = path.join(testEnv.home, 'healthy.txt');
@@ -129,6 +130,9 @@ async function runTests() {
 
     console.log(`\n--- Test 2: a healthy file still reads while ${STALLED_READS} reads of ${stalled.path} wait ---`);
     for (let i = 0; i < STALLED_READS; i++) {
+      // These reads deliberately wait and may reject on timeout or client
+      // shutdown. The assertions below check the independent healthy read;
+      // arrival on stderr proves the stalled requests reached the lookup.
       client.callTool({ name: 'read_file', arguments: { path: stalled.path } }, undefined, { timeout: 120_000 }).catch(() => {});
     }
     // Every lookup the server lets run there at once: all of them, or a per-folder limit's worth
