@@ -1,0 +1,16 @@
+name: Legacy PR tests
+on:
+  pull_request_target:
+    types: [synchronize, reopened, labeled]
+permissions:
+  contents: read
+jobs:
+  tests:
+    if: github.event.action != 'labeled' || contains(fromJSON('["linux","windows","macos","review"]'), github.event.label.name)
+    uses: ./.github/workflows/tests.yml
+    permissions:
+      contents: read
+      pull-requests: write
+      actions: read
+    secrets:
+      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}

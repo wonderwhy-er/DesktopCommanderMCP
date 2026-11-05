@@ -32,6 +32,7 @@ import {
 import { combineCoverage, readFinals } from './combined-coverage.js';
 import { coverageByArea } from './coverage-areas.js';
 import { githubApi } from './helpers/github-api.js';
+import { verifyArtifacts } from './helpers/execution-evidence.js';
 
 const folder = process.argv[2] ?? 'ci';
 const { GITHUB_REPOSITORY: repo, GH_TOKEN: token, RUN_ID: runId, PR: pr, HEAD_SHA: headSha, TESTS_FROM: testsFrom } = process.env;
@@ -179,12 +180,27 @@ async function main() {
 
   // The results of each platform this run ran
   const data = {};
+  let invalidExecution=false;
   for (const { name, os } of PLATFORMS) {
     const own = platformJobs(jobs, os);
-    const tests = testResults(os, own);
+    let tests = testResults(os, own);
     if (own.length === 0 && !tests) continue;
     if (tests) tests.notes.push(...missingMetadata);
-    const summary = readJson(path.join(folder, `coverage-${os}`, 'coverage-summary.json'));
+    let summary = readJson(path.join(folder, `coverage-${os}`, 'coverage-summary.json'));
+    if (process.env.REQUIRE_EXECUTION === 'true') {
+      try {
+        const dirs=fs.readdirSync(folder).filter(name=>name===`results-${os}` || name.startsWith(`results-${os}-`));
+        if (!dirs.length) throw Error('Missing execution results');
+        for (const dir of dirs) verifyArtifacts({results:path.join(folder,dir),coverage:path.join(folder,`coverage-${os}`),
+          expected:{product:headSha,tests:testsFrom || headSha,harness:process.env.HARNESS_SHA,run:String(runId),attempt:process.env.GITHUB_RUN_ATTEMPT || '1'}});
+      } catch(error) {
+        invalidExecution=true;
+        tests ??= {files:0,passed:0,skipped:0,failed:[],failures:[],notes:[],excluded:0};
+        tests.files++; tests.failed.push('execution provenance');
+        tests.failures.push({file:'execution provenance',error:error.message}); tests.notes.push(error.message);
+        summary=undefined;
+      }
+    }
     const artifact = (kind) => {
       const found = artifacts.find((item) => item.name === `${kind}-${os}`);
       if (found) return `${runUrl}/artifacts/${found.id}`;
@@ -203,7 +219,7 @@ async function main() {
       links: { run: runUrl, coverage: artifact('coverage'), results: artifact('results') },
     };
   }
-  const combined = combinedCoverage();
+  const combined = invalidExecution ? {missing:'execution provenance unavailable'} : combinedCoverage();
 
   // The job summary gets the comment once, whether or not it could be posted
   let body = renderComment({ headSha, testsFrom, platforms: data, combined });

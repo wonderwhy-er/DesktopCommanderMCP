@@ -9,6 +9,10 @@
 name: Tests
 
 on:
+  workflow_call:
+    secrets:
+      CLAUDE_CODE_OAUTH_TOKEN:
+        required: false
   # No opened: GitHub sends a labeled event for each label a new PR has, and each runs
   # its platform, so opened would run every platform a second time
   pull_request:
@@ -35,7 +39,7 @@ on:
         default: ''
         type: string
       tests_from:
-        description: A cross-test, the SHA whose test/ runs on commit's code (both need the test framework); empty for commit's own tests
+        description: The SHA whose tests run on commit's product code; empty for the product commit's own tests
         default: ''
         type: string
 
@@ -58,20 +62,21 @@ jobs:
     # Whether a maintainer opened the PR or wrote the comment is test/ci-platforms.js's:
     # MAINTAINERS in test/helpers/ci-platforms.js, the one list the review workflow
     # checks too. For anyone else it picks no platform.
-    if: github.event_name == 'workflow_dispatch' || github.event_name == 'issue_comment' && github.event.issue.pull_request && (contains(github.event.comment.body, '/test') || contains(github.event.comment.body, '/review')) || github.event.action == 'labeled' && (contains(fromJSON('["linux","windows","macos"]'), github.event.label.name) || github.event.label.name == 'review') || github.event_name == 'pull_request' && github.event.action != 'labeled' && (contains(github.event.pull_request.labels.*.name, 'linux') || contains(github.event.pull_request.labels.*.name, 'windows') || contains(github.event.pull_request.labels.*.name, 'macos') || contains(github.event.pull_request.labels.*.name, 'review'))
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'issue_comment' && github.event.issue.pull_request && (contains(github.event.comment.body, '/test') || contains(github.event.comment.body, '/review')) || github.event.action == 'labeled' && (contains(fromJSON('["linux","windows","macos"]'), github.event.label.name) || github.event.label.name == 'review') || contains(fromJSON('["pull_request","pull_request_target"]'), github.event_name) && github.event.action != 'labeled' && (contains(github.event.pull_request.labels.*.name, 'linux') || contains(github.event.pull_request.labels.*.name, 'windows') || contains(github.event.pull_request.labels.*.name, 'macos') || contains(github.event.pull_request.labels.*.name, 'review'))
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
       contents: read
       pull-requests: read
     outputs:
-      review: ${{ steps.review.outputs.review }}
-      base: ${{ steps.review.outputs.base }}
-      os: ${{ steps.platforms.outputs.os }}
-      matrix: ${{ steps.platforms.outputs.matrix }}
-      sha: ${{ steps.head.outputs.sha }}
-      pr: ${{ steps.head.outputs.pr }}
+      review: ${{ steps.route.outputs.review || steps.review.outputs.review }}
+      base: ${{ steps.route.outputs.base || steps.review.outputs.base }}
+      os: ${{ steps.route.outputs.os || steps.platforms.outputs.os }}
+      matrix: ${{ steps.route.outputs.matrix || steps.platforms.outputs.matrix }}
+      sha: ${{ steps.route.outputs.sha || steps.head.outputs.sha }}
+      pr: ${{ steps.route.outputs.pr || steps.head.outputs.pr }}
       tests_from: ${{ steps.head.outputs.tests_from }}
+      harness: ${{ github.workflow_sha }}
 
     steps:
       - name: Checkout
@@ -81,6 +86,8 @@ jobs:
           sparse-checkout: |
             /package.json
             /test/ci-platforms.js
+            /test/ci-label-route.js
+            /test/helpers/ci-label-router.js
             /test/helpers/ci-platforms.js
             /test/ci-review.js
             /test/helpers/ci-review.js
@@ -90,12 +97,19 @@ jobs:
             /test/helpers/node-test-runner.js
             /test/helpers/github-api.js
           sparse-checkout-cone-mode: false
+      - name: Legacy PR route
+        id: route
+        if: github.event_name == 'pull_request_target'
+        run: node test/ci-label-route.js
+        env:
+          GH_TOKEN: ${{ github.token }}
       # The commit the run tests and reports, and its PR, read once here for every job.
       # A push or a label: the PR's head. A comment: the PR's head, from the API (its
       # event has none). On demand: the commit it names, as a full SHA, and the open PR
       # whose head it is, if any (another PR can have it too: a branch built on it).
       - name: The commit and its PR
         id: head
+        if: github.event_name != 'pull_request_target'
         env:
           GH_TOKEN: ${{ github.token }}
           ISSUE: ${{ github.event.issue.number }}
@@ -139,17 +153,18 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           SHA: ${{ steps.head.outputs.sha }}
+          TESTS_FROM: ${{ steps.head.outputs.tests_from }}
           TESTS: ${{ inputs.tests }}
         run: |
           set -o pipefail
           if [[ "$TESTS" == timed ]]; then
-            gh api "repos/$GITHUB_REPOSITORY/contents/test/timed.txt?ref=$SHA" --jq .content | base64 -d > "$RUNNER_TEMP/timed.txt"
+            gh api "repos/$GITHUB_REPOSITORY/contents/test/timed.txt?ref=${TESTS_FROM:-$SHA}" --jq .content | base64 -d > "$RUNNER_TEMP/timed.txt"
           fi
       # Whether this event reviews (a maintainer's review label or /review), and the PR's
       # base for the review job below; not for an on-demand tests run
       - name: Whether it reviews
         id: review
-        if: github.event_name != 'workflow_dispatch'
+        if: github.event_name != 'workflow_dispatch' && github.event_name != 'pull_request_target'
         env:
           GH_TOKEN: ${{ github.token }}
         run: node test/ci-review.js request
@@ -159,6 +174,7 @@ jobs:
       # maintainers: none.
       - name: Which platforms
         id: platforms
+        if: github.event_name != 'pull_request_target'
         run: node test/ci-platforms.js
         env:
           TIMED_LIST: ${{ runner.temp }}/timed.txt
@@ -190,18 +206,6 @@ jobs:
           ref: ${{ github.event_name != 'pull_request' && needs.platforms.outputs.sha || '' }}
           # changed:A..B compares commits that can precede the tested commit.
           fetch-depth: 0
-      # A cross-test (tests_from): test/ exactly as that commit has it, on this commit's
-      # code, before anything installs or runs
-      - name: The tests from tests_from
-        shell: bash
-        env:
-          TESTS_FROM: ${{ needs.platforms.outputs.tests_from }}
-        run: |
-          if [[ -n "$TESTS_FROM" ]]; then
-            git fetch --no-tags --depth=1 origin "$TESTS_FROM"
-            git rm -r -q test
-            git checkout "$TESTS_FROM" -- test
-          fi
       - name: Node.js 22
         uses: actions/setup-node@v7
         with:
@@ -222,12 +226,14 @@ jobs:
       # The job's own read-only token: @vscode/ripgrep's postinstall downloads ripgrep
       # through api.github.com, which refuses a shared runner's anonymous requests
       - name: Install
+        if: github.event_name == 'pull_request'
         run: npm ci
         env:
           GITHUB_TOKEN: ${{ github.token }}
       # The release-packages repro installs from this job's npm cache, which npm ci has
       # just filled: from an empty one, its first install took 522 s on Windows
       - name: The npm cache for the release repro
+        if: github.event_name == 'pull_request'
         shell: bash
         run: echo "REPRO_NPM_CACHE=$(npm config get cache)" >> "$GITHUB_ENV"
       # Under c8. A push, a label, a comment, or an on-demand run with no tests value:
@@ -236,17 +242,49 @@ jobs:
       # (elsewhere the comment says why not). On demand: what its tests value asks for
       # (test/run-ci.js).
       - name: Tests with coverage
-        if: ${{ !matrix.timed }}
+        if: ${{ !matrix.timed && github.event_name == 'pull_request' }}
         run: npm run test:coverage
         env:
           TESTS: ${{ inputs.tests }}
       # tests=timed: this job's one timed test, alone on its runner, without coverage
       # (c8 slows what it times)
       - name: A timed test, without coverage
-        if: ${{ matrix.timed }}
+        if: ${{ matrix.timed && github.event_name == 'pull_request' }}
         run: npm run test:ci
         env:
           TESTS: files:${{ matrix.timed }}
+      - name: Checkout the trusted harness
+        if: github.event_name != 'pull_request'
+        uses: actions/checkout@v7
+        with:
+          path: .ci-harness
+          ref: ${{ needs.platforms.outputs.harness }}
+          persist-credentials: false
+      - name: Install the harness tools
+        if: github.event_name != 'pull_request'
+        run: npm ci --prefix .ci-harness --ignore-scripts --no-audit --no-fund
+      # The disposable product checkout installs and builds its own package without credentials.
+      - name: Independent product and tests
+        if: github.event_name != 'pull_request'
+        shell: bash
+        env:
+          PRODUCT: ${{ needs.platforms.outputs.sha }}
+          TESTS_FROM: ${{ needs.platforms.outputs.tests_from }}
+          HARNESS: ${{ needs.platforms.outputs.harness }}
+          TESTS: ${{ inputs.tests }}
+          TIMED_TEST: ${{ matrix.timed }}
+          TIMED: ${{ matrix.timed && 'true' || 'false' }}
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ needs.platforms.outputs.pr }}
+        run: |
+          set -euo pipefail
+          if [[ -n "$PR" ]]; then
+            current=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR" --jq '.state + ":" + .head.sha')
+            [[ "$current" == "open:$PRODUCT" ]] || { echo 'PR changed before execution'; exit 1; }
+          fi
+          git fetch --no-tags --depth=1 origin "${TESTS_FROM:-$PRODUCT}"
+          if [[ -n "$TIMED_TEST" ]]; then export TESTS="files:$TIMED_TEST"; fi
+          node .ci-harness/test/independent-ci.js --root . --product "$PRODUCT" --tests "${TESTS_FROM:-$PRODUCT}" --harness "$HARNESS" --out ci-output
       # A timed job's results apart from the others' (results-<runner>-timed-<test>, a / as -)
       - name: Upload the test results
         if: always()
@@ -254,7 +292,7 @@ jobs:
         with:
           name: results-${{ matrix.os }}${{ matrix.id && format('-{0}', matrix.id) || '' }}
           path: |
-            test-results/
+            ${{ (github.event_name != 'pull_request') && 'ci-output/test-results/' || 'test-results/' }}
             !test-results/c8-tmp/
           retention-days: 14
           overwrite: true
@@ -263,7 +301,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: coverage-${{ matrix.os }}
-          path: coverage/
+          path: ${{ (github.event_name != 'pull_request') && 'ci-output/coverage/' || 'coverage/' }}
           retention-days: 14
           overwrite: true
 
@@ -331,3 +369,5 @@ jobs:
           HEAD_SHA: ${{ needs.platforms.outputs.sha }}
           TESTS: ${{ inputs.tests }}
           TESTS_FROM: ${{ needs.platforms.outputs.tests_from }}
+          REQUIRE_EXECUTION: ${{ (github.event_name != 'pull_request') && 'true' || 'false' }}
+          HARNESS_SHA: ${{ needs.platforms.outputs.harness }}

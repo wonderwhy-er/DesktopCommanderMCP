@@ -498,7 +498,7 @@ export default async function run() {
   }
   const firstJob = jobLines(workflow, 'platforms').map((line) => line.trim());
   const request = firstJob.indexOf('run: node test/ci-review.js request');
-  assert.ok(request > 0 && firstJob.slice(request - 6, request).includes("if: github.event_name != 'workflow_dispatch'"),
+  assert.ok(request > 0 && firstJob.slice(request - 6, request).includes("if: github.event_name != 'workflow_dispatch' && github.event_name != 'pull_request_target'"),
     'the first job decides about the review, except for an on-demand tests run');
   console.log('✓ tests.yml runs the review after its test jobs');
   const unit = jobLines(workflow, 'unit');
@@ -529,7 +529,7 @@ export default async function run() {
   const platformsJob = jobLines(workflow, 'platforms').map((line) => line.trim());
   assert.ok(platformsJob.includes('[[ "$COMMIT" =~ ^[0-9a-fA-F]{7,40}$ ]] || { echo "commit: not a SHA: $COMMIT"; exit 1; }'), 'the commit input must be 7 to 40 hex digits');
   assert.ok(platformsJob.includes('[[ "$sha" =~ ^[0-9a-f]{40}$ ]] || { echo "Not a commit SHA: $sha"; exit 1; }'), 'and resolves to a full SHA');
-  assert.ok(platformsJob.includes('pr: ${{ steps.head.outputs.pr }}'), 'the platforms job outputs the PR it found');
+  assert.ok(platformsJob.includes('pr: ${{ steps.route.outputs.pr || steps.head.outputs.pr }}'), 'the platforms job outputs the PR it found');
   assert.ok(commentJob.some((line) => line.trim() === 'PR: ${{ needs.platforms.outputs.pr }}'), 'the comment job writes to that PR');
   assert.ok(commentJob.some((line) => line.trim() === 'group: tests-comment-${{ needs.platforms.outputs.pr }}'), 'and queues with that PR\'s other comment jobs');
   assert.ok(platformsJob.includes('[[ -z "$pr" || "$pr" =~ ^[0-9]+$ ]] || { echo "Not a PR number: $pr"; exit 1; }'), 'the PR found is a number, or none');
@@ -557,19 +557,19 @@ export default async function run() {
   assert.ok(timedStep.includes('TESTS: ${{ inputs.tests }}') && timedStep.includes('SHA: ${{ steps.head.outputs.sha }}')
     && timedStep.includes('if [[ "$TESTS" == timed ]]; then') && !timedStep.some((line) => line.startsWith('if:')), timedStep.join('\n'));
   assert.ok(timedStep.includes('set -o pipefail')
-    && timedStep.includes(String.raw`gh api "repos/$GITHUB_REPOSITORY/contents/test/timed.txt?ref=$SHA" --jq .content | base64 -d > "$RUNNER_TEMP/timed.txt"`),
+    && timedStep.includes('gh api "repos/$GITHUB_REPOSITORY/contents/test/timed.txt?ref=${TESTS_FROM:-$SHA}" --jq .content | base64 -d > "$RUNNER_TEMP/timed.txt"'),
     'the list read through the API at the commit, not checked out: the job runs no code from it');
   assert.ok(step(platformsJob, 'Which platforms').includes('TIMED_LIST: ${{ runner.temp }}/timed.txt'), 'the matrix reads that list');
-  assert.ok(platformsJob.includes('matrix: ${{ steps.platforms.outputs.matrix }}'), 'the platforms job outputs the matrix');
+  assert.ok(platformsJob.includes('matrix: ${{ steps.route.outputs.matrix || steps.platforms.outputs.matrix }}'), 'the platforms job outputs the matrix');
   // The test job: a timed entry runs its one test without coverage, and keeps its results apart
   const unitJob = jobLines(workflow, 'unit').map((line) => line.trim());
   assert.ok(unitJob.includes('strategy:') && unitJob.some((line) => line === 'matrix: ${{ fromJSON(needs.platforms.outputs.matrix) }}'), 'the matrix from the platforms job');
   assert.ok(unitJob.includes("name: unit (${{ matrix.os }}${{ matrix.timed && format(', {0}', matrix.timed) || '' }})"), 'a timed job named after its test');
   const coverageStep = step(unitJob, 'Tests with coverage');
-  assert.ok(coverageStep.includes('if: ${{ !matrix.timed }}'), 'a timed job runs no coverage');
+  assert.ok(coverageStep.includes("if: ${{ !matrix.timed && github.event_name == 'pull_request' }}"), 'a timed job runs no coverage');
   const timedTestStep = step(unitJob, 'A timed test, without coverage');
   // Through the step's environment, which any shell reads (Windows' default is pwsh): never into the command line
-  assert.ok(timedTestStep.includes('if: ${{ matrix.timed }}') && timedTestStep.includes('TESTS: files:${{ matrix.timed }}')
+  assert.ok(timedTestStep.includes("if: ${{ matrix.timed && github.event_name == 'pull_request' }}") && timedTestStep.includes('TESTS: files:${{ matrix.timed }}')
     && timedTestStep.includes('run: npm run test:ci'), `its one test, through the environment:\n${timedTestStep.join('\n')}`);
   assert.ok(step(unitJob, 'Upload the test results').includes("name: results-${{ matrix.os }}${{ matrix.id && format('-{0}', matrix.id) || '' }}"), 'each timed job its own artifact');
   assert.ok(step(unitJob, 'Upload the coverage report').includes('if: ${{ always() && !matrix.timed }}'), 'and no coverage artifact');
@@ -601,13 +601,12 @@ export default async function run() {
     'echo "tests_from=$tests_from" >> "$GITHUB_OUTPUT"',
   ]) assert.ok(commitStep.includes(line), `the commit step: ${line}`);
   assert.ok(platformsJob.includes('tests_from: ${{ steps.head.outputs.tests_from }}'), 'its output');
-  // The test job: test/ exactly as tests_from has it, before anything installs or runs
-  const crossStep = step(unitJob, 'The tests from tests_from');
-  for (const line of ['shell: bash', 'TESTS_FROM: ${{ needs.platforms.outputs.tests_from }}', 'if [[ -n "$TESTS_FROM" ]]; then',
-    'git fetch --no-tags --depth=1 origin "$TESTS_FROM"', 'git rm -r -q test', 'git checkout "$TESTS_FROM" -- test']) {
-    assert.ok(crossStep.includes(line), `the cross step: ${line}\n${crossStep.join('\n')}`);
+  // Cross-tests execute through the trusted harness; the product checkout is not overwritten.
+  const crossStep = step(unitJob, 'Independent product and tests');
+  for (const line of ['shell: bash', 'TESTS_FROM: ${{ needs.platforms.outputs.tests_from }}',
+    'node .ci-harness/test/independent-ci.js --root . --product "$PRODUCT" --tests "${TESTS_FROM:-$PRODUCT}" --harness "$HARNESS" --out ci-output']) {
+    assert.ok(crossStep.includes(line), `the independent step: ${line}`);
   }
-  assert.ok(unitJob.indexOf('- name: The tests from tests_from') < unitJob.indexOf('- name: Install'), 'before the install');
   assert.ok(commentJob.some((line) => line.trim() === 'TESTS_FROM: ${{ needs.platforms.outputs.tests_from }}'), 'the comment names both commits');
   console.log('✓ cross-tests: tests_from\'s test/ on commit\'s code, checked like commit, both named, no PR comment');
 

@@ -7,6 +7,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import * as ci from './helpers/independent-ci.js';
+import {verifyArtifacts} from './helpers/execution-evidence.js';
 
 const harnessRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const temp = () => fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'dc-independent-')));
@@ -75,4 +76,54 @@ test('receipts reject stale identities, failed execution and missing/mismatched 
   const good={...expected,phase:'complete',exit:0,outputs:[{file:'coverage/coverage-summary.json',sha256:'d'.repeat(64)}]};
   assert.doesNotThrow(()=>ci.verifyExecution(good,expected));
   for (const change of [{product:'e'.repeat(40)},{tests:'e'.repeat(40)},{harness:'e'.repeat(40)},{run:'11'},{attempt:'1'},{exit:1},{phase:'build'},{outputs:[]}]) assert.throws(()=>ci.verifyExecution({...good,...change},expected));
+});
+test('TypeScript coverage uses the selected product source map',async()=> {
+  const {root}=fixture();
+  try {
+    fs.rmSync(path.join(root,'src/a.js'));
+    write(root,'src/a.ts','export const answer = (value: boolean): number => value ? 1 : 2;\n');
+    write(root,'tsconfig.json',JSON.stringify({compilerOptions:{target:'ES2022',module:'NodeNext',moduleResolution:'NodeNext',rootDir:'src',outDir:'dist',types:[],skipLibCheck:true},include:['src/**/*.ts']}));
+    const compiler=path.join(harnessRoot,'node_modules/typescript/bin/tsc').replaceAll('\\','/');
+    write(root,'package.json',JSON.stringify({name:'fixture',version:'1.0.0',type:'module',scripts:{build:`node "${compiler}" -p tsconfig.json`}}));
+    write(root,'test/test-answer.js',"import assert from 'node:assert/strict'; import {answer} from '../dist/a.js'; assert.equal(answer(true),1);\n");
+    const product=commit(root,'TypeScript product without coverage framework');
+    const out=path.join(root,'test-results/ts');
+    assert.equal(await ci.runIndependent({root,product,tests:product,harnessRoot,outDir:out,selection:'test'}),0);
+    const report=JSON.parse(fs.readFileSync(path.join(out,'coverage/coverage-summary.json')));
+    assert.deepEqual(Object.keys(report).filter(key=>key!=='total').map(key=>key.replaceAll('\\','/').split('/').slice(-2).join('/')),['src/a.ts']);
+  } finally {fs.rmSync(root,{recursive:true,force:true});}
+});
+test('successful process without results fails and replaces stale output',async()=> {
+  const {root,old}=fixture();
+  try {
+    const out=path.join(root,'test-results/missing'); write(out,'coverage/stale.json','stale');
+    const command=(exe,args,cwd,env)=>args.some(arg=>arg.endsWith('/test/run-ci.js') || arg.endsWith('\\test\\run-ci.js')) ? 0 : spawnSync(exe,args,{cwd,env,stdio:'ignore'}).status;
+    assert.equal(await ci.runIndependent({root,product:old,tests:old,harnessRoot,outDir:out,selection:'test',command}),1);
+    assert.equal(fs.existsSync(path.join(out,'coverage/stale.json')),false);
+    assert.notEqual(JSON.parse(fs.readFileSync(path.join(out,'execution.json'))).phase,'complete');
+  } finally {fs.rmSync(root,{recursive:true,force:true});}
+});
+test('publication refuses a missing receipt, stale receipt and modified result bytes',()=> {
+  const dir=temp();
+  try {
+    const expected={product:'a'.repeat(40),tests:'b'.repeat(40),harness:'c'.repeat(40),run:'1',attempt:'1'};
+    assert.throws(()=>verifyArtifacts({results:dir,coverage:dir,expected}));
+    write(dir,'execution.json',JSON.stringify({...expected,phase:'complete',exit:0,outputs:[{file:'test-results/suite/results.json',sha256:'d'.repeat(64)}]}));
+    assert.throws(()=>verifyArtifacts({results:dir,coverage:dir,expected}));
+    write(dir,'suite/results.json','modified');
+    assert.throws(()=>verifyArtifacts({results:dir,coverage:dir,expected}));
+    assert.throws(()=>verifyArtifacts({results:dir,coverage:dir,expected:{...expected,product:'e'.repeat(40)}}));
+  } finally {fs.rmSync(dir,{recursive:true,force:true});}
+});
+test('output guard rejects source roots, ancestors and Windows case aliases before deletion',()=> {
+  const dir=temp();
+  try {
+    const source=path.join(dir,'source');fs.mkdirSync(source);write(source,'keep.txt','keep');
+    assert.throws(()=>ci.safeOutput(source,[source]),/source checkout/);
+    assert.throws(()=>ci.safeOutput(dir,[source]),/source checkout/);
+    assert.throws(()=>ci.safeOutput(path.parse(source).root,[source]),/source checkout/);
+    if (process.platform==='win32') assert.throws(()=>ci.safeOutput(source.toUpperCase(),[source]),/source checkout/);
+    assert.equal(ci.safeOutput(path.join(dir,'output'),[source]),path.join(dir,'output'));
+    assert.equal(fs.readFileSync(path.join(source,'keep.txt'),'utf8'),'keep');
+  } finally {fs.rmSync(dir,{recursive:true,force:true});}
 });
