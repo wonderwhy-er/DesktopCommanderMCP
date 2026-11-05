@@ -1,7 +1,7 @@
 /** Reusable-workflow prefixes select the same artifacts without weakening execution identity. */
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
-import {platformJobs,resultsArtifactOf} from './helpers/ci-platforms.js';
+import {platformJobs,resultsArtifactOf,matrixFor} from './helpers/ci-platforms.js';
 import {artifactAttempt} from './helpers/execution-evidence.js';
 
 const os='ubuntu-latest';
@@ -33,3 +33,10 @@ test('timed reusable jobs bind separately by artifact rather than rejecting diff
 for(const names of [[`unit (${os})`,`tests / unit (${os})`],[`first / unit (${os})`,`second / unit (${os})`]]) {
   test(`multiple eligible caller producers are refused: ${names.join(', ')}`,()=>assert.throws(()=>artifactAttempt(selection(names))));
 }
+test('timed matrix refuses different names that share an artifact ID',()=> {
+  assert.throws(()=>matrixFor([os],{tests:'timed',timed:['repro/test-a.js','repro-test-a.js']}),/artifact/);
+});
+test('timed matrix keeps distinct test artifact IDs',()=> {
+  const matrix=matrixFor([os],{tests:'timed',timed:['test-a.js','repro/test-a.js']});
+  assert.equal(matrix.include.length,2); assert.equal(new Set(matrix.include.map(item=>item.id)).size,2);
+});
