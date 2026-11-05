@@ -4,9 +4,9 @@
 # results and coverage. On demand it runs no tests of its own (gh workflow run
 # review.yml -f commit=<sha> -f base=<sha or branch>). Claude Code reads the PR's
 # code with read-only tools and answers with findings, by the rules in
-# .github/review-prompt.md, through test/ci-review.js run: the same script as
-# `npm run review -- A..B` on a machine. A last job posts the findings as one review
-# with event COMMENT, and the job summary has them all. On demand, check=text checks
+# .github/review-prompt.md, through the approved pinned test/ci-review.js runner.
+# Posting the findings as a COMMENT review requires the operator's posting gate.
+# The job summary retains the findings. On demand, check=text checks
 # the PR's description against the change instead, in the job summary only. See
 # test/README.md.
 ---
@@ -123,9 +123,9 @@ jobs:
     timeout-minutes: 15
     # The company API key is used here, on the PR's code: so the token only reads, no
     # other secret is named, and the model has read-only file tools, no shell, no
-    # web and no GitHub tools (test/ci-review.js run). Our script and prompt are
-    # read from the workflow ref. A dispatch --ref selects that code; the requested
-    # head/base are checked out separately below. A fork PR gets no secret.
+    # web and no GitHub tools (test/ci-review.js run). The checkout pins our script
+    # and prompt to the approved Haiku pipeline commit. The requested head/base
+    # are checked out separately below. A fork PR gets no secret.
     # Writing is the post job's.
     # The script stops Claude Code after 12 minutes, inside this job's 15.
     # Reads only: actions: read is for a text check's gh run view
