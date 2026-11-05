@@ -208,6 +208,48 @@ function writeReview({ modelJson, change: { head, base, diff }, tests, out, cont
   console.log(`${markdown.split('\n')[1]}\n${where}`);
 }
 
+function contextFor({ option, every, options, change }) {
+  const contextFile = option('--context');
+  if (every('--context').length > 1 ||
+      (options.includes('--context') && (!contextFile || contextFile.startsWith('--')))) {
+    throw new Error('Review context: --context needs one file.');
+  }
+  if (contextFile && process.env.REVIEW_CONTEXT_JSON) {
+    throw new Error('Review context: use a file or workflow input, not both.');
+  }
+  if (contextFile && fs.statSync(contextFile).size > MAX_REVIEW_CONTEXT_BYTES) {
+    throw new Error('Review context: input exceeds 48 KiB.');
+  }
+  const rawContext = contextFile ? fs.readFileSync(contextFile, 'utf8') : process.env.REVIEW_CONTEXT_JSON;
+  if (contextFile && !rawContext.trim()) throw new Error('Review context: file is empty.');
+  return reviewContextOf(rawContext, change);
+}
+
+function testsFor({ option, context, change }) {
+  // The run's tests (CI: its artifacts, --tests) or this machine's last coverage run at B
+  const testsDirectory = option('--tests') && path.resolve(option('--tests'));
+  const automated = testsDirectory
+    ? testsOf(testsDirectory)
+    : localTestsOf({ root: ROOT, head: change.head });
+  if (testsDirectory && fs.existsSync(path.join(testsDirectory, 'review-source.json'))) {
+    if (!automated) throw new Error('Review source: verified prior results are missing.');
+    Object.assign(automated, sourceEvidenceOf(testsDirectory, change));
+  }
+  const measured = measurementTestsOf(context);
+  if (automated && measured) {
+    throw new Error('Review context: choose current CI artifacts or selected native measurements.');
+  }
+  const ran = measured ?? automated;
+  const tests = ran && {
+    platforms: ran.platforms,
+    failed: ran.failed,
+    // Only files the coverage counts: the rules the coverage check holds the report to (.c8rc.json's files)
+    uncovered: ran.lcovs.length ? uncoveredOf({ diff: change.diff, lcovs: ran.lcovs, counted: isCounted }) : null,
+    ...(ran.provenance ? { selected: ran.selected, coverageScope: ran.coverageScope, provenance: ran.provenance } : {}),
+  };
+  return { tests, lcovs: ran?.provenance?.origin === 'github-actions' ? ran.lcovs : [] };
+}
+
 async function run(range, ...options) {
   // The key before anything else: without one, no work and no pass
   const key = process.env.ANTHROPIC_API_KEY;
@@ -236,48 +278,18 @@ async function run(range, ...options) {
     fs.rmSync(path.join(out, file), { force: true });
   }
   const change = changeOf(range, option('--repo', ROOT));
-  const contextFile = option('--context');
-  if (every('--context').length > 1 ||
-      (options.includes('--context') && (!contextFile || contextFile.startsWith('--')))) {
-    throw new Error('Review context: --context needs one file.');
-  }
-  if (contextFile && process.env.REVIEW_CONTEXT_JSON) {
-    throw new Error('Review context: use a file or workflow input, not both.');
-  }
-  if (contextFile && fs.statSync(contextFile).size > MAX_REVIEW_CONTEXT_BYTES) {
-    throw new Error('Review context: input exceeds 48 KiB.');
-  }
-  const rawContext = contextFile ? fs.readFileSync(contextFile, 'utf8') : process.env.REVIEW_CONTEXT_JSON;
-  if (contextFile && !rawContext.trim()) throw new Error('Review context: file is empty.');
-  const context = reviewContextOf(rawContext, change);
+  const context = contextFor({ option, every, options, change });
   const pull = process.env.PR ? await github('GET', `/repos/${repo}/pulls/${Number(process.env.PR)}`) : {};
-  // The run's tests (CI: its artifacts, --tests) or this machine's last coverage run at B
-  const testsDirectory = option('--tests') && path.resolve(option('--tests'));
-  const automated = testsDirectory
-    ? testsOf(testsDirectory)
-    : localTestsOf({ root: ROOT, head: change.head });
-  if (testsDirectory && fs.existsSync(path.join(testsDirectory, 'review-source.json'))) {
-    if (!automated) throw new Error('Review source: verified prior results are missing.');
-    Object.assign(automated, sourceEvidenceOf(testsDirectory, change));
-  }
-  const measured = measurementTestsOf(context);
-  if (automated && measured) throw new Error('Review context: choose current CI artifacts or selected native measurements.');
-  const ran = measured ?? automated;
-  const tests = ran && {
-    platforms: ran.platforms,
-    failed: ran.failed,
-    // Only files the coverage counts: the rules the coverage check holds the report to (.c8rc.json's files)
-    uncovered: ran.lcovs.length ? uncoveredOf({ diff: change.diff, lcovs: ran.lcovs, counted: isCounted }) : null,
-    ...(ran.provenance ? { selected: ran.selected, coverageScope: ran.coverageScope, provenance: ran.provenance } : {}),
-  };
+  const { tests, lcovs } = testsFor({ option, context, change });
   // A text check (--text): each claim in a text against the change, with the results files it cites
   const text = option('--text') && textToCheck(option('--text'), pull);
   const prompt = promptFor({ change, pull, tests, text, context, results: text ? resultsOf(every('--results')) : [] });
   fitsTheWindow(prompt, change.diff);
 
   const { git, head, diff } = change;
-  const lcovs = ran?.provenance?.origin === 'github-actions' ? ran.lcovs : [];
-  const modelJson = await askClaudeCode({ prompt, head, git, key, out, diff, shell: Boolean(text), context, tests, lcovs });
+  const modelJson = await askClaudeCode({
+    prompt, head, git, key, out, diff, shell: Boolean(text), context, tests, lcovs,
+  });
   const contextReceipt = contextReceiptOf(context, prompt);
   if (contextReceipt) {
     fs.mkdirSync(out, { recursive: true });

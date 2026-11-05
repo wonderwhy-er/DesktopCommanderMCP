@@ -15,6 +15,7 @@
  * Against a stand-in for GitHub's API, one for Gemini CLI, and a git repo in a temp folder.
  */
 import assert from 'assert';
+import { test } from 'node:test';
 import { spawn, spawnSync } from 'child_process';
 import fs from 'fs';
 import http from 'http';
@@ -564,5 +565,15 @@ export default async function run() {
   assert.ok(postJob.some((line) => line.trim() === 'run: node test/ci-review.js post review >> "$GITHUB_STEP_SUMMARY"'), 'the job summary, with or without a PR');
   console.log('✓ the workflow: the key\'s job reads with a read-only token and can\'t write; the writing job holds no secret');
 }
+
+test('an unknown review command prints usage and exits 2 without requiring a key', () => {
+  const done = spawnSync(process.execPath, [path.join(ROOT, 'test', 'ci-review.js'), 'unknown-command'], {
+    encoding: 'utf8',
+    env: { ...process.env, ANTHROPIC_API_KEY: '', GH_TOKEN: '', GITHUB_TOKEN: '' },
+  });
+  assert.strictEqual(done.status, 2, done.stderr);
+  assert.match(done.stderr, /Usage: npm run review/);
+  assert.ok(!done.stderr.includes('No Anthropic API key'));
+});
 
 runIfMain(import.meta.url, run);
