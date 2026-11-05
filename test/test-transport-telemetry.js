@@ -3,7 +3,6 @@ import assert from 'node:assert/strict';
 import https from 'node:https';
 import { EventEmitter } from 'node:events';
 import { syncBuiltinESMExports } from 'node:module';
-import { parseDeviceTransportPayload } from '@desktop-commander/telemetry-contract/transport';
 import { configManager } from '../dist/config-manager.js';
 import { observeTransport } from '../dist/remote-device/transport-telemetry.js';
 import { capture } from '../dist/utils/capture.js';
@@ -65,6 +64,7 @@ assert.equal('tool_name' in observeTransport({ stage: 'execution_start', callId:
     userId: 'user-1', toolName: 'x'.repeat(129) }), false);
 assert.equal(observeTransport({ stage: 'operation_end', callId: 'bad id', deviceId: 'device-1', userId: 'user-1' }), null);
 assert.equal(observeTransport({ stage: '', callId: 'call-1', deviceId: 'device-1', userId: 'user-1' }), null);
+assert.equal(observeTransport({ stage: 42, callId: 'call-1', deviceId: 'device-1', userId: 'user-1' }), null);
 for (const userId of [undefined, '', ' ', 'x'.repeat(129)]) {
     assert.equal(observeTransport({ stage: 'execution_start', callId: 'call-1', deviceId: 'device-1', userId }), null);
 }
@@ -113,19 +113,18 @@ try {
     assert.equal(transportBody.user_id, 'user-1');
     assert.deepEqual(transportBody.events[0].params, wireObservation);
     assert.equal('platform' in transportBody.events[0].params, false);
-    const parsed = parseDeviceTransportPayload(transportBody);
-    assert.equal(parsed.client_id, 'installation-1');
-    assert.equal(parsed.events[0].params.call_id, 'call-wire');
-    assert.equal(parsed.events[0].params.source, 'device');
-    assert.equal(parsed.events[0].params.monotonic_ms, undefined);
-    assert.equal('IS_MQTT_EXECUTION_ENABLED' in parsed.events[0].params, false);
+    assert.equal(transportBody.client_id, 'installation-1');
+    assert.equal(transportBody.events[0].params.call_id, 'call-wire');
+    assert.equal(transportBody.events[0].params.stage, transportBody.events[0].name);
+    assert.ok(!Number.isNaN(Date.parse(transportBody.events[0].params.timestamp_utc)));
+    assert.equal(transportBody.events[0].params.monotonic_ms, undefined);
+    assert.equal('IS_MQTT_EXECUTION_ENABLED' in transportBody.events[0].params, false);
 
     const ordinaryBody = sent.find(body => body.events[0].name === 'ordinary_event');
     assert.equal('telemetry_type' in ordinaryBody, false);
     assert.equal('user_id' in ordinaryBody, false);
     assert.equal(ordinaryBody.events[0].params.custom_field, 'kept');
     assert.equal(typeof ordinaryBody.events[0].params.platform, 'string');
-    assert.throws(() => parseDeviceTransportPayload(ordinaryBody), /Invalid transport/);
 } finally {
     clearTimeout(sendTimeout);
     https.request = originalRequest;
@@ -134,4 +133,4 @@ try {
     configManager.getOrCreateClientId = originalGetOrCreateClientId;
     process.env.DESKTOP_COMMANDER_DISABLE_TELEMETRY = originalDisableTelemetry;
 }
-console.log('PASS transport observations: contract accepted wire payload; ordinary capture unchanged');
+console.log('PASS transport observations: required wire fields and identity retained; ordinary capture unchanged');

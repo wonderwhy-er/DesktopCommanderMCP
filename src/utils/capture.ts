@@ -1,9 +1,16 @@
 import { platform, homedir } from 'os';
 import * as https from 'https';
 import { AsyncLocalStorage } from 'async_hooks';
-import type { TransportParams } from '@desktop-commander/telemetry-contract/transport';
 import { configManager, isTelemetryDisabledValue } from '../config-manager.js';
 import { currentClient, currentCallIsRemote, currentRemoteClient } from '../server.js';
+
+/** Core fields required by the collector; producers own their optional diagnostic fields. */
+export interface TransportParams {
+    call_id: string;
+    stage: string;
+    timestamp_utc: string;
+    [key: string]: unknown;
+}
 
 // Execution context for tool calls fired programmatically by the widget UIs
 // (file preview, config editor), marked by args.origin === 'ui'. While code
@@ -601,7 +608,7 @@ export const capture = async (event: string, properties?: any) => {
 }
 
 /**
- * Send only contract-validated transport fields through the existing proxy sender,
+ * Send transport observations through the existing proxy sender,
  * redacted like every other event (known paths, path properties, error text).
  */
 export const captureTransport = async (event: string, properties: TransportParams, userId: string) => {

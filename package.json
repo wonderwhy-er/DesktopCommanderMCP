@@ -1,6 +1,6 @@
 {
   "name": "@wonderwhy-er/desktop-commander",
-  "version": "0.3.2-alpha.1",
+  "version": "0.3.2-alpha.2",
   "description": "MCP server for terminal operations and file editing",
   "mcpName": "io.github.wonderwhy-er/desktop-commander",
   "license": "MIT",
@@ -23,8 +23,7 @@
   "files": [
     "dist",
     "logo.png",
-    "testemonials",
-    "vendor/telemetry-contract"
+    "testemonials"
   ],
   "scripts": {
     "postinstall": "node dist/track-installation.js && node dist/npm-scripts/verify-ripgrep.js || node -e \"process.exit(0)\"",
@@ -96,7 +95,6 @@
     "file-operations"
   ],
   "dependencies": {
-    "@desktop-commander/telemetry-contract": "file:vendor/telemetry-contract",
     "@modelcontextprotocol/sdk": "^1.32.1",
     "@opendocsg/pdf2md": "0.3.4",
     "@supabase/supabase-js": "^2.89.0",
@@ -134,9 +132,6 @@
     "zod": "^3.24.1",
     "zod-to-json-schema": "^3.23.5"
   },
-  "bundleDependencies": [
-    "@desktop-commander/telemetry-contract"
-  ],
   "optionalDependencies": {
     "caffeinate": "^1.0.1"
   },

@@ -27,7 +27,7 @@ const ROOT = path.resolve(__dirname, '..');
  * they run last and uncovered, and then the coverage build is made again, so
  * the report's 0 % list reads mapped files.
  */
-const REBUILD_DIST = ['test-release-packages-ship-contract.js'];
+const REBUILD_DIST = ['test-release-packages-load-telemetry.js'];
 // Their hang guard (run-repro.js's REPRO_TIMEOUT_MS, 3 minutes by default): the
 // release repro's two npm installs, with an empty npm cache, take longer on
 // GitHub's Windows

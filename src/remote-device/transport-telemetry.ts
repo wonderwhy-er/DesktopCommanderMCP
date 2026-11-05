@@ -1,5 +1,4 @@
 import { randomUUID } from 'node:crypto';
-import { sanitizeTransportEvent } from '@desktop-commander/telemetry-contract/transport';
 import { captureTransport } from '../utils/capture.js';
 
 const ID = /^[A-Za-z0-9_-]{1,128}$/;
@@ -18,6 +17,7 @@ export function observeTransport(input: TransportObservation) {
         const callId = receipt ? input.payload?.call_id : input.callId;
         const deviceId = input.deviceId;
         const userId = input.userId;
+        if (typeof input.stage !== 'string' || !input.stage) return null;
         if (typeof callId !== 'string' || !ID.test(callId) ||
             typeof deviceId !== 'string' || !ID.test(deviceId) ||
             typeof userId !== 'string' || !ID.test(userId)) return null;
@@ -39,14 +39,14 @@ export function observeTransport(input: TransportObservation) {
             } : {}),
             ...(!receipt && typeof input.toolName === 'string' && input.toolName.length > 0 &&
                 input.toolName.length <= 128 ? { tool_name: input.toolName } : {}),
-            ...(!receipt && input.operation ? { operation: input.operation } : {}),
-            ...(operationId ? { operation_id: operationId } : {}),
+            ...(!receipt && typeof input.operation === 'string' && input.operation ? { operation: input.operation } : {}),
+            ...(typeof operationId === 'string' && operationId ? { operation_id: operationId } : {}),
             observation_id: observationId,
             source_process_id: PROCESS_ID,
             schema_version: 1,
             timestamp_utc,
         };
-        void captureTransport(input.stage, sanitizeTransportEvent(input.stage, event), userId);
+        void captureTransport(input.stage, event, userId);
         return event;
     } catch {
         // Telemetry must never affect command handling.

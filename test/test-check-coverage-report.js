@@ -1,7 +1,6 @@
 /**
  * The coverage report's check (check-coverage-report.js): it counts the product
- * code only (src/, the install scripts, the vendored telemetry contract without
- * its tests), never test/ (the tests and the tooling there, which have tests of
+ * code only (src/ and the install scripts), never test/ (the tests and the tooling there, which have tests of
  * their own), the build or node_modules; .c8rc.json includes nothing under test/;
  * a .ts file that compiles to no JavaScript (types only) isn't counted, and
  * .c8rc.json excludes exactly those; and the check fails a report that misses a
@@ -21,10 +20,10 @@ import { createTempDir } from './helpers/test-env.js';
 const entry = { lines: { covered: 0, total: 1 }, statements: { covered: 0, total: 1 }, branches: { covered: 0, total: 0 }, functions: { covered: 0, total: 0 } };
 
 export default async function run() {
-  for (const file of ['src/tools/edit.ts', 'src/remote-device/scripts/x.js', 'setup-claude-server.js', 'vendor/telemetry-contract/transport.js']) {
+  for (const file of ['src/tools/edit.ts', 'src/remote-device/scripts/x.js', 'setup-claude-server.js']) {
     assert.ok(isCounted(file), `${file} is counted`);
   }
-  for (const file of ['dist/index.js', 'node_modules/c8/index.js', 'src/node_modules/x/index.js', 'src/types.d.ts', 'vendor/telemetry-contract/transport.test.js',
+  for (const file of ['dist/index.js', 'node_modules/c8/index.js', 'src/node_modules/x/index.js', 'src/types.d.ts',
     'test/test-ci-platforms.js', 'test/helpers/run-if-main.js', 'scripts/build.js',
     'test/run-ci.js', 'test/run-coverage.js', 'test/check-coverage-report.js', 'test/helpers/node-test-runner.js']) {
     assert.ok(!isCounted(file), `${file} isn't counted`);
@@ -36,7 +35,7 @@ export default async function run() {
   assert.deepStrictEqual(c8rc.include.filter((pattern) => pattern.startsWith('test/')), [], '.c8rc.json includes nothing under test/');
   const counted = countedFiles();
   assert.deepStrictEqual(counted.filter((file) => file.startsWith('test/')), [], 'no counted file is under test/');
-  for (const file of [...INSTALL_SCRIPTS, 'src/index.ts', 'vendor/telemetry-contract/transport.js']) {
+  for (const file of [...INSTALL_SCRIPTS, 'src/index.ts']) {
     assert.ok(counted.includes(file), `${file} is among the counted files`);
   }
   assert.ok(counted.every(isCounted), 'every counted file passes isCounted');

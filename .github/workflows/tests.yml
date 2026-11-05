@@ -210,7 +210,7 @@ jobs:
           cache: ${{ github.event_name == 'pull_request' && 'npm' || '' }}
       # npm 11: Node 22's npm 10 runs the prepare build inside `npm pack` even with
       # ignore-scripts, into the JSON the release test reads
-      # (repro/test-release-packages-ship-contract.js)
+      # (repro/test-release-packages-load-telemetry.js)
       - name: npm 11
         run: npm install --global npm@11
       # Ubuntu keeps Chrome for Testing out of user namespaces (AppArmor), so

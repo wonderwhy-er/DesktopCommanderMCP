@@ -67,14 +67,13 @@ Each runner writes, in `test-results/suite/`, `test-results/repro/` or `test-res
 - **What it counts:** the product code, each file shown as itself (`.c8rc.json`). Counted are:
   - every file under `src/` (`.ts` and `.js`);
   - the install scripts the package ships at its root: `setup-claude-server.js` (bin `setup`), `uninstall-claude-server.js` (bin `remove`), `track-installation.js` (postinstall);
-  - the vendored `vendor/telemetry-contract/`, without its tests.
 - **Not counted:** `dist/`, `node_modules/`, `scripts/` and `test/`, as in a usual setup. `test/` holds the tests and the runners, coverage and CI scripts. Those scripts have tests of their own (`test/test-coverage-areas.js`, `test-check-coverage-report.js`, `test-map-copied-scripts.js`, `test-run-coverage.js`, `test-run-ci.js`, `test-ci-comment.js`, `test-ci-platforms.js`, `test-ci-review.js`, `test-select-tests.js`, `test-node-test-runner.js`, `test-runner-scripts.js`), which still run.
 - **Type-only files aren't counted either:** a `.ts` file under `src/` that compiles to no JavaScript, such as `src/types.ts`, holds nothing a test could run. `.c8rc.json`'s `exclude` names each one, and the check fails when that list and the real set differ.
 - **How:** c8 follows every Node process that keeps the test's environment, the server the tests start included, and maps `dist/` back to `src/` through the source maps of the coverage build: `tsconfig.coverage.json` for the TypeScript, and `test/map-copied-scripts.js` for the plain `.js` files the build copies into `dist/` (from `src/`, and the install scripts).
 - **Files no test loads** show at 0 %.
-- **By area:** the run prints, and the PR comment shows, the numbers per folder of `src/` (`src/ui` among them), plus `install scripts` and `vendor/telemetry-contract`, then one total (`test/coverage-areas.js`).
+- **By area:** the run prints, and the PR comment shows, the numbers per folder of `src/` (`src/ui` among them), plus `install scripts`, then one total (`test/coverage-areas.js`).
 - **The npm package never ships those source maps:** the next `npm run build` drops them.
-- **A test that rebuilds `dist/`** would drop those source maps for everything after it. `repro/test-release-packages-ship-contract.js` does, through `npm pack`, which runs the build under npm 10. Under coverage it runs last and uncovered, and the coverage build is made again after it (`test/run-ci.js`).
+- **A test that rebuilds `dist/`** would drop those source maps for everything after it. `repro/test-release-packages-load-telemetry.js` does, through `npm pack`, which runs the build under npm 10. Under coverage it runs last and uncovered, and the coverage build is made again after it (`test/run-ci.js`).
 - **The report is checked:** `test/check-coverage-report.js` fails on any file it doesn't count (a `dist/` file means something went unmapped) and on any counted file the report doesn't list.
 
 ## Per-change runs
@@ -125,7 +124,7 @@ A change to a shared module reaches most tests, because many tests start the who
   - Docker's tests (`test/docker/`) on Linux, outside coverage: one checks the shell installers, which coverage can't count, and the other runs the server inside the image. With none at the commit, that part passes and says so. On Windows and macOS they don't run, and the comment says why (GitHub's macOS runner has no Docker; its Windows runner has none for Linux containers);
   - the release-packages repro last, outside coverage (`test/run-ci.js`).
 
-  npm 11, because Node 22's own npm 10 runs the prepare build inside `npm pack` even with ignore-scripts, which breaks `repro/test-release-packages-ship-contract.js`.
+  npm 11, because Node 22's own npm 10 runs the prepare build inside `npm pack` even with ignore-scripts, which breaks `repro/test-release-packages-load-telemetry.js`.
 - **Artifacts:** each platform uploads `results-<runner>` (`test-results/`) and `coverage-<runner>` (`coverage/`), e.g. `coverage-ubuntu-latest`. They download as zip files (logged in); open the coverage report's `index.html`.
 - **The PR comment:** a last job writes one comment on the PR, with no prose. It has:
   - a heading with the commit;
