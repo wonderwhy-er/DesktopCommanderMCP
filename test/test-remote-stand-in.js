@@ -3,6 +3,9 @@
 /**
  * The remote stand-in (helpers/remote-stand-in.js) itself.
  *
+ * With `channel`, joins and heartbeats must receive replies in the requested
+ * Realtime protocol: objects for v1, arrays for v2. Both use real websockets.
+ *
  * Without `realtime` or `channel`, the stand-in refuses every websocket
  * upgrade with a 503, and the device tries again later. A device that resets
  * the connection while that answer is on its way must not stop the test
@@ -19,6 +22,7 @@
  */
 import assert from 'node:assert';
 import net from 'node:net';
+import WebSocket from 'ws';
 import { startRemoteStandIn } from './helpers/remote-stand-in.js';
 import { runIfMain } from './helpers/run-if-main.js';
 
@@ -79,12 +83,42 @@ function upgrade(standIn, { reset = false } = {}) {
   });
 }
 
+/** Sends messages over one real websocket and returns the stand-in's replies. */
+async function exchange(standIn, version, messages) {
+  const url = `${standIn.url.replace('http:', 'ws:')}/realtime/v1/websocket?apikey=${standIn.anonKey}&vsn=${version}`;
+  const socket = new WebSocket(url);
+  let timer;
+  try {
+    return await new Promise((resolve, reject) => {
+      const replies = [];
+      timer = setTimeout(() => reject(new Error(
+        `protocol ${version}: received ${replies.length} of ${messages.length} replies within ${ANSWER_DEADLINE_MS} ms`,
+      )), ANSWER_DEADLINE_MS);
+      socket.once('error', reject);
+      socket.once('close', () => reject(new Error(`protocol ${version}: websocket closed before all replies arrived`)));
+      socket.once('open', () => {
+        for (const message of messages) socket.send(JSON.stringify(message));
+      });
+      socket.on('message', (data) => {
+        try {
+          replies.push(JSON.parse(String(data)));
+          if (replies.length === messages.length) resolve(replies);
+        } catch (error) {
+          reject(error);
+        }
+      });
+    });
+  } finally {
+    clearTimeout(timer);
+    socket.terminate();
+  }
+}
+
 async function runTests() {
   const failures = [];
 
-  async function test(name, fn) {
-    // As the device tests start it: no realtime, no channel
-    const standIn = await startRemoteStandIn();
+  async function test(name, fn, options = {}) {
+    const standIn = await startRemoteStandIn(options);
     try {
       await fn(standIn);
       console.log(`✅ ${name}`);
@@ -108,6 +142,40 @@ async function runTests() {
     if (next !== REFUSED) problems.push(`the next upgrade was answered ${JSON.stringify(next)}, not with a 503`);
     assert.ok(problems.length === 0, problems.join('; '));
   });
+
+  // Supabase Realtime protocol: v1 uses objects; v2 uses [join_ref, ref, topic, event, payload].
+  // https://supabase.com/docs/guides/realtime/protocol
+  const protocols = [
+    {
+      version: '1.0.0',
+      messages: [
+        { join_ref: '1', ref: '1', topic: 'realtime:probe', event: 'phx_join', payload: {} },
+        { ref: '2', topic: 'phoenix', event: 'heartbeat', payload: {} },
+      ],
+      replies: [
+        { join_ref: '1', ref: '1', topic: 'realtime:probe', event: 'phx_reply', payload: { status: 'ok', response: {} } },
+        { ref: '2', topic: 'phoenix', event: 'phx_reply', payload: { status: 'ok', response: {} } },
+      ],
+    },
+    {
+      version: '2.0.0',
+      messages: [
+        ['1', '1', 'realtime:probe', 'phx_join', {}],
+        [null, '2', 'phoenix', 'heartbeat', {}],
+      ],
+      replies: [
+        ['1', '1', 'realtime:probe', 'phx_reply', { status: 'ok', response: {} }],
+        [null, '2', 'phoenix', 'phx_reply', { status: 'ok', response: {} }],
+      ],
+    },
+  ];
+  for (const protocol of protocols) {
+    await test(`protocol ${protocol.version}: joins and heartbeats receive replies in the same format`, async (standIn) => {
+      const replies = await exchange(standIn, protocol.version, protocol.messages);
+      assert.deepStrictEqual(replies, protocol.replies);
+      assert.strictEqual(standIn.heartbeatsAnswered, 1);
+    }, { channel: true });
+  }
 
   console.log(`\n${failures.length ? '🔴' : '✅'} remote stand-in: ${failures.length} failing test(s).`);
   return failures.length === 0 && !uncaught;
