@@ -865,7 +865,9 @@ interface OptionReading {
 function optionReadings(option: string, rules: PosixWrapper): (OptionReading | null)[] {
   // A switch keeps its value in its own word (runas /user:admin)
   if (rules.slash && option.startsWith('/')) return [{ next: 0 }];
-  const long = option.startsWith('--') ? option.slice(2) : rules.wordOptions ? option.slice(1) : undefined;
+  let long: string | undefined;
+  if (option.startsWith('--')) long = option.slice(2);
+  else if (rules.wordOptions) long = option.slice(1);
   if (long !== undefined) {
     const equals = long.indexOf('=');
     const name = longOption(equals === -1 ? long : long.slice(0, equals), rules);
@@ -874,12 +876,18 @@ function optionReadings(option: string, rules: PosixWrapper): (OptionReading | n
     const isProgram = name !== undefined && rules.programOptions?.long.includes(name);
     const role = name === undefined ? undefined : rules.operandRoles?.[name];
     const value = long.slice(equals + 1);
-    if (equals !== -1) return [isText ? { next: 0, text: value, role } : isProgram ? { next: 0, program: value } : { next: 0, role }];
+    if (equals !== -1) {
+      if (isText) return [{ next: 0, text: value, role }];
+      if (isProgram) return [{ next: 0, program: value }];
+      return [{ next: 0, role }];
+    }
     if (rules.equalsOnly) return [{ next: 0, role }];
     if (name === undefined) return [{ next: 0 }, { next: 1, uncertain: true }];
     if (isText) return [{ next: 1, text: '', role }];
     if (isProgram) return [{ next: 1, program: '' }];
-    return [{ next: rules.longPairs?.includes(name) ? 2 : rules.long?.includes(name) ? 1 : 0, role }];
+    if (rules.longPairs?.includes(name)) return [{ next: 2, role }];
+    if (rules.long?.includes(name)) return [{ next: 1, role }];
+    return [{ next: 0, role }];
   }
   if (rules.groupValues === 'words') return groupWordReadings(option, rules);
   const readings: (OptionReading | null)[] = [];
