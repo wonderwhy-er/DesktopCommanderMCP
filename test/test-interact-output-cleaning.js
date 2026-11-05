@@ -65,6 +65,9 @@ const CASES = [
   ['python -i printing lines that start like prompts', '+ a\n> b\n>>> c\n>>> ', "print('+ a\\n> b\\n>>> c')", '+ a\n> b\n>>> c'],
   ['a diff from a shell reading commands without a prompt', 'diff --git a/f b/f\n+added\n+ added\n-removed\n', 'git diff', 'diff --git a/f b/f\n+added\n+ added\n-removed', false],
   ['bash -i tracing a command (set -x)', '+ echo hi\nhi\n$ ', 'echo hi', '+ echo hi\nhi\n$'],
+  // Program stderr can match a later input line; it remains output, even beside shell prompts.
+  ['bash -i printing a later silent command to stderr', 'bash-5.2$ a\ntrue\nbash-5.2$ ', "printf 'a\\ntrue\\n' >&2\ntrue", 'bash-5.2$ a\ntrue\nbash-5.2$', true, true],
+  ['bash -i printing a later command to stderr', 'bash-5.2$ echo b\nbash-5.2$ b\nbash-5.2$ ', "printf 'echo b\\n' >&2\necho b", 'bash-5.2$ echo b\nbash-5.2$ b\nbash-5.2$'],
   // Prompts where the REPL printed them
   ['python -i, both prompts after the results', '1\n2\n>>> >>> ', '1\n2', '1\n2'],
   ['python -i, the prompts before the result', '>>> >>> 5\n', 'x = 5\nx', '5'],
@@ -88,8 +91,9 @@ function check(ok, message) {
 
 function testCleaning() {
   console.log('\n--- the output returned for an input ---');
-  for (const [what, output, input, expected, readAtPrompt = true] of CASES) {
-    const cleaned = cleanProcessOutput(output, input, readAtPrompt);
+  for (const [what, output, input, expected, readAtPrompt = true, allStderr = false] of CASES) {
+    const sources = allStderr ? [{ start: 0, end: output.length }] : undefined;
+    const cleaned = cleanProcessOutput(output, input, readAtPrompt, sources);
     check(cleaned === expected, `${what}: ${JSON.stringify(input)} should return ${JSON.stringify(expected)}, got ${JSON.stringify(cleaned)}`);
   }
 }
@@ -129,12 +133,12 @@ async function testNoPrompt() {
 }
 
 // A real shell session: PowerShell on Windows, bash on macOS and Linux (the pwsh preinstalled on GitHub's Ubuntu
-// runner wraps its prompt in terminal codes). Its output for "echo a" and "echo b", up to the next prompt; bash
-// writes its prompt to stderr, so the prompt it read "echo b" at arrives before or after "a".
+// runner wraps its prompt in terminal codes). --noediting disables Bash's input copies when reading from a pipe;
+// its prompts and program stderr remain intact. Its prompt can arrive before or after stdout's answer.
 async function testShell() {
   const [name, command, answer] = process.platform === 'win32'
     ? ['PowerShell', 'powershell -NoLogo', /📤 Output:\na\r?\n(b\r?\n)?PS /]
-    : ['bash', 'bash --norc --noprofile -i', /📤 Output:\n(bash-[\d.]+\$ )?a\n((bash-[\d.]+\$ )?b\n)?/];
+    : ['bash', 'bash --norc --noprofile --noediting -i', /📤 Output:\n(bash-[\d.]+\$ )?a\n((bash-[\d.]+\$ )?b\n)?/];
   console.log(`\n--- interact_with_process in a real ${name} session: two lines ---`);
   const started = await startProcess({ command, timeout_ms: 10_000 });
   const pid = started.structuredContent?.pid;

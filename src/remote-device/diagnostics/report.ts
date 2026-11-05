@@ -10,6 +10,7 @@ import { fileURLToPath } from 'url';
 import PizZip from 'pizzip';
 import { parseConfig } from '../../config-manager.js';
 import { VERSION } from '../../version.js';
+import { LAUNCHER_PID_ARGUMENT } from '../../utils/threadpool-size.js';
 import { deviceLogNames, getDeviceLogDir, cleanLine } from './device-log.js';
 import { redact } from './redact.js';
 import { savedUserId, uploadReport } from './upload.js';
@@ -413,10 +414,10 @@ function isDesktopCommanderEntry(file: string, packageNames: Map<string, string 
  * dist/index.js (started by an MCP client, npx, or `remote`'s local MCP), not
  * followed by `remote` / `setup` / `remove`, and not this report. A shell
  * wrapping it names only a bin, which doesn't resolve, so it isn't counted
- * twice. On Windows with Node 22 one server is two such processes, the one the
- * client started and the copy it starts (src/utils/threadpool-size.ts), so a
- * server started by another one is counted with it. Only the count and the
- * earliest start leave this function.
+ * twice. The thread-pool bootstrap marks its child with the launcher's PID,
+ * so only that recognized pair counts once. An unmarked nested server counts
+ * separately; older unmarked bootstrap pairs cannot be distinguished from it.
+ * Only the count and the earliest start leave this function.
  */
 async function desktopCommanderMcp(): Promise<DiagnosticsReport['desktopCommanderMcp']> {
     let processes: ProcessInfo[];
@@ -426,17 +427,26 @@ async function desktopCommanderMcp(): Promise<DiagnosticsReport['desktopCommande
         return { running: null, since: null, error: `could not list processes (${errorText(error)})` };
     }
     const packageNames = new Map<string, string | null>();
-    const servers = processes.filter(({ pid, command }) => {
-        if (pid === process.pid) return false;
+    const servers = processes.flatMap(({ pid, parentPid, startedAt, command }) => {
+        if (pid === process.pid) return [];
         const tokens = (command.match(/"[^"]*"|\S+/g) ?? []).map((token) => token.replace(/^"|"$/g, ''));
         // The first token is the executable; the entry is any later one
         const at = tokens.findIndex((token, i) => i > 0 && /(\.js|desktop-commander(\.cmd)?)$/i.test(token) &&
             isDesktopCommanderEntry(token, packageNames));
-        return at > 0 && !NOT_THE_SERVER.has(tokens[at + 1] ?? '');
+        if (at < 0 || NOT_THE_SERVER.has(tokens[at + 1] ?? '')) return [];
+        const launcherPid = tokens.at(-1) === `${LAUNCHER_PID_ARGUMENT}${parentPid}` ? parentPid : null;
+        return [{ pid, parentPid, startedAt, launcherPid }];
     });
-    const serverPids = new Set(servers.map((p) => p.pid));
-    const counted = servers.filter((p) => !serverPids.has(p.parentPid));
-    const starts = counted.map((p) => p.startedAt).filter((t) => !Number.isNaN(t));
+    const serversByPid = new Map(servers.map((p) => [p.pid, p]));
+    const counted = servers.filter((p) => {
+        const launcher = p.launcherPid === null ? undefined : serversByPid.get(p.launcherPid);
+        if (!launcher) return true;
+        // A process that started later cannot have launched this child; its PID was reused.
+        return Number.isFinite(launcher.startedAt) && Number.isFinite(p.startedAt) &&
+            launcher.startedAt > p.startedAt;
+    });
+    // A grouped child may have the only known start time when its launcher has no timestamp.
+    const starts = servers.map((p) => p.startedAt).filter(Number.isFinite);
     return {
         running: counted.length,
         since: starts.length ? new Date(Math.min(...starts)).toISOString() : null,
