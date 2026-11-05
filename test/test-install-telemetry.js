@@ -41,6 +41,7 @@ const runner = (script) => (options = {}) => runInstallScript(script.file, {
 });
 const params = (run) => JSON.parse(run.posts[0].body).events[0].params;
 
+/** Checks shell metadata comes from the supplied platform/environment rather than the developer's terminal. */
 async function shells(run) {
   const windows = [
     [{ TERM_PROGRAM: 'vscode' }, 'vscode-terminal'], [{ WT_SESSION: '1' }, 'windows-terminal'],
@@ -60,6 +61,7 @@ async function shells(run) {
   assert.strictEqual(params(await run()).shell, 'unknown-shell');
 }
 
+/** Checks install origin, CI and version metadata plus the actual HTTP method and payload headers. */
 async function howStarted(run, script) {
   const contexts = [
     [{ npm_lifecycle_event: 'npx' }, 'npx'], [{ npm_config_global: 'true' }, 'global'],
@@ -94,6 +96,7 @@ async function howStarted(run, script) {
   assert.ok(broken.error && !('npm_version' in broken), 'properties that can\'t be read: the error instead');
 }
 
+/** Checks proxy/fallback retries and progress after hanging requests; this is not a wall-clock deadline test. */
 async function failedPosts(run, script) {
   const first = await run({ telemetry: { byEvent: { [script.first]: ['error', 'ok'] } } });
   const tries = first.posts.filter((post) => post.event === script.first);
@@ -115,6 +118,7 @@ async function failedPosts(run, script) {
   assert.ok(held.posts.some((post) => post.event === script.first || post.event.endsWith('_complete')), 'and goes on');
 }
 
+/** Checks otherwise-unhandled command errors are reported before the installer exits with failure. */
 async function uncaught(run, script) {
   const cases = [[{ uncaught: 'boom' }, 'uncaught_exception'], [{ unhandled: 'boom' }, 'unhandled_rejection']];
   for (const [answer, kind] of cases) {
@@ -125,6 +129,7 @@ async function uncaught(run, script) {
   }
 }
 
+/** Checks a failed checkout-local log write is reported without stopping the remaining installer flow. */
 async function blockedLog(run) {
   // setup.log can't be written (a folder in its place): said on stderr, and the script goes on
   const log = path.join(ROOT, 'setup.log');

@@ -41,6 +41,7 @@ const put = (home, file, text) => {
   fs.writeFileSync(path.join(home, file), text);
 };
 
+/** Checks platform config locations and restart commands without touching the user's home or Claude process. */
 async function eachPlatform() {
   const shells = { linux: '/bin/sh', darwin: '/bin/sh', win32: 'cmd.exe', freebsd: '/bin/sh' };
   const commands = {
@@ -68,6 +69,7 @@ async function eachPlatform() {
   console.log('✓ each platform: its config file, a new config, Claude stopped and started');
 }
 
+/** Checks that replacing Desktop Commander's entry preserves another server and the existing client identity. */
 async function existingConfigs() {
   const servers = { desktopCommander: { command: 'old' }, other: { command: 'x' } };
   const prepare = (home) => {
@@ -86,6 +88,7 @@ async function existingConfigs() {
   console.log('✓ an existing config: the old entry replaced, the rest kept');
 }
 
+/** Checks package/version selection and debugger arguments for the different installation entry points. */
 async function npxAndDebug() {
   const npx = { npm_lifecycle_event: 'npx' };
   const spec = '@wonderwhy-er/desktop-commander';
@@ -112,6 +115,7 @@ async function npxAndDebug() {
   console.log('✓ npx with a tag, npx\'s own spec or latest, and the debugger, from npx or the checkout');
 }
 
+/** Checks recoverable restart failures leave a successful installation and tell the user to restart Claude. */
 async function restartFails() {
   const answering = (command, answer) => setup({ platform: 'linux', commands: { ...ANSWERED, [command]: answer } });
   const notRunning = await answering('pkill', { error: 'no process' });
@@ -124,6 +128,7 @@ async function restartFails() {
   console.log('✓ Claude not running, or not starting again: setup still succeeds and says so');
 }
 
+/** Checks invalid config/path failures and reports permission-dependent cases only where chmod can deny writes. */
 async function configErrors() {
   const failed = async (prepare, event) => {
     const run = await setup({ platform: 'linux', prepare });

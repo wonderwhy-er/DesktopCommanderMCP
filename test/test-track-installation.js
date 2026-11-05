@@ -35,6 +35,7 @@ const ownConfig = (config) => (home) => {
   fs.writeFileSync(path.join(home, '.claude-server-commander', 'config.json'), text);
 };
 
+/** Checks installation-source priority using controlled environment, parent-command and Docker-marker inputs. */
 async function sources() {
   // /.dockerenv as told (the fs stand-in), so the machine this runs on doesn't decide
   const outside = { dockerenv: false };
@@ -74,6 +75,7 @@ async function sources() {
   console.log('✓ where it was installed from: npm\'s variables, the environment, the parent process');
 }
 
+/** Checks client identity, consent defaults and exact telemetry transport/fallback behavior without network access. */
 async function posts() {
   const run = await track({ prepare: ownConfig({ clientId: 'mine' }) });
   assertTelemetryRequests(run.posts);
@@ -95,6 +97,7 @@ async function posts() {
   console.log('✓ one post with Desktop Commander\'s client id, or a new one; the fallback when the proxy refuses');
 }
 
+/** Checks both Docker branches use unknown for absent or empty hostnames while keeping Docker as the source. */
 async function dockerWithoutHostname() {
   const cases = [
     { env: { DOCKER_CONTAINER: '1', HOSTNAME: null }, fs: { dockerenv: false } },
@@ -115,6 +118,7 @@ async function dockerWithoutHostname() {
   console.log('✓ Docker: an absent or empty hostname uses the unknown container id');
 }
 
+/** Checks debug controls expose diagnostic output only when explicitly enabled. */
 async function debugOutput() {
   const debugging = [{ DEBUG: 'desktop-commander' }, { DEBUG: '*' }, { NODE_ENV: 'development' }, { DC_DEBUG: 'true' }];
   for (const env of debugging) {
@@ -128,6 +132,7 @@ async function debugOutput() {
   console.log('✓ DEBUG, NODE_ENV=development or DC_DEBUG: it says what it found; otherwise quiet');
 }
 
+/** Checks the directly launched entry point where supported and records the known Windows entry-point skip. */
 async function postinstall() {
   // npm runs `node dist/track-installation.js`: started directly, it tracks once. On Windows it doesn't yet: it
   // compares its file: URL with `file://` and the path, which never match there (file:///C:/… against file://C:\…)

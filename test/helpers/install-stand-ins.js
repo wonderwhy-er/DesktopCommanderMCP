@@ -23,6 +23,7 @@ import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
 const { log, telemetry = {} } = JSON.parse(process.env.DC_STAND_INS);
 const asked = new Map();
+/** Chooses deterministic event responses, repeating the final planned answer across retries. */
 function answerFor(event) {
   const planned = telemetry.byEvent?.[event] ?? telemetry.default ?? 'ok';
   if (!Array.isArray(planned)) return planned;
@@ -30,6 +31,7 @@ function answerFor(event) {
   asked.set(event, turn + 1);
   return planned[Math.min(turn, planned.length - 1)];
 }
+/** Delivers the chosen response events without opening a real socket. */
 function respond(req, answer) {
   if (answer === 'error') return req.emit('error', new Error('stand-in: no network'));
   if (answer === 'hang') return undefined;
@@ -67,17 +69,20 @@ export default { request };
 const CHILD_PROCESS = `
 import fs from 'node:fs';
 const { log, commands = {} } = JSON.parse(process.env.DC_STAND_INS);
+/** Records each command and refuses unknown commands instead of executing a real process. */
 function answerFor(command) {
   const asked = command.replace(/^cmd\\.exe \\/c /, '');
   const key = Object.keys(commands).find((start) => asked.startsWith(start));
   fs.appendFileSync(log, JSON.stringify({ command }) + '\\n');
   return key ? commands[key] : { error: 'stand-in: no answer for ' + asked };
 }
+/** Returns or throws the planned synchronous command outcome. */
 export function execSync(command) {
   const answer = answerFor(command);
   if (answer.error || answer.throw) throw Object.assign(new Error(answer.error || answer.throw), { status: 1 });
   return answer.stdout ?? '';
 }
+/** Delivers planned callbacks and uncaught faults through the same asynchronous boundaries as commands. */
 export function exec(command, options, callback) {
   const done = typeof options === 'function' ? options : callback;
   const answer = answerFor(command);
@@ -100,10 +105,12 @@ import * as real from 'node:fs';
 export * from 'node:fs';
 const { fs: plan } = JSON.parse(process.env.DC_STAND_INS);
 let failed = false;
+/** Controls the Docker marker only; other filesystem checks use the actual isolated fixture files. */
 export function existsSync(file) {
   if (plan.dockerenv !== undefined && String(file) === '/.dockerenv') return plan.dockerenv;
   return real.existsSync(file);
 }
+/** Injects one transient write failure before allowing actual writes to test backup recovery. */
 export function writeFileSync(file, ...rest) {
   if (plan.failWriteOnce && !failed && String(file).endsWith(plan.failWriteOnce)) {
     failed = true;
@@ -116,6 +123,7 @@ export default { ...real, existsSync, writeFileSync };
 const SCRIPT_FILE = /(setup-claude-server|uninstall-claude-server|track-installation)\.js$/;
 const wantsFs = () => Boolean(JSON.parse(process.env.DC_STAND_INS ?? '{}').fs);
 
+/** Substitutes only the requested built-ins so installer tests cannot reach the network or real commands. */
 export async function resolve(specifier, context, next) {
   const name = STAND_INS[specifier];
   if (name) return { url: `dc-stand-in:${name}`, shortCircuit: true };
@@ -125,6 +133,7 @@ export async function resolve(specifier, context, next) {
   return next(specifier, context);
 }
 
+/** Serves the known stand-in modules and leaves unrelated module loading with Node. */
 export async function load(url, context, next) {
   if (url === 'dc-stand-in:https') return { format: 'module', source: HTTPS, shortCircuit: true };
   if (url === 'dc-stand-in:child_process') return { format: 'module', source: CHILD_PROCESS, shortCircuit: true };
