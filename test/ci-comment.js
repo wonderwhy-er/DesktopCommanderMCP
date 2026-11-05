@@ -26,7 +26,8 @@
 import fs from 'fs';
 import path from 'path';
 import {
-  firstError, MARKER, mergeComment, PLATFORMS, platformJobs, platformMinutes, renderComment, resultsArtifactOf,
+  firstError, JOBS_METADATA_UNAVAILABLE, MARKER, mergeComment, PLATFORMS, platformJobs, platformMinutes,
+  renderComment, resultsArtifactOf,
 } from './helpers/ci-platforms.js';
 import { combineCoverage, readFinals } from './combined-coverage.js';
 import { coverageByArea } from './coverage-areas.js';
@@ -44,6 +45,7 @@ const readJson = (file) => {
   try {
     return fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : undefined;
   } catch {
+    // Missing or malformed coverage is unavailable; the separate test results still render.
     return undefined;
   }
 };
@@ -159,20 +161,21 @@ function combinedCoverage() {
   return coverageOf(combineCoverage(finals));
 }
 
+async function runMetadata(key, missing) {
+  if (!token || !runId) return [];
+  try {
+    return await githubList(`/repos/${repo}/actions/runs/${runId}/${key}`, key);
+  } catch (error) {
+    missing.push(key === 'jobs' ? JOBS_METADATA_UNAVAILABLE : `${key} metadata unavailable`);
+    console.error(`The run's ${key} metadata wasn't read: ${error.message}`);
+    return [];
+  }
+}
+
 async function main() {
   const missingMetadata = [];
-  const list = async (key) => {
-    if (!token || !runId) return [];
-    try {
-      return await githubList(`/repos/${repo}/actions/runs/${runId}/${key}`, key);
-    } catch (error) {
-      missingMetadata.push(`${key} metadata unavailable`);
-      console.error(`The run's ${key} metadata wasn't read: ${error.message}`);
-      return [];
-    }
-  };
-  const jobs = await list('jobs');
-  const artifacts = await list('artifacts');
+  const jobs = await runMetadata('jobs', missingMetadata);
+  const artifacts = await runMetadata('artifacts', missingMetadata);
 
   // The results of each platform this run ran
   const data = {};

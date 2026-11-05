@@ -108,8 +108,16 @@ export function resultsArtifactOf(job, os) {
   return { test, artifact: test ? `results-${os}-${timedId(test)}` : `results-${os}` };
 }
 
-/** Text from an artifact or an older comment (a step name, an area) as plain inline text: no markup, no line breaks */
+export const JOBS_METADATA_UNAVAILABLE = 'jobs metadata unavailable';
+
+/** Remove inline-code/HTML/table delimiters, explicit link/image brackets and line breaks. */
 export const plain = (text) => String(text).replace(/[`<>|[\]\r\n]/g, '');
+
+/** GFM auto-links URL-like text even without brackets; code spans keep the note literal. */
+const noteText = (note) => {
+  const text = plain(note);
+  return /[a-z][a-z0-9+.-]*:\/\/|www\.|@/i.test(text) ? `\`${text}\`` : text;
+};
 
 const count = (value) => (Number.isFinite(Number(value)) ? Number(value) : 0);
 const percent = ([covered, total], digits, cut) => (count(total) > 0 ? cut((10 ** (digits + 2) * count(covered)) / count(total)) / 10 ** digits : 100);
@@ -159,14 +167,17 @@ function failedRows(label, failures) {
 function testsCell({ tests, stoppedAt }) {
   if (!tests) return `❌ no results${stoppedAt ? `: “${plain(stoppedAt)}” failed` : ''}`;
   // A part that didn't run says why: "Docker: GitHub's macOS runner has no Docker"
-  const notes = (tests.notes ?? []).map((note) => `; ${plain(note)}`).join('');
+  const notes = (tests.notes ?? []).map((note) => `; ${noteText(note)}`).join('');
   // The tests test/excluded.txt leaves out, counted: they never run in CI
   const excluded = tests.excluded ? `; ${count(tests.excluded)} excluded (test/excluded.txt)` : '';
   // Checks a file skipped (a tool missing on the machine): its file passes, so the cell says how many
   const skipped = count(tests.skipped) ? `; ${count(tests.skipped)} check${count(tests.skipped) === 1 ? '' : 's'} skipped` : '';
   // Fail closed: no test file ran is no pass
   if (!count(tests.files)) return `❌ no test file ran${notes}${excluded}${skipped}`;
-  return `${tests.failed?.length ? '❌' : '✅'} ${count(tests.passed)} of ${count(tests.files)} files passed${notes}${excluded}${skipped}`;
+  const unavailable = tests.notes?.includes(JOBS_METADATA_UNAVAILABLE);
+  const outcome = tests.failed?.length || unavailable ? '❌' : '✅';
+  return `${outcome} ${count(tests.passed)} of ${count(tests.files)} files passed`
+    + `${notes}${excluded}${skipped}`;
 }
 
 /** A job's whole minutes from its start to its end (at least 1), or null while it's still going */
