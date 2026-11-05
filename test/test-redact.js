@@ -139,6 +139,20 @@ async function runTests() {
         assertGone(redact(`running on ${host} now`), host, 'the host name');
     });
 
+    await test('a UUID inside the host name does not leave part of the host name visible', () => {
+        const hostname = os.hostname;
+        const host = `runner-${UUID}-worker.local`;
+        os.hostname = () => host;
+        try {
+            assert.strictEqual(
+                redact(`host ${host}; bare ${host.split('.')[0]}; device ${UUID}`),
+                'host <host>; bare <host>; device <id>',
+            );
+        } finally {
+            os.hostname = hostname;
+        }
+    });
+
     await test('a plain status line comes out unchanged', () => {
         const line = "Channel subscribed (recovered after 2 attempts) — socket=open(1) ch=joined attempt=0";
         assert.strictEqual(redact(line), line);
