@@ -491,7 +491,11 @@ export const CORPUS = [
   { id: 'inline_runuser_c', group: 'inline', shell: 'bash', expect: 'sudo', command: "runuser -l root -c 'sudo ls'", note: "runuser runs -c's text in the user's shell" },
   { id: 'inline_runuser_c_after_user', group: 'inline', shell: 'bash', expect: 'sudo', command: "runuser root -c 'sudo ls'", note: '-c can come after the user too' },
   { id: 'inline_runuser_u', group: 'inline', shell: 'bash', expect: 'sudo', command: 'runuser -u nobody sudo ls', note: 'with -u, runuser runs the program after the user' },
-  { id: 'inline_runuser_u_wrapper', group: 'inline', shell: 'bash', expect: 'sudo', command: 'runuser -u nobody env sudo ls', note: 'direct argv retains the later wrapper and blocked program' },
+  {
+    id: 'inline_runuser_u_wrapper', group: 'inline', shell: 'bash', expect: 'sudo',
+    command: 'runuser -u nobody env sudo ls',
+    note: 'direct argv retains the later wrapper and blocked program'
+  },
   { id: 'inline_runuser_u_ok', group: 'inline', shell: 'bash', expect: null, command: 'runuser -u nobody -- ls -la', note: 'runuser runs ls' },
   { id: 'inline_sg_c', group: 'inline', shell: 'bash', expect: 'sudo', command: "sg wheel -c 'sudo ls'", note: 'sg runs its command with sh -c' },
   { id: 'inline_sg_text', group: 'inline', shell: 'bash', expect: 'sudo', command: "sg wheel 'sudo ls'", note: 'the same without -c' },

@@ -123,7 +123,11 @@ function textProgramRuns(found: FoundCommand, program: string): ShellRun {
  * texts that aren't among its words at all (parallel :::: jobs.txt): the
  * command is noted then (file null).
  */
-function readingsRun({ operands, texts, hidden }: OptionReadings, { words, wordTexts }: FoundCommand, { script }: { script: boolean }): ShellRun {
+function readingsRun(
+  { operands, texts, hidden }: OptionReadings,
+  { words, wordTexts }: FoundCommand,
+  { script }: { script: boolean }
+): ShellRun {
   const textOf = ({ text, at, to }: OptionReadings['texts'][number]): string => {
     if (at === undefined) return text ?? '';
     if (to !== undefined) return wordTexts.slice(at, to).join(' ');
@@ -290,7 +294,9 @@ export function sameShellTexts(found: FoundCommand, shellType: ShellType): Shell
     // -Command:'net user' (-c: 'net user'): the command without the parameter's name runs the same, and is shorter
     const withColon = words.flatMap((word) => {
       const colon = word === null ? null : /^[-\u2013\u2014\u2015]([a-z]+):(.*)$/is.exec(word);
-      return colon && colon[2] !== '' && 'command'.startsWith(colon[1].toLowerCase()) ? [`${wordTexts[0]} ${colon[2]}`] : [];
+      return colon && colon[2] !== '' && 'command'.startsWith(colon[1].toLowerCase())
+        ? [`${wordTexts[0]} ${colon[2]}`]
+        : [];
     });
     return {
       texts: [...at.map((i) => wordTexts[i]), ...withColon],
