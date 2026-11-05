@@ -6,10 +6,13 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
+import { unified } from 'unified';
+import remarkParse from 'remark-parse';
+import remarkGfm from 'remark-gfm';
 
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 
-async function report({ failList, malformedCoverage = false, note = 'not selected' } = {}) {
+async function report({ failList, malformedCoverage = false, note = 'not selected', allPassed = false } = {}) {
   const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'ci-comment-resilience-'));
   const write = (name, text) => {
     const file = path.join(folder, name);
@@ -18,17 +21,17 @@ async function report({ failList, malformedCoverage = false, note = 'not selecte
   };
   write('results-ubuntu-latest/suite/results.json', JSON.stringify({ files: [
     { path: 'test/a.js', success: true, skipped: ['optional tool unavailable'] },
-    { path: 'test/b.js', success: false, skipped: [], outputTail: 'Error: expected failure' },
+    { path: 'test/b.js', success: allPassed, skipped: [], outputTail: 'Error: expected failure' },
   ], excluded: [] }));
   write('results-ubuntu-latest/docker/results.json', JSON.stringify({ suite: 'docker', files: [], notRun: note }));
   const metric = { covered: 1, total: 2 };
   write('coverage-ubuntu-latest/coverage-summary.json', malformedCoverage ? '{' : JSON.stringify({
     total: { lines: metric, branches: metric, functions: metric },
   }));
-  const server = http.createServer((req, res) => {
+  const server = http.createServer((req, response) => {
     const kind = req.url.includes('/jobs') ? 'jobs' : 'artifacts';
-    res.writeHead(kind === failList ? 503 : 200, { 'content-type': 'application/json' });
-    res.end(JSON.stringify(kind === failList ? { message: 'metadata unavailable' } : { [kind]: [] }));
+    response.writeHead(kind === failList ? 503 : 200, { 'content-type': 'application/json' });
+    response.end(JSON.stringify(kind === failList ? { message: 'metadata unavailable' } : { [kind]: [] }));
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   try {
@@ -79,5 +82,29 @@ test('artifact notes cannot render links or images in a results cell', async () 
   const output = await report({ note: '![status](https://example.invalid/image) [details](https://example.invalid)' });
   localResults(output);
   assert.ok(!output.stdout.includes('![status]') && !output.stdout.includes('[details]'));
-  assert.match(output.stdout, /Docker: !status\(https:\/\/example\.invalid\/image\)/);
+  assert.match(output.stdout, /Docker: !status/);
+});
+
+test('missing jobs metadata cannot mark a platform green when all local files passed', async () => {
+  const output = await report({ failList: 'jobs', allPassed: true });
+  assert.equal(output.code, 0, output.stderr);
+  assert.match(output.stdout, /\| Linux \| ❌ 2 of 2 files passed;.*jobs metadata unavailable/);
+  assert.ok(!output.stdout.includes('| Linux | ✅'));
+});
+
+test('GFM does not turn artifact URL, www or email notes into links', async () => {
+  const note = 'see https://example.invalid/x or www.example.invalid/x or user@example.invalid';
+  const output = await report({ note });
+  localResults(output);
+  const tree = unified().use(remarkParse).use(remarkGfm).parse(output.stdout);
+  const links = [];
+  const text = [];
+  const visit = node => {
+    if (['link', 'image'].includes(node.type)) links.push(node.url);
+    if (['text', 'inlineCode'].includes(node.type)) text.push(node.value);
+    for (const child of node.children ?? []) visit(child);
+  };
+  visit(tree);
+  assert.ok(!links.some(url => url.includes('example.invalid')), JSON.stringify(links));
+  assert.ok(text.join('').includes(note), 'the displayed note text is preserved');
 });
