@@ -3,6 +3,9 @@ import assert from 'node:assert/strict';
 import {test} from 'node:test';
 import {platformJobs,resultsArtifactOf,matrixFor} from './helpers/ci-platforms.js';
 import {artifactAttempt} from './helpers/execution-evidence.js';
+import fs from 'node:fs';
+import path from 'node:path';
+import {fileURLToPath} from 'node:url';
 
 const os='ubuntu-latest';
 function job(name,attempt) {
@@ -39,4 +42,13 @@ test('timed matrix refuses different names that share an artifact ID',()=> {
 test('timed matrix keeps distinct test artifact IDs',()=> {
   const matrix=matrixFor([os],{tests:'timed',timed:['test-a.js','repro/test-a.js']});
   assert.equal(matrix.include.length,2); assert.equal(new Set(matrix.include.map(item=>item.id)).size,2);
+});
+test('existing Tests workflow owns native and trusted legacy events without a wrapper',()=> {
+  const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
+  const text=fs.readFileSync(path.join(root,'.github/workflows/tests.yml'),'utf8');
+  assert.match(text,/\n  pull_request_target:\s*\n    types: \[synchronize, reopened, labeled\]/);
+  assert.match(text,/\n  pull_request:\s*\n    types: \[synchronize, reopened, labeled\]/);
+  assert.doesNotMatch(text,/\n  workflow_call:/);
+  assert.equal(fs.existsSync(path.join(root,'.github/workflows/label-router.yml')),false);
+  assert.match(text,/ref: \$\{\{ github.event_name != 'pull_request' && needs.platforms.outputs.sha \|\| '' \}\}/);
 });
