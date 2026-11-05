@@ -93,11 +93,14 @@ export const commandReview = (body) => String(body ?? '').split(/\r?\n/).some((l
 export function reviewFor(eventName, event) {
   if (!isMaintainer(startedBy(eventName, event))) return false;
   if (eventName === 'workflow_dispatch') return true;
-  if (eventName === 'issue_comment') return event.action === 'created' && Boolean(event.issue?.pull_request) && commandReview(event.comment?.body);
+  if (eventName === 'issue_comment') return event.action === 'created'
+    && Boolean(event.issue?.pull_request)
+    && commandReview(event.comment?.body);
   if (eventName !== 'pull_request') return false;
   if (event.action === 'labeled') return event.label?.name === REVIEW_LABEL;
   // Not opened: tests.yml doesn't get it, and a new PR's review label reviews through its own event
-  return ['synchronize', 'reopened'].includes(event.action) && (event.pull_request?.labels ?? []).some(({ name }) => name === REVIEW_LABEL);
+  return ['synchronize', 'reopened'].includes(event.action)
+    && (event.pull_request?.labels ?? []).some(({ name }) => name === REVIEW_LABEL);
 }
 
 /** The runner images of some platforms: the test job's matrix */
