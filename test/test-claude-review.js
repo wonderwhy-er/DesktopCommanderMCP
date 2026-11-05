@@ -19,7 +19,12 @@ let id=0; const rpc=async(method,params)=>{
 };
 const init=await rpc('initialize',{protocolVersion:'2025-03-26'});
 const tools=await rpc('tools/list',{});
-const read=await rpc('tools/call',{name:'read_file',arguments:{path:'pr/a.txt'}});
+const modes={list:['list_directory',{path:'pr'}],glob:['glob',{pattern:'missing*'}],
+ grep:['grep_search',{pattern:'missing-pattern'}],review:['read_file',{path:'review/note.txt'}],
+ traversal:['read_file',{path:'pr/../review/note.txt'}],missing:['read_file',{path:'pr/missing'}],
+ normalized:['read_file',{path:'pr/sub/../a.txt'}],pemsource:['read_file',{path:'pr/pem.txt'}]};
+const mode=prompt.startsWith('source-guard:')?modes[prompt.slice('source-guard:'.length)]:undefined;
+const read=await rpc('tools/call',mode?{name:mode[0],arguments:mode[1]}:{name:'read_file',arguments:{path:'pr/a.txt'}});
 const denied=await rpc('tools/call',{name:'write_file',arguments:{path:'pr/a.txt',content:'changed'}});
 const outside=await rpc('tools/call',{name:'read_file',arguments:{path:'../secret'}});
 const budget=await rpc('tools/call',{name:'read_file',arguments:{path:'pr/a.txt'}});
@@ -28,6 +33,9 @@ if(prompt==='timeout') await new Promise(r=>setTimeout(r,10000));
 const result={type:'result',subtype:'success',is_error:false,num_turns:2,result:JSON.stringify({summary:'Checked.',findings:[]}),modelUsage:{'claude-haiku-5-5':{inputTokens:12,outputTokens:5,cacheReadInputTokens:3,cacheCreationInputTokens:2}}};
 if(prompt==='failure') { result.is_error=true; result.result='Company credential rejected.'; result.error={type:'authentication_error',message:'Rejected '+process.env.ANTHROPIC_API_KEY}; console.error('Provider fixture rejection '+process.env.ANTHROPIC_API_KEY); }
 if(prompt==='secret') result.result=JSON.stringify({summary:process.env.ANTHROPIC_API_KEY,findings:[]});
+if(prompt==='pattern-answer') result.result=JSON.stringify({summary:'sk-ant-'+ 'q'.repeat(32),findings:[]});
+if(prompt==='pem-answer') result.result=JSON.stringify({summary:'-----BEGIN PRIVATE KEY-----\\n'
+ +'synthetic-pem-body-'+'x'.repeat(32)+'\\n-----END PRIVATE KEY-----',findings:[]});
 if(prompt==='fallback') result.modelUsage={'claude-sonnet-5-5':{inputTokens:12,outputTokens:5}};
 if(prompt==='empty') result.result='';
 console.log(JSON.stringify(result));`;
@@ -36,8 +44,9 @@ function setup() {
  const folder=fs.mkdtempSync(path.join(os.tmpdir(),'claude-review-test-'));
  fs.mkdirSync(path.join(folder,'pr')); fs.mkdirSync(path.join(folder,'review'));
  fs.writeFileSync(path.join(folder,'pr/a.txt'),'frozen source');
+ fs.writeFileSync(path.join(folder,'review/note.txt'),'supplemental evidence');
  const cli=path.join(folder,'fake.mjs'); fs.writeFileSync(cli,fixture);
- const options={folder,cli,key:'fixture-api-only',calls:3,timeoutMs:3000,maxTurns:20,out:path.join(folder,'out'),prompt:'review',environment:{...process.env,GH_TOKEN:'github-secret-fixture',OPENAI_API_KEY:'openai-secret-fixture',CLAUDE_CODE_OAUTH_TOKEN:'unused-oauth-fixture',ANTHROPIC_AUTH_TOKEN:'unused-bearer-fixture'}};
+ const options={folder,cli,key:'fixture-api-only',calls:3,timeoutMs:15000,maxTurns:20,out:path.join(folder,'out'),prompt:'review',environment:{...process.env,GH_TOKEN:'github-secret-fixture',OPENAI_API_KEY:'openai-secret-fixture',CLAUDE_CODE_OAUTH_TOKEN:'unused-oauth-fixture',ANTHROPIC_AUTH_TOKEN:'unused-bearer-fixture'}};
  return {folder,options};
 }
 
@@ -64,12 +73,61 @@ test('API-key-only Claude child uses the pinned model and the existing bounded r
  } finally {fs.rmSync(folder,{recursive:true,force:true});}
 });
 
+test('credential-shaped prompts stop before a request and credential-shaped answers never survive artifacts', async () => {
+ const {folder,options}=setup();
+ const credential='sk-ant-'+'q'.repeat(32);
+ try {
+  await assert.rejects(askClaude({...options,prompt:`Diff adds ${credential}`}), /input contains a credential/);
+  assert.equal(fs.existsSync(path.join(folder,'observed.json')),false);
+  await assert.rejects(askClaude({...options,prompt:'pattern-answer'}), /answer contained a credential/);
+  const saved=fs.readdirSync(options.out).map(name=>fs.readFileSync(path.join(options.out,name),'utf8')).join('');
+  assert.ok(!saved.includes(credential));
+ } finally {fs.rmSync(folder,{recursive:true,force:true});}
+});
+
+test('only a successful normalized pr file read satisfies the source-read guard', async () => {
+ const {folder,options}=setup();
+ try {
+  for(const mode of ['list','glob','grep','review','traversal','missing']) {
+   await assert.rejects(askClaude({...options,calls:1,prompt:`source-guard:${mode}`}),
+    /read no source/,mode);
+  }
+  const answer=await askClaude({...options,calls:1,prompt:'source-guard:normalized'});
+  assert.equal(answer.stats.tools.totalSuccess,1);
+  assert.equal(JSON.parse(answer.response).summary,'Checked.');
+ } finally {fs.rmSync(folder,{recursive:true,force:true});}
+});
+
+test('PEM answer and broker read artifacts retain no key body or end marker', async () => {
+ const {folder,options}=setup();
+ const body='synthetic-pem-body-'+'x'.repeat(32);
+ const pem=['-----BEGIN PRIVATE KEY-----',body,'-----END PRIVATE KEY-----'].join('\n');
+ try {
+  await assert.rejects(askClaude({...options,prompt:'pem-answer'}), /answer contained a credential/);
+  let saved=fs.readdirSync(options.out).map(name=>fs.readFileSync(path.join(options.out,name),'utf8')).join('');
+  assert.ok(!saved.includes(body));
+  assert.ok(!saved.includes('END PRIVATE KEY'));
+  for(const source of [pem,pem.split('\n').slice(0,2).join('\n')]) {
+   fs.writeFileSync(path.join(folder,'pr/pem.txt'),source);
+   await askClaude({...options,calls:1,prompt:'source-guard:pemsource'});
+   const seen=JSON.parse(fs.readFileSync(path.join(folder,'observed.json'),'utf8'));
+   assert.ok(!seen.read.content[0].text.includes(body));
+   saved=fs.readdirSync(options.out).map(name=>fs.readFileSync(path.join(options.out,name),'utf8')).join('');
+   assert.ok(!saved.includes(body));
+   assert.ok(!saved.includes('END PRIVATE KEY'));
+   for(const line of fs.readFileSync(path.join(options.out,'session.jsonl'),'utf8').trim().split('\n')) {
+    assert.doesNotThrow(()=>JSON.parse(line));
+   }
+  }
+ } finally {fs.rmSync(folder,{recursive:true,force:true});}
+});
+
 test('missing API key, wrong model, provider failure, credential echo and timeout fail closed',async()=>{
  const {folder,options}=setup();
  try {
   await assert.rejects(askClaude({...options,key:''}),/No Anthropic API key/);
   for(const prompt of ['failure','secret','fallback','empty','timeout']) {
-   await assert.rejects(askClaude({...options,prompt,timeoutMs:prompt==='timeout'?250:3000}),/Claude|credential|model|timeout|answer/i);
+   await assert.rejects(askClaude({...options,prompt,timeoutMs:prompt==='timeout'?250:15000}),/Claude|credential|model|timeout|answer/i);
    const saved=fs.readdirSync(options.out).map(name=>fs.readFileSync(path.join(options.out,name),'utf8')).join('');
    assert.ok(!saved.includes(options.key));
   }
