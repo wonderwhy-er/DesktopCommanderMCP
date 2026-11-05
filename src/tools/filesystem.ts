@@ -335,6 +335,16 @@ async function isPathAllowed(pathToCheck: string): Promise<boolean> {
 export const LOOKUPS_PER_FOLDER = 4;
 
 /**
+ * Lookup state keeps letter case: differently cased entries can be distinct,
+ * including on macOS volumes and Windows directories configured that way.
+ * Do not use the authorization comparison's lowercasing for this identity.
+ */
+function lookupPathKey(p: string): string {
+    const normalized = path.normalize(p);
+    return normalized.endsWith(path.sep) ? normalized.slice(0, -1) : normalized;
+}
+
+/**
  * A folder's line: how many of its lookups have their turn, how many of those
  * ran out of time and haven't returned yet, and how to start each lookup
  * waiting for one
@@ -357,7 +367,7 @@ function isRoot(p: string): boolean {
 }
 
 /**
- * What fails `comparable` (as comparablePath() gives it) at once, if anything:
+ * What fails `comparable` (as lookupPathKey() gives it) at once, if anything:
  * a hung path that is `comparable` or above it, or a folder that is, once a
  * second, different path in that folder has hung too. A root is never such a
  * folder.
@@ -381,7 +391,7 @@ function stalledPathOver(comparable: string): string | undefined {
 
 /** The hung path or stalled folder that fails `absolutePath` at once, if there is one (see stalledPathOver) */
 function findStalledPath(absolutePath: string): string | undefined {
-    const stalledPath = stalledPathOver(comparablePath(absolutePath));
+    const stalledPath = stalledPathOver(lookupPathKey(absolutePath));
     if (stalledPath !== undefined) {
         // The error names it, and it can be a folder above this path's own,
         // so telemetry replaces it whole
@@ -410,12 +420,12 @@ function startHeldUpLookups(): void {
 /** Marks a path hung for one more lookup, unless it is a root, and starts the lookups waiting in line that this holds up */
 function markHung(absolutePath: string, folder: string): void {
     if (!isRoot(absolutePath)) {
-        const key = comparablePath(absolutePath);
+        const key = lookupPathKey(absolutePath);
         const mark = hungPaths.get(key);
         if (mark) {
             mark.hung++;
         } else {
-            hungPaths.set(key, { path: absolutePath, folder, folderKey: comparablePath(folder), hung: 1 });
+            hungPaths.set(key, { path: absolutePath, folder, folderKey: lookupPathKey(folder), hung: 1 });
         }
     }
     startHeldUpLookups();
@@ -426,7 +436,7 @@ function unmarkHung(absolutePath: string): void {
     if (isRoot(absolutePath)) {
         return;
     }
-    const key = comparablePath(absolutePath);
+    const key = lookupPathKey(absolutePath);
     const mark = hungPaths.get(key)!;
     mark.hung--;
     if (mark.hung === 0) {
@@ -467,7 +477,7 @@ function startWaitingLookups(key: string, line: LookupLine): void {
  *   ends the wait in a root's line, as a root is never marked.
  */
 function lookUpInFolder(folder: string, absolutePath: string, lookup: () => Promise<string>): Promise<string> {
-    const key = comparablePath(folder);
+    const key = lookupPathKey(folder);
     const line = folderLookups.get(key) ?? { running: 0, hung: 0, waiting: [] };
     if (line.hung >= LOOKUPS_PER_FOLDER) {
         return Promise.reject(stalledPathError(folder, absolutePath));
