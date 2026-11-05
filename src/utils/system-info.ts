@@ -65,6 +65,11 @@ export interface SystemInfo {
     };
 }
 
+/** True in Desktop Commander's Docker image, whose Dockerfile sets MCP_CLIENT_DOCKER=true */
+export function isDockerImage(): boolean {
+    return process.env.MCP_CLIENT_DOCKER === 'true';
+}
+
 /**
  * Detect container environment and type
  */
@@ -72,7 +77,7 @@ function detectContainerEnvironment(): { isContainer: boolean; containerType: Co
     // Method 1: Check environment variables first (most reliable when set)
     
     // Docker-specific
-    if (process.env.MCP_CLIENT_DOCKER === 'true') {
+    if (isDockerImage()) {
         return { isContainer: true, containerType: 'docker', orchestrator: null };
     }
     

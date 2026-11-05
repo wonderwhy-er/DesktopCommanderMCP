@@ -21,7 +21,8 @@
 // files, not a link.
 //
 // Needs `npm run build` first (the tarball takes dist/ as it is) and network
-// (npm). No install scripts run (npm_config_ignore_scripts), npm's cache is a
+// (npm). No install scripts run (npm_config_ignore_scripts; npm 10 still runs
+// the prepare script, the build, during npm pack), npm's cache is a
 // temporary folder unless REPRO_NPM_CACHE names one (CI points it at the job's
 // own npm cache: from an empty one, the tarball's install took 522 s on GitHub's
 // Windows), telemetry is off. mcpb-bundle/ (git-ignored) is removed at
@@ -155,7 +156,10 @@ async function npmPackage() {
     console.log(`🔴 npm: npm pack failed (exit ${pack.status})\n${why(pack.output)}`);
     return false;
   }
-  const [info] = JSON.parse(pack.stdout);
+  // npm 10 runs the prepare script (the build) during npm pack even with ignore-scripts, and the
+  // build's output comes before the JSON on stdout; npm 11 prints only the JSON. The JSON starts
+  // at the line that is just "[".
+  const [info] = JSON.parse(pack.stdout.slice(pack.stdout.search(/^\[\r?$/m)));
   const shipped = info.files.map((file) => file.path).filter((file) => file.includes('telemetry-contract'));
   console.log(`npm: ${info.filename}, ${info.entryCount} files; contract files in it: ${shipped.length ? shipped.join(', ') : 'none'}`);
 
