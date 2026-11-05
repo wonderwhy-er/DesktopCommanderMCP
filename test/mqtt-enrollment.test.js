@@ -16,7 +16,7 @@ const { getRemoteDeviceConfigDirectory } = await import('../dist/remote-device/r
 const { RemoteChannel } = await import('../dist/remote-device/remote-channel.js');
 const USER_ID = '11111111-1111-4111-8111-111111111111';
 const DEVICE_ID = '22222222-2222-4222-8222-222222222222';
-const SKIPPED_REVOCATION_WARNING = '[MQTT] Previous credentials cannot be identified on this backend; continuing with fresh enrollment. The old certificate may remain active.';
+const SKIPPED_REVOCATION_DIAGNOSTIC = '[MQTT] Previous credentials cannot be identified on this backend; continuing with fresh enrollment. The old certificate may remain active.';
 const FAILED_REVOCATION_WARNING = '[MQTT] Previous certificate revocation failed; continuing with fresh enrollment. The old certificate may remain active.';
 const originalBroker = process.env.MQTT_BROKER_URL;
 const originalDcEnv = process.env.DC_ENV;
@@ -64,8 +64,13 @@ async function withFetch(fake, run) {
 }
 async function withWarnings(run) {
   const messages = [];
+  const diagnostics = [];
   const warning = mock.method(console, 'warn', (...args) => messages.push(args));
-  try { return await run(messages); } finally { warning.mock.restore(); }
+  const debug = mock.method(console, 'debug', (...args) => diagnostics.push(args));
+  try { return await run(messages, diagnostics); } finally {
+    warning.mock.restore();
+    debug.mock.restore();
+  }
 }
 
 /** Read only our throwaway credentials; private material is compared without printing it. */
@@ -291,7 +296,7 @@ try {
       const saved = await cache();
       await writeFile(path.join(saved.folder, 'identity.json'), JSON.stringify({ ...saved.identity, ...identityPatch }));
       const requests = [];
-      await withWarnings(async warnings => {
+      await withWarnings(async (warnings, diagnostics) => {
         await withFetch(async (url, request) => {
           requests.push(url.href);
           assert.equal(url.href, `${profile.serverUrl}/device/mqtt/enroll`);
@@ -308,7 +313,8 @@ try {
           assert.ok(new X509Certificate(fresh.certificate.certificate_pem).checkPrivateKey(createPrivateKey(fresh.identity.private_key)));
           await enrollMqttDevice(profile);
         });
-        assert.deepEqual(warnings, [[SKIPPED_REVOCATION_WARNING]]);
+        assert.deepEqual(warnings, []);
+        assert.deepEqual(diagnostics.filter(([message]) => message.startsWith('[MQTT]')), [[SKIPPED_REVOCATION_DIAGNOSTIC]]);
       });
       assert.deepEqual(requests, [`${profile.serverUrl}/device/mqtt/enroll`]);
     }
