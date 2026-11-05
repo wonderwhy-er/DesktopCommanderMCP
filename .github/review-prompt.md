@@ -25,6 +25,7 @@ At least one source read must succeed; the inline diff and supplied evidence do 
 - **nitpick** (wording, test-only style): one line.
 - **handled elsewhere:** say where, with its file and line.
 - **not checked:** what you couldn't tell from the code here, for example how a tool or a library behaves. Write "not checked" rather than guess.
+- **not covered:** only supplied measured uncovered ranges; unknown coverage is `not checked`.
 
 ## Don't guess
 Check each claim against the code before you write it. A finding names the file and line where it shows: a path from the repository's root, without `pr/`, and the line in the head's version of that file. Prefer a line the diff changes.
