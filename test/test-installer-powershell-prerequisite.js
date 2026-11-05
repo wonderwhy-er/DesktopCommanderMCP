@@ -15,7 +15,8 @@ test('PowerShell installer tests record missing PowerShell without failing the s
   ];
   const out = createTempDir('dc-installer-prerequisite-');
   const env = Object.fromEntries(Object.entries(process.env)
-    .filter(([name]) => name.toLowerCase() !== 'path'));
+    .filter(([name]) => name.toLowerCase() !== 'path'
+      && !['DC_TEST_HOME_SET', 'DC_TEST_SKIP_FILE'].includes(name)));
   env.PATH = '';
   try {
     const run = spawnSync(process.execPath, ['test/run-all-tests.js', '--no-build', '--out', out, ...files], {

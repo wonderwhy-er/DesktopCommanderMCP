@@ -5,9 +5,10 @@ import path from 'node:path';
 import { runInstallerPs1 } from './helpers/docker-installers.js';
 import { installedPowerShells, psQuote } from './helpers/powershell.js';
 import { createTempDir } from './helpers/test-env.js';
+import { skip } from './helpers/run-if-main.js';
 
 const shells = installedPowerShells();
-if (!shells.length) process.exit(3);
+if (!shells.length) skip('no PowerShell (powershell, pwsh) on this machine');
 const temp = createTempDir('dc-installer-discovery-');
 let failed = false;
 try {

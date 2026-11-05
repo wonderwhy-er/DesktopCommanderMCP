@@ -14,12 +14,13 @@
 //
 // Run, on Windows, macOS or Linux, when a PowerShell is installed:
 //   node test/docker-installer-claude-folders.test.js
-// Exit code: 1 if a check fails; 3 when there is no PowerShell to run it in.
+// Exit code: 1 if a check fails; missing PowerShell is recorded as a skipped check.
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runInstallerPs1 } from './helpers/docker-installers.js';
 import { installedPowerShells } from './helpers/powershell.js';
+import { skip } from './helpers/run-if-main.js';
 
 const installer = readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'install-docker.ps1'), 'utf8');
 const x86 = 'C:\\Program Files (x86)';
@@ -32,8 +33,7 @@ function check(name, ok, detail = '') {
 
 const shells = installedPowerShells();
 if (shells.length === 0) {
-  console.log('⚠️  SKIPPED: no PowerShell (powershell, pwsh) on this machine');
-  process.exit(3);
+  skip('no PowerShell (powershell, pwsh) on this machine');
 }
 
 for (const shell of shells) {
