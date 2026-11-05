@@ -325,7 +325,7 @@ class CommandManager {
                 unseen.push({ what: cmd.name, inFile: false });
                 continue;
             }
-            const program = programName(cmd.name);
+            const program = programName(cmd.name, shellType);
             const runsText = (shellType === 'posix' && program === 'eval')
                 || (shellType === 'powershell' && program === 'invoke-expression');
             if (runsText) {
@@ -346,7 +346,7 @@ class CommandManager {
      * startup file can still run beside command text in interactive mode.
      */
     private scriptFiles(cmd: FoundCommand, shellType: ShellType): UnseenProgram[] {
-        const program = programName(cmd.name);
+        const program = programName(cmd.name, shellType);
         const args = cmd.words.slice(1);
         const hidden = (file: string | null): UnseenProgram => {
             return file === null ? { what: cmd.name, inFile: false } : { what: file, inFile: true };
