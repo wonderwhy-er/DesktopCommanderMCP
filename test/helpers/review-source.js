@@ -69,15 +69,15 @@ async function sourceIdentity({ tested, head, base, run, log, read, repo }) {
 async function sourceSelection({ scope, log, tested, os, input, read, repo }) {
   const values = [...log.matchAll(/^\S+\s+TESTS:[ \t]*(.*)$/gm)].map(([, value]) => value.trim());
   if (values.length !== 1) fail('actual TESTS selection is missing or ambiguous.');
+  if ([...log.matchAll(/^\S+\s+TESTS_FROM:[ \t]*(.*)$/gm)].some(([, value]) => value.trim())) {
+    fail('tests_from overlay needs separate immutable producer-commit evidence.');
+  }
   if (scope === 'suite') {
     if (values[0] !== 'test') fail('suite scope requires actual TESTS=test.');
     return { tests: 'test', parts: ['suite'] };
   }
   const wanted = scope === 'ci-default' ? '' : scope;
   if (values[0] !== wanted || !log.includes('##[group]Run npm run test:coverage')) fail('CI command/actual TESTS differs.');
-  if ([...log.matchAll(/^\S+\s+TESTS_FROM:[ \t]*(.*)$/gm)].some(([, value]) => value.trim())) {
-    fail('tests_from overlay needs separate immutable producer-commit evidence.');
-  }
   let source;
   try { source = await read(`/repos/${repo}/contents/test/run-ci.js?ref=${tested}`); }
   catch { fail('test/run-ci.js producer evidence at the tested commit is unavailable.'); }
