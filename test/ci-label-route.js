@@ -25,7 +25,8 @@ const present=async sha=> {
 };
 const [nativeAtHead,nativeAtBase]=await Promise.all([present(live.head?.sha),present(live.base?.sha)]);
 const latest=await get(`/pulls/${number}`);
-const result=legacyRoute({event,actor,permission:access,repo,live:latest,nativeAtHead,nativeAtBase});
+const result=legacyRoute({event,actor,permission:access,repo,live:latest,nativeAtHead,nativeAtBase,
+  probedHead:live.head.sha,probedBase:live.base.sha});
 for (const [name,value] of Object.entries(result)) {
   const line=`${name}=${typeof value==='object'?JSON.stringify(value):value}`;
   console.log(line); fs.appendFileSync(process.env.GITHUB_OUTPUT,line+'\n');
