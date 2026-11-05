@@ -1,0 +1,32 @@
+name: Tool schema tests
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  tool-schemas:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install locked dependencies
+        run: npm ci
+      - name: Build
+        run: npm run build
+      - name: Verify MCP tool input schemas
+        run: node test/test-mcp-tool-input-schemas.js
+      - name: Verify unsupported parameter warnings
+        run: node test/integration/read-file-unknown-params.js
