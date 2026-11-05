@@ -5,6 +5,8 @@
  * with an exit status; nothing runs.
  */
 import assert from 'assert';
+import { test } from 'node:test';
+import * as coverageRunner from './run-coverage.js';
 import { spawnSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
@@ -21,7 +23,12 @@ function withStatuses(statuses, args = []) {
     steps.push(ranUnderC8 ? `c8 ${script} ${argv.slice(argv.findIndex((arg) => arg.endsWith(script)) + 1).join(' ')}`.trim() : script);
     return statuses[script] ?? 0;
   };
-  return { code: runCoverage({ node, args, stamp: () => steps.push('stamp') }), steps };
+  const root = createTempDir('dc-run-coverage-steps-');
+  try {
+    return { code: runCoverage({ node, args, root, stamp: () => steps.push('stamp') }), steps };
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 }
 
 export default async function run() {
@@ -52,6 +59,7 @@ export default async function run() {
     git(['init', '-q']);
     git(['config', 'user.email', 'test@example.com']);
     git(['config', 'user.name', 'test']);
+    fs.writeFileSync(path.join(repo, '.gitignore'), 'coverage/\n');
     fs.writeFileSync(path.join(repo, 'a.txt'), 'a\n');
     git(['add', '.']);
     git(['commit', '-q', '-m', 'one']);
@@ -69,3 +77,71 @@ export default async function run() {
 }
 
 runIfMain(import.meta.url, run);
+
+
+test('an untracked test prevents a clean coverage stamp', () => {
+  const root = createTempDir('dc-run-coverage-untracked-');
+  try {
+    const git = args => {
+      const done = spawnSync('git', ['-C', root, ...args], { encoding: 'utf8' });
+      assert.strictEqual(done.status, 0, done.stderr);
+      return done.stdout;
+    };
+    git(['init', '-q']);
+    git(['config', 'user.email', 'fixture@example.invalid']);
+    git(['config', 'user.name', 'Fixture']);
+    fs.writeFileSync(path.join(root, '.gitignore'), 'coverage/\n');
+    git(['add', '.']); git(['commit', '-qm', 'fixture']);
+    fs.writeFileSync(path.join(root, 'test-untracked.js'), 'throw new Error("untracked");');
+    const dir = path.join(root, 'coverage');
+    stampCoverage({ git, dir });
+    assert.strictEqual(JSON.parse(fs.readFileSync(path.join(dir, 'run.json'))).clean, false);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('failed Git status or HEAD lookup cannot produce a clean valid stamp', () => {
+  const root = createTempDir('dc-run-coverage-git-failure-');
+  try {
+    const dir = path.join(root, 'coverage');
+    stampCoverage({ git: args => args[0] === 'status' ? null : 'a'.repeat(40), dir });
+    assert.deepStrictEqual(JSON.parse(fs.readFileSync(path.join(dir, 'run.json'))), {
+      head: 'a'.repeat(40), clean: false,
+    });
+    stampCoverage({ git: args => args[0] === 'rev-parse' ? null : '', dir });
+    assert.deepStrictEqual(JSON.parse(fs.readFileSync(path.join(dir, 'run.json'))), { head: null, clean: false });
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('a failed Git command preserves failure instead of empty successful stdout', () => {
+  assert.strictEqual(typeof coverageRunner.coverageGit, 'function');
+  assert.strictEqual(coverageRunner.coverageGit(['not-a-real-git-command']), null);
+  assert.match(coverageRunner.coverageGit(['rev-parse', 'HEAD']), /^[a-f0-9]{40}\s*$/);
+});
+
+test('an early test exit cannot restamp stale test results or coverage', () => {
+  const root = createTempDir('dc-run-coverage-stale-');
+  try {
+    for (const [name, file] of [['coverage', 'lcov.info'], ['test-results/suite', 'results.json']]) {
+      fs.mkdirSync(path.join(root, name), { recursive: true });
+      fs.writeFileSync(path.join(root, name, file), 'stale');
+    }
+    fs.mkdirSync(path.join(root, 'dist'));
+    fs.writeFileSync(path.join(root, 'dist', 'keep.js'), 'coverage build');
+    let calls = 0;
+    const node = () => {
+      if (calls++ === 0) {
+        assert.strictEqual(fs.existsSync(path.join(root, 'test-results')), false, 'old results removed before tests');
+        assert.strictEqual(fs.existsSync(path.join(root, 'coverage')), false, 'old coverage removed before tests');
+        return 1;
+      }
+      return 0;
+    };
+    assert.strictEqual(runCoverage({ root, node, stamp: () => {
+      fs.mkdirSync(path.join(root, 'coverage'));
+      fs.writeFileSync(path.join(root, 'coverage', 'run.json'), '{}');
+    } }), 1);
+    assert.strictEqual(fs.existsSync(path.join(root, 'test-results/suite/results.json')), false);
+    assert.strictEqual(fs.existsSync(path.join(root, 'coverage/lcov.info')), false);
+    assert.strictEqual(fs.readFileSync(path.join(root, 'dist/keep.js'), 'utf8'), 'coverage build');
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});

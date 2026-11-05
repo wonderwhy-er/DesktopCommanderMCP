@@ -1,14 +1,11 @@
 /**
- * The legacy Gemini CLI budget hook, not used by the hosted Claude runner.
- * The hosted runner enforces its budget in test/helpers/claude-review.js.
- * This BeforeTool hook runs before every legacy Gemini tool call. The first N calls go through; every later one is refused
- * with a reason the model reads, so it answers from what it has read. (A refusal keeps the
- * answer; Gemini CLI's own turn stop, model.maxSessionTurns, ends the session without one.
- * A BeforeToolSelection hook's toolConfig mode NONE didn't stop the reads in 0.66.0.)
- * A text check's shell commands are refused too, unless they're plain read-only git or gh:
- * Gemini CLI's own allowlist (tools.core) checks them first, and this checks every word.
+ * Compatibility hook for the former Gemini CLI review runner, retained for its
+ * subprocess regression tests. The active Claude review runner enforces its
+ * tool budget in test/helpers/claude-review.js and does not invoke this hook.
+ * The first N calls go through; later calls are refused with a readable reason.
+ * Legacy shell calls allow only plain read-only git or gh commands.
  *
- *   node test/ci-review-budget.js <state file> <N>      (Gemini CLI passes the call on stdin)
+ *   node test/ci-review-budget.js <state file> <N>      (legacy tool call on stdin)
  */
 import fs from 'fs';
 
