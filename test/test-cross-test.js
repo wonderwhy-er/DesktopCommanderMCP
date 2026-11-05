@@ -103,6 +103,32 @@ export default async function run() {
     assert.ok(!fs.existsSync(worktree) && !git(root, 'worktree', 'list').includes(path.basename(worktree)), 'the worktree is removed');
     console.log('✓ a cross-test: the code commit\'s code with the tests commit\'s test/, its results back naming both');
 
+    let failedWorktree;
+    const installFailed = await crossTest({ root, code: b, testsFrom: a, outDir, log: () => {}, run: async (command, cwd) => {
+      failedWorktree = cwd;
+      assert.strictEqual(command, 'npm ci');
+      return 23;
+    } });
+    assert.strictEqual(installFailed, 23);
+    assert.deepStrictEqual(JSON.parse(fs.readFileSync(path.join(outDir, 'cross-test.json'), 'utf8')), { code: b, testsFrom: a, exit: 23 });
+    assert.ok(!fs.existsSync(path.join(outDir, 'test-results')) && !fs.existsSync(path.join(outDir, 'coverage')),
+      'a reused destination contains no earlier results or coverage after installation fails');
+    assert.ok(!fs.existsSync(failedWorktree) && !git(root, 'worktree', 'list').includes(path.basename(failedWorktree)), 'failed install removes its worktree');
+    write(outDir, 'test-results/old/results.json', 'old');
+    write(outDir, 'coverage/old-summary.json', 'old');
+    let partialWorktree;
+    const partial = await crossTest({ root, code: a, testsFrom: b, outDir, log: () => {}, run: async (command, cwd) => {
+      partialWorktree = cwd;
+      if (command === 'npm ci') return 0;
+      write(cwd, 'test-results/current/results.json', '{"current":true}');
+      return 9;
+    } });
+    assert.strictEqual(partial, 9);
+    assert.ok(fs.existsSync(path.join(outDir, 'test-results/current/results.json')));
+    assert.ok(!fs.existsSync(path.join(outDir, 'test-results/old')) && !fs.existsSync(path.join(outDir, 'coverage')), 'partial output replaces earlier artifacts');
+    assert.deepStrictEqual(JSON.parse(fs.readFileSync(path.join(outDir, 'cross-test.json'), 'utf8')), { code: a, testsFrom: b, exit: 9 });
+    assert.ok(!fs.existsSync(partialWorktree) && !git(root, 'worktree', 'list').includes(path.basename(partialWorktree)), 'partial run removes its worktree');
+
     // A failed run's exit comes back too, and the worktree is still removed
     const failed = await crossTest({ root, code: a, testsFrom: b, outDir: path.join(base, 'failed'), log: () => {}, run: async (command) => (command === 'npm ci' ? 0 : 1) });
     assert.strictEqual(failed, 1);

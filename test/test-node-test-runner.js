@@ -55,7 +55,9 @@ export default async function run() {
   const dir = createTempDir('dc-node-test-runner-');
   try {
     fs.writeFileSync(path.join(dir, 'pass.mjs'), "console.log('fine');\n");
-    fs.writeFileSync(path.join(dir, 'fail.mjs'), "console.log('boom');\nprocess.exit(3);\n");
+    // 31 lines, then the exit: all of them fit in the 40 lines a failure keeps
+    fs.writeFileSync(path.join(dir, 'fail.mjs'),
+      "for (let line = 1; line <= 30; line++) console.log('line ' + line);\nconsole.log('boom');\nprocess.exit(3);\n");
     fs.writeFileSync(path.join(dir, 'skip.mjs'), "import fs from 'fs';\nfs.appendFileSync(process.env.DC_TEST_SKIP_FILE, 'no python\\n');\n");
     const runner = pathToFileURL(path.join(ROOT, 'test', 'helpers', 'node-test-runner.js')).href;
     fs.writeFileSync(path.join(dir, 'run.mjs'), [
@@ -74,6 +76,9 @@ export default async function run() {
     assert.deepStrictEqual(json.files.map(({ file, success }) => [file, success]), [['./pass.mjs', true], ['./fail.mjs', false], ['./skip.mjs', true]]);
     const failed = json.files[1];
     assert.ok(failed.exitCode === 3 && failed.outputTail.includes('boom'), 'a failed file: its exit code and its last output');
+    // Each printed line is one line of the tail: no empty line between them, and so room for the first of the 31
+    assert.ok(!/\n\s*\n/.test(failed.outputTail), `no empty line the file didn't print:\n${JSON.stringify(failed.outputTail)}`);
+    assert.ok(failed.outputTail.includes('line 1\n'), `the tail keeps the file's last 40 lines:\n${failed.outputTail}`);
     assert.deepStrictEqual(json.files[2].skipped, ['no python'], 'a skipped check, by its reason');
     assert.ok(json.summary.failed === 1 && json.summary.skippedChecks === 1);
 
@@ -82,6 +87,26 @@ export default async function run() {
     assert.ok(junit.includes('name="skipped: no python"'), 'JUnit: the skipped check as its own entry');
     const tap = fs.readFileSync(path.join(outDir, 'results.tap'), 'utf8');
     assert.strictEqual((tap.match(/^not ok /gm) ?? []).length, 1, 'TAP: one file not ok');
+    fs.writeFileSync(path.join(dir, 'fragmented.mjs'), [
+      "process.stdout.write('first');",
+      "setTimeout(() => process.stdout.write(' second\\r'), 50);",
+      "setTimeout(() => process.stdout.write('\\n'), 100);",
+      "setTimeout(() => process.stderr.write('third'), 150);",
+      "setTimeout(() => { process.stderr.write(' fourth\\n'); process.exitCode = 7; }, 200);",
+    ].join('\n'));
+    fs.writeFileSync(path.join(dir, 'fragment-run.mjs'), [
+      `import { runTestFiles } from ${JSON.stringify(runner)};`,
+      "const [dir, outDir] = process.argv.slice(2);",
+      "await runTestFiles({ dir, files: ['./fragmented.mjs'], outDir, suiteName: 'fragments' });",
+    ].join('\n'));
+    const fragmentOut = path.join(dir, 'fragment-out');
+    const fragmented = spawnSync(process.execPath, [path.join(dir, 'fragment-run.mjs'), dir, fragmentOut], { cwd: dir, env, encoding: 'utf8', timeout: 120_000 });
+    assert.strictEqual(fragmented.status, 0, `${fragmented.stdout}${fragmented.stderr}`);
+    const fragmentResult = JSON.parse(fs.readFileSync(path.join(fragmentOut, 'results.json'), 'utf8')).files[0];
+    assert.strictEqual(fragmentResult.exitCode, 7);
+    assert.strictEqual(fragmentResult.outputTail, 'first second\nthird fourth', 'chunks do not create line breaks, including a split CRLF');
+    const fragmentJunit = fs.readFileSync(path.join(fragmentOut, 'junit.xml'), 'utf8');
+    assert.ok(fragmentJunit.includes('first second\nthird fourth</failure>'), 'JUnit preserves the same failure text as JSON');
     console.log('✓ a run of test files: JUnit, JSON and TAP, a failure\'s output, a skipped check');
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
