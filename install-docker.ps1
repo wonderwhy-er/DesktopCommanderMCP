@@ -406,7 +406,7 @@ function Find-ClaudeExecutable {
     if ($VerboseOutput) { Write-Info "Checking standard installation paths..." }
     foreach ($path in $claudePaths) {
         if ($VerboseOutput) { Write-Info "Checking: $path" }
-        if (Test-Path $path) {
+        if (Test-Path -LiteralPath $path) {
             if ($VerboseOutput) { Write-Info "Found Claude executable: $path" }
             return $path
         }
@@ -430,7 +430,8 @@ function Find-ClaudeExecutable {
                     if ($entry.InstallLocation) {
                         $possibleExe = Join-Path $entry.InstallLocation "Claude.exe"
                         if ($VerboseOutput) { Write-Info "Registry found: $($entry.DisplayName) at $possibleExe" }
-                        if (Test-Path $possibleExe) {
+                        if ((Test-ClaudeDesktopExecutablePath $possibleExe) -and
+                            (Test-Path -LiteralPath $possibleExe)) {
                             if ($VerboseOutput) { Write-Info "Found Claude executable via registry: $possibleExe" }
                             return $possibleExe
                         }
@@ -439,7 +440,8 @@ function Find-ClaudeExecutable {
                         $uninstallDir = Split-Path $entry.UninstallString -Parent
                         $possibleExe = Join-Path $uninstallDir "Claude.exe"
                         if ($VerboseOutput) { Write-Info "Trying uninstall directory: $possibleExe" }
-                        if (Test-Path $possibleExe) {
+                        if ((Test-ClaudeDesktopExecutablePath $possibleExe) -and
+                            (Test-Path -LiteralPath $possibleExe)) {
                             if ($VerboseOutput) { Write-Info "Found Claude executable via uninstall path: $possibleExe" }
                             return $possibleExe
                         }
@@ -462,10 +464,10 @@ function Find-ClaudeExecutable {
     )
     
     foreach ($dir in $searchDirs) {
-        if (Test-Path $dir) {
+        if (Test-Path -LiteralPath $dir) {
             if ($VerboseOutput) { Write-Info "Searching in: $dir" }
             try {
-                $found = Get-ChildItem -Path $dir -Recurse -Filter "Claude.exe" -File -ErrorAction SilentlyContinue |
+                $found = Get-ChildItem -LiteralPath $dir -Recurse -Filter "Claude.exe" -File -ErrorAction SilentlyContinue |
                     Where-Object { Test-ClaudeDesktopExecutablePath $_.FullName } |
                     Select-Object -First 1
                 if ($found) {
