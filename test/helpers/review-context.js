@@ -10,7 +10,8 @@ const fail = message => { throw new Error(`Review context: ${message}`); };
 const object = value => value && typeof value === 'object' && !Array.isArray(value);
 const hash = value => typeof value === 'string' && /^[0-9a-f]{64}$/.test(value);
 const commit = value => typeof value === 'string' && /^[0-9a-f]{40}$/.test(value);
-const CREDENTIAL = /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----|\b(?:sk-ant-|sk-proj-|gh[pousr]_|github_pat_)[\w-]{16,}/;
+export const CREDENTIAL =
+  /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----|\b(?:sk-ant-|sk-proj-|gh[pousr]_|github_pat_)[\w-]{16,}/;
 
 function fields(value, allowed) {
   if (!object(value) || Object.keys(value).some(key => !allowed.includes(key))) fail('unexpected fields.');
