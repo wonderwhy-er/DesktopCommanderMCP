@@ -16,7 +16,8 @@ const [state, limit] = process.argv.slice(2);
 const COMMAND = /^(git (log|show|rev-parse|merge-base)|gh (pr|run) view)( [\w.,:/^~=@%+-]+)*$/;
 // Words that would write a file, run a configured program, or reach another repository
 const REFUSED = [/^--output(=|$)/, /^--(ext-diff|textconv)$/, /^-[OR]/, /^--repo(=|$)/, /^--web$/, /^-w$/];
-const plainCommand = (command) => COMMAND.test(command) && !command.split(' ').some((word) => REFUSED.some((refused) => refused.test(word)));
+const refusedWord = (word) => REFUSED.some((refused) => refused.test(word));
+const plainCommand = (command) => COMMAND.test(command) && !command.split(' ').some(refusedWord);
 
 let call = {};
 try {
@@ -35,9 +36,17 @@ fs.writeFileSync(state, String(calls));
 const command = call.tool_name === 'run_shell_command' ? String(call.tool_input?.command ?? '').trim() : null;
 let answer = {};
 if (calls > Number(limit)) {
-  answer = { decision: 'deny', reason: `Your reading budget is used up (${limit} tool calls). Answer now, from what you have read, with the JSON object only.` };
+  answer = {
+    decision: 'deny',
+    reason: `Your reading budget is used up (${limit} tool calls). `
+      + 'Answer now, from what you have read, with the JSON object only.',
+  };
 } else if (command !== null && !plainCommand(command)) {
-  answer = { decision: 'deny', reason: 'Only plain git log, git show, git rev-parse or git merge-base, or gh pr view or gh run view, run here: no other command, '
-    + 'no quotes or shell characters, and no --output, --ext-diff, --textconv, -O, -R, --repo or --web.' };
+  answer = {
+    decision: 'deny',
+    reason: 'Only plain git log, git show, git rev-parse or git merge-base, or gh pr view or gh run view, run here: '
+      + 'no other command, no quotes or shell characters, '
+      + 'and no --output, --ext-diff, --textconv, -O, -R, --repo or --web.',
+  };
 }
 process.stdout.write(JSON.stringify(answer));
