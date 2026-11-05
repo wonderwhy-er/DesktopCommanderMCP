@@ -202,12 +202,12 @@ export function localTestsOf({ root, head }) {
 }
 
 /**
- * The findings, and a not covered one for each uncovered range no finding speaks to (the same file, a line in
- * the range)
+ * Add a not covered finding unless a coverage disposition already speaks to the same file and range.
  */
 export function withUncovered(findings, uncovered) {
   const spokenTo = (file, from, to) => findings
-    .some((finding) => finding.file === file && Number(finding.line) >= from && Number(finding.line) <= to);
+    .some((finding) => ['not covered', 'handled elsewhere'].includes(finding.kind)
+      && finding.file === file && Number(finding.line) >= from && Number(finding.line) <= to);
   const added = uncovered.flatMap(({ file, ranges }) => ranges
     .filter(([from, to]) => !spokenTo(file, from, to))
     .map(([from, to]) => ({
@@ -248,7 +248,7 @@ export function findingsOf(answer, diff) {
       line: Number.isInteger(line) && line > 0 ? line : null,
       text: String(finding?.text ?? '').trim(),
     };
-  });
+  }).filter((finding) => finding.file.trim().length > 0);
 }
 
 /**
@@ -334,7 +334,7 @@ export function reviewOf({ answer, diff, headSha, baseSha, usage = null, inline 
 }
 
 /** The prompt's part on the run's tests: where they ran, what failed, the changed lines no test ran, and what to ask */
-function testsPart(tests, context) {
+function testsPart(tests, context, { coverage = true } = {}) {
   let scope = [];
   if (tests?.provenance?.origin === 'github-actions') {
     const source = tests.provenance;
@@ -352,7 +352,8 @@ function testsPart(tests, context) {
   } else if (tests?.provenance) {
     scope = [`Selected native scope: ${oneLine(tests.provenance.scope)}`, '',
       `Native source attempt ${tests.provenance.attempt.id}: exit ${tests.provenance.attempt.exit}.`,
-      'Lines outside the supplied coverage records remain UNKNOWN; these are not this workflow\'s test results.', ''];
+      'Lines outside the supplied coverage records remain UNKNOWN; these are not this workflow\'s test results.',
+      'The selected manifest, outcomes and provenance are in review/tests.json.', ''];
   }
   if (!tests && context) {
     return ['No CI test/coverage artifacts were supplied. The pinned native evidence below is supplied test evidence '
@@ -364,7 +365,12 @@ function testsPart(tests, context) {
       + 'Say so in the summary, and write `not checked` for what only a test run could show.'];
   }
   const failedList = tests.failed.map(({ platform, file }) => `${file} (${platform})`).join(', ');
-  const failed = tests.failed.length > 0 ? `Failed: ${failedList}.` : 'None failed.';
+  let failed = tests.failed.length > 0 ? `Failed: ${failedList}.` : 'None failed.';
+  if (tests.failed.length === 0 && tests.provenance?.origin === 'native' && tests.provenance.attempt.exit !== 0) {
+    failed = `No failed file is listed, but the native attempt exited nonzero (exit ${tests.provenance.attempt.exit}).`;
+  }
+  const ran = [...scope, `They ran on ${tests.platforms.join(', ')}. ${failed}`];
+  if (!coverage) return ran;
   let uncovered;
   if (tests.uncovered === null) {
     uncovered = ['Changed-line coverage is UNKNOWN: no coverage artifact was supplied. Do not infer zero uncovered lines.'];
@@ -374,7 +380,7 @@ function testsPart(tests, context) {
   } else {
     uncovered = ['Every changed line the coverage report counts was run by a test.'];
   }
-  return [...scope, `They ran on ${tests.platforms.join(', ')}. ${failed}`, '', ...uncovered, '',
+  return [...ran, '', ...uncovered, '',
     'Is each new or changed behaviour tested, and does a failing test exist for each fix? '
       + 'Report each range above as a `not covered` finding (its file, its first line, "not covered: <file>:<lines>"), '
       + 'unless the PR says why; then say why, as `handled elsewhere`.'];
@@ -454,7 +460,11 @@ export function textPromptOf({
     const ended = body.endsWith('\n') ? body : `${body}\n`;
     return `${fenceFor(body)}${lang}\n${ended}${fenceFor(body)}`;
   };
-  const numbered = String(text ?? '').slice(0, 50000).replace(/\r?\n$/, '').split(/\r?\n/)
+  const full = String(text ?? '');
+  if (full.length > 50000) {
+    throw new Error(`The text is ${full.length} characters, over the 50,000 a text check reads.`);
+  }
+  const numbered = full.replace(/\r?\n$/, '').split(/\r?\n/)
     .map((line, at) => `${at + 1}: ${line}`).join('\n');
   return [
     template.trimEnd(),
@@ -480,7 +490,7 @@ export function textPromptOf({
     '## The tests at the head',
     '',
     // What ran and what failed; the review's coverage asks aren't a text check's
-    ...(tests ? testsPart(tests, context).slice(0, 1) : testsPart(tests, context)),
+    ...testsPart(tests, context, { coverage: false }),
     '',
     'The diff:',
     '',
@@ -489,7 +499,14 @@ export function textPromptOf({
     '## The results files',
     '',
     ...(results.length > 0
-      ? results.flatMap(({ name, text: body }) => [`### ${name}`, '', fenced(String(body).slice(0, 40000)), ''])
+      ? results.flatMap(({ name, text: body }) => {
+        const all = String(body);
+        const notice = all.length > 40000
+          ? [`[truncated: ${all.length - 40000} characters not shown; `
+            + 'claims relying on unseen content are not checked.]']
+          : [];
+        return [`### ${name}`, '', fenced(all.slice(0, 40000)), ...notice, ''];
+      })
       : ['No results files came with this check.', '']),
     '## The text',
     '',

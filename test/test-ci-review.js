@@ -237,13 +237,14 @@ export default async function run() {
   }
   console.log('✓ the run\'s tests and coverage: CI\'s artifacts, or this machine\'s run at B');
 
-  // Each uncovered range the model didn't mention becomes a not covered finding
+  // A nitpick does not discharge an uncovered range: coverage needs its own disposition
   const uncovered = [{ file: 'src/a.ts', ranges: [[11, 12]] }, { file: 'src/b.ts', ranges: [[1, 1], [4, 6]] }];
   assert.deepStrictEqual(withUncovered([{ kind: 'nitpick', file: 'src/b.ts', line: 5, text: 'x' }], uncovered), [
     { kind: 'nitpick', file: 'src/b.ts', line: 5, text: 'x' },
     { kind: 'not covered', file: 'src/a.ts', line: 11, text: 'not covered: src/a.ts:11-12' },
     { kind: 'not covered', file: 'src/b.ts', line: 1, text: 'not covered: src/b.ts:1' },
-  ], 'src/b.ts:4-6 was mentioned (line 5): left to the model\'s words; the others added');
+    { kind: 'not covered', file: 'src/b.ts', line: 4, text: 'not covered: src/b.ts:4-6' },
+  ], 'the nitpick on line 5 does not explain why the range is uncovered');
   console.log('✓ uncovered changed lines become findings, unless the model spoke to them');
 
   // The answer: JSON findings, also inside a code fence or after some words
