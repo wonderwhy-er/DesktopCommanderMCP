@@ -26,7 +26,8 @@ const MAX_BRACE_STEPS = 10_000_000;
 
 /** Characters that are all text: a quoted part of a word, or a part with no brace syntax in it */
 export function quotedChars(text: string): WordChar[] {
-  return Array.from(text, (char) => ({ char, quoted: true }));
+  // An empty quoted part still keeps its word after quote removal.
+  return Array.from(text || [''], (char) => ({ char, quoted: true }));
 }
 
 /** Characters as written outside quotes, where a backslash makes the character after it text */
@@ -45,7 +46,7 @@ export function unquotedChars(text: string): WordChar[] {
 
 /**
  * The words bash makes from a word by brace expansion, in bash's order, without
- * the empty ones: bash drops an empty unquoted word, so {,sudo} ls runs sudo.
+ * the unquoted empty ones: bash drops {,sudo}'s empty word, but keeps {"",sudo}'s.
  * A word without an expansion gives itself. Past MAX_BRACE_WORDS words or
  * MAX_BRACE_STEPS steps it gives null, and the reader takes the command as
  * unreadable.
@@ -57,8 +58,8 @@ export function braceWords(chars: WordChar[]): string[] | null {
   try {
     for (const word of expand(chars, steps)) {
       if (++read > MAX_BRACE_WORDS) return null;
-      take(steps, word.length);
-      if (word !== '') words.push(word);
+      take(steps, word.text.length);
+      if (word.text !== '' || word.quoted) words.push(word.text);
     }
   } catch (error) {
     if (error instanceof TooManySteps) return null;
@@ -82,17 +83,22 @@ const isSyntax = (c: WordChar, char: string): boolean => !c.quoted && c.char ===
 const textOf = (chars: WordChar[]): string => chars.map((c) => c.char).join('');
 
 /** Yields the words of an expansion one at a time, so {1..1000000000} costs only the words that are read */
-function* expand(chars: WordChar[], steps: Steps): Generator<string> {
+type ExpandedWord = { text: string; quoted: boolean };
+
+function* expand(chars: WordChar[], steps: Steps): Generator<ExpandedWord> {
   const brace = findBrace(chars, steps);
   if (!brace) {
-    yield textOf(chars);
+    yield { text: textOf(chars), quoted: chars.some((c) => c.quoted) };
     return;
   }
-  const preamble = textOf(chars.slice(0, brace.open));
+  const preamble = chars.slice(0, brace.open);
   const postscript = chars.slice(brace.close + 1);
   for (const middle of middles(chars, brace, steps)) {
     for (const end of expand(postscript, steps)) {
-      yield preamble + middle + end;
+      yield {
+        text: textOf(preamble) + middle.text + end.text,
+        quoted: preamble.some((c) => c.quoted) || middle.quoted || end.quoted,
+      };
     }
   }
 }
@@ -101,9 +107,9 @@ function* expand(chars: WordChar[], steps: Steps): Generator<string> {
 type Brace = { open: number; close: number } & ({ commas: number[] } | { text: string });
 
 /** The words that replace the braces, in order: each piece between the commas, expanded, or the sequence */
-function* middles(chars: WordChar[], brace: Brace, steps: Steps): Generator<string> {
+function* middles(chars: WordChar[], brace: Brace, steps: Steps): Generator<ExpandedWord> {
   if ('text' in brace) {
-    yield* sequence(brace.text);
+    for (const text of sequence(brace.text)) yield { text, quoted: false };
     return;
   }
   const bounds = [brace.open, ...brace.commas, brace.close];
