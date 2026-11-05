@@ -223,6 +223,7 @@ export function answerOf(text) {
   try {
     answer = JSON.parse(raw.slice(raw.indexOf('{'), raw.lastIndexOf('}') + 1));
   } catch {
+    // Missing or malformed JSON follows the same validation error below as an invalid answer shape.
     answer = undefined;
   }
   if (typeof answer?.summary !== 'string' || !Array.isArray(answer.findings)) {
