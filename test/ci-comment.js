@@ -40,7 +40,13 @@ const server = process.env.GITHUB_SERVER_URL ?? 'https://github.com';
 const api = process.env.GITHUB_API_URL ?? 'https://api.github.com';
 const runUrl = `${server}/${repo}/actions/runs/${runId}`;
 
-const readJson = (file) => (fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : undefined);
+const readJson = (file) => {
+  try {
+    return fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : undefined;
+  } catch {
+    return undefined;
+  }
+};
 const github = githubApi({ api, token });
 
 /** Every page of a list endpoint, e.g. a run's jobs or a PR's comments */
@@ -154,8 +160,19 @@ function combinedCoverage() {
 }
 
 async function main() {
-  const jobs = token && runId ? await githubList(`/repos/${repo}/actions/runs/${runId}/jobs`, 'jobs') : [];
-  const artifacts = token && runId ? await githubList(`/repos/${repo}/actions/runs/${runId}/artifacts`, 'artifacts') : [];
+  const missingMetadata = [];
+  const list = async (key) => {
+    if (!token || !runId) return [];
+    try {
+      return await githubList(`/repos/${repo}/actions/runs/${runId}/${key}`, key);
+    } catch (error) {
+      missingMetadata.push(`${key} metadata unavailable`);
+      console.error(`The run's ${key} metadata wasn't read: ${error.message}`);
+      return [];
+    }
+  };
+  const jobs = await list('jobs');
+  const artifacts = await list('artifacts');
 
   // The results of each platform this run ran
   const data = {};
@@ -163,6 +180,7 @@ async function main() {
     const own = platformJobs(jobs, os);
     const tests = testResults(os, own);
     if (own.length === 0 && !tests) continue;
+    if (tests) tests.notes.push(...missingMetadata);
     const summary = readJson(path.join(folder, `coverage-${os}`, 'coverage-summary.json'));
     const artifact = (kind) => {
       const found = artifacts.find((item) => item.name === `${kind}-${os}`);

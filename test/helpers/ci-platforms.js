@@ -109,7 +109,7 @@ export function resultsArtifactOf(job, os) {
 }
 
 /** Text from an artifact or an older comment (a step name, an area) as plain inline text: no markup, no line breaks */
-export const plain = (text) => String(text).replace(/[`<>|\r\n]/g, '');
+export const plain = (text) => String(text).replace(/[`<>|[\]\r\n]/g, '');
 
 const count = (value) => (Number.isFinite(Number(value)) ? Number(value) : 0);
 const percent = ([covered, total], digits, cut) => (count(total) > 0 ? cut((10 ** (digits + 2) * count(covered)) / count(total)) / 10 ** digits : 100);
