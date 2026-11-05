@@ -295,8 +295,15 @@ function Build-DockerArgs {
 function Test-ClaudeDesktopExecutablePath {
     param([string]$Path)
 
-    $desktopFolders = @("$env:ProgramFiles\WindowsApps\Claude_*", "$env:LOCALAPPDATA\AnthropicClaude") + $script:ClaudeDesktopFolders
-    return [bool]($Path -and ($desktopFolders | Where-Object { $Path -like "$_\*" }))
+    $desktopFolders = @("$env:LOCALAPPDATA\AnthropicClaude") + $script:ClaudeDesktopFolders
+    # Installation roots are literal paths; only the Store package name is a wildcard.
+    $desktopPatterns = @($desktopFolders | ForEach-Object {
+        [System.Management.Automation.WildcardPattern]::Escape($_) + '\*'
+    })
+    $desktopPatterns += (
+        [System.Management.Automation.WildcardPattern]::Escape("$env:ProgramFiles\WindowsApps\") + 'Claude_*\*'
+    )
+    return [bool]($Path -and ($desktopPatterns | Where-Object { $Path -like $_ }))
 }
 
 function Find-ClaudeProcess {
