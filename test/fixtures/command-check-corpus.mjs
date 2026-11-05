@@ -244,7 +244,7 @@ export const CORPUS = [
       'fi',
       'docker load -i "$ARCHIVE"',
     ].join(nl),
-    note: "case 11's whole deployment script, written from the customer's description: its own halt, called after || and inside if",
+    note: "a deployment script calls its own halt after || and inside if",
   },
   { id: 'fn_called_from_fn', group: 'ownfunc', shell: 'bash', expect: null, command: ['halt() { echo "ERROR: $*" >&2; exit 1; }', 'main() { docker load -i "$ARCHIVE" || halt "load failed"; }', 'main'].join(nl), note: 'the own halt, called from another function of the script' },
   { id: 'fn_body_path', group: 'ownfunc', shell: 'bash', expect: 'halt', command: 'halt() { /sbin/halt -p; }; halt', note: 'the body of the own halt runs /sbin/halt' },

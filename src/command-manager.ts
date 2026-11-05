@@ -286,7 +286,8 @@ class CommandManager {
      * found.
      */
     private withoutOwnFunctionCalls(reading: CommandReading, shellType: ShellType): FoundCommand[] {
-        const sameName = (a: string, b: string) => shellType === 'powershell' ? a.toLowerCase() === b.toLowerCase() : a === b;
+        const sameName = (a: string, b: string) =>
+            shellType === 'powershell' ? a.toLowerCase() === b.toLowerCase() : a === b;
         return reading.commands.filter((cmd) => {
             const written = cmd.words[0];
             if (written === null || written.includes('/') || written.includes('\\')) return true;
