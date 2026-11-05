@@ -6,7 +6,7 @@ import {platformsFor} from './helpers/ci-platforms.js';
 function fixture() {
   const repo='wonderwhy-er/DesktopCommanderMCP';
   const live={number:12,state:'open',user:{login:'mihailt'},head:{sha:'a'.repeat(40),repo:{full_name:repo}},base:{sha:'b'.repeat(40),ref:'old-feature',repo:{full_name:repo}},labels:['linux','windows','macos'].map(name=>({name}))};
-  return {repo,actor:'mihailt',permission:'write',nativeAtHead:false,nativeAtBase:false,live,
+  return {repo,actor:'mihailt',permission:'write',nativeAtHead:false,nativeAtBase:false,probedHead:live.head.sha,probedBase:live.base.sha,live,
     event:{action:'labeled',sender:{login:'mihailt'},label:{name:'windows'},pull_request:structuredClone(live)}};
 }
 test('missing workflow on old feature base routes added OS while native target handling cannot',()=> {
@@ -27,6 +27,8 @@ for (const [name,change] of [
   ['fork',f=>{f.live.head.repo.full_name='fork/repo';}],
   ['stale head',f=>{f.live.head.sha='c'.repeat(40);}],
   ['stale base',f=>{f.live.base.sha='c'.repeat(40);}],
+  ['head differs from workflow-probed snapshot',f=>{f.probedHead='c'.repeat(40);}],
+  ['base differs from workflow-probed snapshot',f=>{f.probedBase='c'.repeat(40);}],
   ['closed PR',f=>{f.live.state='closed';}],
   ['removed label',f=>{f.live.labels=[];}],
   ['existing head workflow',f=>{f.nativeAtHead=true;}],
