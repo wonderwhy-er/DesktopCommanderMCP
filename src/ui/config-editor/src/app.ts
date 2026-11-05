@@ -514,6 +514,7 @@ export function createConfigEditorController(callTool: ToolCall, trackConfigUiEv
     };
 }
 
+/** Show the server's normalized settings so each switch agrees with the runtime value. */
 function render(container: HTMLElement, controller: ReturnType<typeof createConfigEditorController>, chrome: UiChromeState, hooks: RenderHooks = {}): void {
     shellController?.dispose();
     shellController = undefined;

@@ -303,6 +303,7 @@ function shouldIncludeTool(toolName: string): boolean {
     return true;
 }
 
+/** Advertise the available tools and their settings so clients can form valid requests. */
 server.setRequestHandler(ListToolsRequestSchema, async () => {
     try {
         // logToStderr('debug', 'Generating tools list...');

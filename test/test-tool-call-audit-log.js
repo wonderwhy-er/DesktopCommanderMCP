@@ -75,12 +75,14 @@ async function withServer(steps) {
   }
 }
 
+/** Exercise disk logging and retained in-memory history across config edits and server restarts. */
 async function runTests() {
   if (!isTestHome()) {
     return skip('test-tool-call-audit-log.js writes the logs in the home; run it through the runner: node test/run-all-tests.js test-tool-call-audit-log.js');
   }
 
   const failures = [];
+  /** Collect each independent logging failure while allowing the remaining assertions to run. */
   async function test(name, fn) {
     try {
       await fn();

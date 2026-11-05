@@ -267,6 +267,10 @@ class ToolHistory {
     } as ServerResult;
   }
 
+  /**
+   * Keep recent calls in memory regardless of the disk switch. Only new history
+   * records are gated here; disabling does not discard the existing write queue.
+   */
   async addCall(
     toolName: string,
     args: any,

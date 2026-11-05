@@ -78,12 +78,14 @@ async function keysShownOn(configAnswer) {
   }
 }
 
+/** Compare the real editor with server values after hand edits and missing settings. */
 async function runTests() {
   if (!isTestHome()) {
     return skip('test-config-editor-missing-setting.js edits config.json in the home; run it through the runner: node test/run-all-tests.js test-config-editor-missing-setting.js');
   }
 
   const failures = [];
+  /** Report every settings case before failing the file, so one mismatch does not hide another. */
   async function test(name, fn) {
     try {
       await fn();

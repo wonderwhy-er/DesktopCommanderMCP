@@ -32,7 +32,9 @@ export const CONFIG_FIELD_DEFINITIONS = {
     label: 'Tool Call Log',
     description: 'When on, Desktop Commander saves every tool call, with its arguments, ' +
       'in claude_tool_call.log and tool-history.jsonl in its folder; get_recent_tool_calls reads the second. ' +
-      'When off, neither file gets new calls, and get_recent_tool_calls shows what the file held ' +
+      'When off, no new calls are queued for history or written to the call log. ' +
+      'Already queued history can still flush; existing files remain. ' +
+      'get_recent_tool_calls shows what the file held ' +
       'when Desktop Commander started plus the calls made since.',
     valueType: 'boolean',
   },
