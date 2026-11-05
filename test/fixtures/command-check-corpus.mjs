@@ -293,6 +293,14 @@ export const CORPUS = [
   // ---- The 14k-char case ----
   { id: 'long01', group: 'long', shell: 'powershell', expect: null, command: long01, note: '14k chars; su only as Spanish prose in a here-string' },
 
+  // ---- FOR /F reads command output, except for its literal-string quote modes ----
+  { id: 'cmd_for_f_command', group: 'bypass', shell: 'cmd', expect: 'sc', command: "for /f %i in ('sc stop Spooler') do @echo %i", note: 'declared regression for the quoted command set; never executed' },
+  { id: 'cmd_for_f_options', group: 'bypass', shell: 'cmd', expect: 'net', command: "for /f \"tokens=*\" %%i in ('net user') do @echo %%i", note: 'batch variable and parsing options do not make the command data' },
+  { id: 'cmd_for_f_backq', group: 'bypass', shell: 'cmd', expect: 'sc', command: 'for /f "usebackq" %i in (`sc query`) do @echo %i', note: 'usebackq makes the back-quoted set a command' },
+  { id: 'cmd_for_f_pipe', group: 'bypass', shell: 'cmd', expect: 'sc', command: "for /f %i in ('echo x ^| sc query') do @echo %i", note: 'outer caret is consumed before the child cmd reads its pipeline' },
+  { id: 'cmd_for_f_literal', group: 'case', shell: 'cmd', expect: null, command: 'for /f %i in ("sc query") do @echo %i', note: 'double-quoted default set is literal text' },
+  { id: 'cmd_for_f_backq_literal', group: 'case', shell: 'cmd', expect: null, command: "for /f \"usebackq\" %i in ('sc query') do @echo %i", note: 'single-quoted usebackq set is literal text' },
+
   // ---- Controls: a plain blocked program must always be caught ----
   { id: 'ctl_sudo', group: 'control', shell: 'bash', expect: 'sudo', command: 'sudo ls', note: 'plain' },
   { id: 'ctl_chain', group: 'control', shell: 'bash', expect: 'sudo', command: 'echo ok && sudo ls', note: 'chained' },

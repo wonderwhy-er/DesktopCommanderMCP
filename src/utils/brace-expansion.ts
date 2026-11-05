@@ -154,9 +154,11 @@ function* sequence(text: string): Generator<string> {
   const numbers = NUMBERS.exec(text);
   if (numbers) {
     const [, first, last, increment] = numbers;
-    // A leading zero on either end (after a -, not a +) pads every number to the longer end's width, sign included, as bash does
+    // Match bash: a leading zero (after -, not +) pads to the longer endpoint's width, including its sign.
     const width = /^-?0\d/.test(first) || /^-?0\d/.test(last) ? Math.max(first.length, last.length) : 0;
-    const pad = (n: number): string => (n < 0 ? '-' + String(-n).padStart(width - 1, '0') : String(n).padStart(width, '0'));
+    const pad = (n: number): string => (
+      n < 0 ? '-' + String(-n).padStart(width - 1, '0') : String(n).padStart(width, '0')
+    );
     for (const n of range(Number(first), Number(last), increment)) yield pad(n);
     return;
   }
