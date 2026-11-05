@@ -3,6 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { signalProcessGroup } from './process-tree.js';
+import { getRemoteDeviceConfigPath } from '../../dist/remote-device/remote-utils.js';
 
 /**
  * A real remote device process (dist/remote-device/device.js), started the way
@@ -22,7 +23,7 @@ export const STARTED = /- Device ID:\s+\S/;
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /** Where the device keeps its device id and session, in `home` */
-export const deviceConfigPath = (home) => path.join(home, '.desktop-commander-device', 'device.json');
+export const deviceConfigPath = (home) => getRemoteDeviceConfigPath(home);
 
 /** Writes the device's config in `home`, as a device saves it */
 export function writeDeviceConfig(home, config) {

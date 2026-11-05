@@ -80,6 +80,22 @@ export default async function run() {
     assert.strictEqual(notHere.status, 0, notHere.output);
     assert.ok(notHere.files.length === 0 && notHere.notRun === reason && notHere.output.includes(reason), `the reason, in the reports and the output: ${notHere.notRun}`);
     console.log('✓ the Docker runner: nothing to run fails, unless --none-ok; --not-run records why, its reports written');
+    // --not-run needs its reason: as the last argument it would run every Docker test, and before another
+    // option it would take that option as the reason
+    const dockerScript = path.join(ROOT, 'test', 'docker', 'run-docker-tests.js');
+    const skipAll = dockerTests.flatMap((file) => ['--skip', file]);
+    const withoutReason = [
+      ['--out', path.join(dir, 'docker-no-reason'), '--not-run'],
+      ['--not-run', '--none-ok', '--out', path.join(dir, 'docker-option-after')],
+    ];
+    for (const args of withoutReason) {
+      const noReason = spawnSync(process.execPath, [dockerScript, ...skipAll, ...args],
+        { cwd: ROOT, env: cleanEnv(), encoding: 'utf8', timeout: 180_000 });
+      const output = `${noReason.stdout}${noReason.stderr}`;
+      assert.strictEqual(noReason.status, 1, `${args.join(' ')}: without a reason, the run fails:\n${output}`);
+      assert.ok(output.includes('--not-run needs a reason'), `${args.join(' ')}: the error says why:\n${output}`);
+    }
+    console.log('✓ the Docker runner: --not-run without a reason fails, last or before another option');
     for (const [name, ran] of Object.entries({ suite, repro, integration, docker, noneOk, notHere })) {
       assert.deepStrictEqual(ran.excluded, [], `${name}: test/excluded.txt leaves nothing out, and the reports say so`);
     }

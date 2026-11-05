@@ -22,12 +22,13 @@
  * without Windows PowerShell or PowerShell 7.
  */
 import assert from 'assert';
+import { test } from 'node:test';
 import { execFileSync } from 'child_process';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { configManager } from '../dist/config-manager.js';
-import { runIfMain, skip } from './helpers/run-if-main.js';
+import { skip } from './helpers/run-if-main.js';
 import { isTestHome, withEnv } from './helpers/test-env.js';
 import { installedPowerShells } from './helpers/powershell.js';
 import { waitUntil } from './helpers/wait.js';
@@ -158,7 +159,7 @@ function profilePath(shell) {
   return found;
 }
 
-export default async function runTests() {
+export default async function runTests(t) {
   // It writes profiles into the home and sets blockedCommands, so only in a fresh test home
   if (!isTestHome()) {
     skip('test-powershell-profile.js writes PowerShell profiles into the home; run it through the runner: node test/run-all-tests.js test-powershell-profile.js');
@@ -171,41 +172,46 @@ export default async function runTests() {
   }
   const { commandManager } = await import('../dist/command-manager.js');
   const { runningPowerShellHelpers } = await import('../dist/utils/powershell-commands.js');
+  t.after(async () => {
+    for (const pid of runningPowerShellHelpers()) process.kill(pid);
+    await waitUntil(() => runningPowerShellHelpers().length === 0, 10000, 'the helpers have ended');
+  });
   await configManager.setValue('blockedCommands', ['net', 'shutdown']);
   const profiles = shells.map(profilePath);
 
   const failures = [];
   let checks = 0;
-  for (const [n, testCase] of CASES.entries()) {
-    console.log(`Test ${n + 1}: ${testCase.what}`);
+  for (const testCase of CASES) {
+    let skipped = false;
     if (testCase.windows === true && process.platform !== 'win32') {
-      skip(`PowerShell profile, ${testCase.what}: Windows only`);
-      continue;
+      skipped = `PowerShell profile, ${testCase.what}: Windows only`;
+    } else if (testCase.windows === false && process.platform === 'win32') {
+      skipped = `PowerShell profile, ${testCase.what}: not on Windows`;
     }
-    if (testCase.windows === false && process.platform === 'win32') {
-      skip(`PowerShell profile, ${testCase.what}: not on Windows`);
-      continue;
-    }
-    for (const file of profiles) {
-      fs.mkdirSync(path.dirname(file), { recursive: true });
-      fs.writeFileSync(file, testCase.profile + '\n');
-    }
-    const loginProfile = path.join(os.homedir(), '.profile');
-    if (testCase.loginProfile) fs.writeFileSync(loginProfile, testCase.loginProfile + '\n');
-    else fs.rmSync(loginProfile, { force: true });
-    // The helpers read the profile when they start: stop the running ones, the next check starts new ones
-    for (const pid of runningPowerShellHelpers()) process.kill(pid);
-    await waitUntil(() => runningPowerShellHelpers().length === 0, 10000, 'the helpers have ended');
-    await withEnv(testCase.env ?? {}, async () => {
-      for (const shell of shells) {
-        for (const [command, expected] of testCase.checks) {
-          const answer = await commandManager.checkCommand(command, shell);
-          const right = JSON.stringify(answer) === JSON.stringify(expected);
-          checks++;
-          console.log(`  ${right ? '✓' : '✗'} ${shell}: ${command} → ${JSON.stringify(answer)}`);
-          if (!right) failures.push(`${testCase.what} (${shell}): ${command} should be ${JSON.stringify(expected)} but was ${JSON.stringify(answer)}`);
-        }
+    await t.test(testCase.what, { skip: skipped }, async () => {
+      const previousFailures = failures.length;
+      for (const file of profiles) {
+        fs.mkdirSync(path.dirname(file), { recursive: true });
+        fs.writeFileSync(file, testCase.profile + '\n');
       }
+      const loginProfile = path.join(os.homedir(), '.profile');
+      if (testCase.loginProfile) fs.writeFileSync(loginProfile, testCase.loginProfile + '\n');
+      else fs.rmSync(loginProfile, { force: true });
+      // The helpers read the profile when they start: stop the running ones, the next check starts new ones
+      for (const pid of runningPowerShellHelpers()) process.kill(pid);
+      await waitUntil(() => runningPowerShellHelpers().length === 0, 10000, 'the helpers have ended');
+      await withEnv(testCase.env ?? {}, async () => {
+        for (const shell of shells) {
+          for (const [command, expected] of testCase.checks) {
+            const answer = await commandManager.checkCommand(command, shell);
+            const right = JSON.stringify(answer) === JSON.stringify(expected);
+            checks++;
+            console.log(`  ${right ? '✓' : '✗'} ${shell}: ${command} → ${JSON.stringify(answer)}`);
+            if (!right) failures.push(`${testCase.what} (${shell}): ${command} should be ${JSON.stringify(expected)} but was ${JSON.stringify(answer)}`);
+          }
+        }
+      });
+      assert.strictEqual(failures.length, previousFailures, `${testCase.what}: every answer is right`);
     });
   }
   console.log(failures.length === 0 ? `All ${checks} checks right` : `${failures.length} of ${checks} checks wrong:\n  ${failures.join('\n  ')}`);
@@ -213,4 +219,4 @@ export default async function runTests() {
   return true;
 }
 
-runIfMain(import.meta.url, runTests);
+test('PowerShell profiles use the same command lookup as the shell', runTests);

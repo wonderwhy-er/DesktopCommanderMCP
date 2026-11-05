@@ -221,16 +221,20 @@ function isWsl(): boolean {
 /**
  * A program's name without its folder or extension, lowercased:
  * C:\Windows\System32\NET.EXE is "net". The folder goes as Windows writes it
- * (\ or /, or a drive, as in C:sc.exe) on every system. The extension is .ps1
+ * (\ or /, or a drive, as in C:sc.exe). POSIX shells outside Windows use
+ * only / as a folder separator. The extension is .ps1
  * (PowerShell runs deploy.ps1 for deploy), or on Windows one of PATHEXT's as
  * commands run with it (repaired, #481). WSL runs Windows programs from Linux
  * (sc.exe stop Spooler), so there too. The command check compares the names it
- * finds and the blockedCommands entries in this form.
+ * finds and the blockedCommands entries in this form. POSIX shells on
+ * Windows still accept Windows paths, as Git Bash does.
  */
-export function programName(name: string): string {
-  const program = path.win32.basename(name).toLowerCase();
-  const extensions = ['.ps1', ...(isWindows() || isWsl() ? getRepairedPathExt().split(';') : [])].map((ext) => ext.trim().toLowerCase());
-  const extension = path.extname(program);
+export function programName(name: string, shellType?: ShellType): string {
+  const paths = shellType === 'posix' && !isWindows() ? path.posix : path.win32;
+  const program = paths.basename(name).toLowerCase();
+  const extensions = ['.ps1', ...(isWindows() || isWsl() ? getRepairedPathExt().split(';') : [])]
+    .map((ext) => ext.trim().toLowerCase());
+  const extension = paths.extname(program);
   return extension && extensions.includes(extension) ? program.slice(0, -extension.length) : program;
 }
 

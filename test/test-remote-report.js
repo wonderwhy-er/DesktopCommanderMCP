@@ -88,6 +88,14 @@ import { setThreadpoolSize } from ${JSON.stringify(new URL('../dist/utils/thread
 setThreadpoolSize('16', false);
 fs.writeFileSync(process.argv[2], String(process.pid));`;
 
+/** Both this process and its child serve independently; neither is a waiting bootstrap launcher. */
+const STARTS_INDEPENDENT_SERVER = `
+import fs from 'node:fs';
+import { spawn } from 'node:child_process';
+const child = spawn(process.execPath, [process.argv[2]], { stdio: 'ignore' });
+fs.writeFileSync(process.argv[3], String(child.pid));
+process.on('exit', () => child.kill());`;
+
 async function runTests() {
     if (!isTestHome()) {
         skip('test-remote-report.js plants device.json and config.json in the home folder: run it through node test/run-all-tests.js');
@@ -129,7 +137,7 @@ async function runTests() {
     try {
         // --- the planted home ---------------------------------------------------------
 
-        const deviceDir = path.join(home, '.desktop-commander-device');
+        const deviceDir = path.dirname(deviceConfigPath(home));
         const configDir = path.join(home, '.claude-server-commander');
         const session = standIn.login();
         writeDeviceConfig(home, { deviceId: standIn.deviceId, session });
@@ -316,7 +324,7 @@ async function runTests() {
             const names = deviceLogNames();
             assert.strictEqual(names.length, 21, 'the files the report must pack');
             await inOtherHome(async (other) => {
-                const logDir = path.join(other.home, '.desktop-commander-device');
+                const logDir = path.dirname(deviceConfigPath(other.home));
                 fs.mkdirSync(logDir, { recursive: true });
                 // Written in an order that is not the names' order: every 8th name, wrapping, oldest first
                 const order = names.map((_, k) => names[(k * 8) % names.length]);
@@ -530,11 +538,14 @@ async function runTests() {
             });
         });
 
-        await test('Desktop Commander MCP: counts processes running its dist/index.js, not `remote`, not another app, a server and its copy once', async () => {
+        await test('Desktop Commander MCP: nested servers separately; a bootstrap pair once', async () => {
             const dcScript = fakePackage(path.join(home, 'fake-dc'), '@wonderwhy-er/desktop-commander');
             const otherScript = fakePackage(path.join(home, 'other-app'), 'other-app');
             const pairScript = fakePackage(path.join(home, 'fake-dc-pair'), '@wonderwhy-er/desktop-commander', STARTS_A_COPY);
             const copyPidFile = path.join(home, 'fake-dc-pair-copy.pid');
+            const nestedScript = fakePackage(path.join(home, 'fake-dc-nested'),
+                '@wonderwhy-er/desktop-commander', STARTS_INDEPENDENT_SERVER);
+            const nestedPidFile = path.join(home, 'fake-dc-nested-child.pid');
             // Without a size from outside, so that the pair's first process starts its copy
             const { UV_THREADPOOL_SIZE, ...withoutThreadpoolSize } = process.env;
             // Real copies may already run on this machine: compare with a run just before the stand-ins start
@@ -546,16 +557,19 @@ async function runTests() {
                 spawn(process.execPath, [dcScript, 'remote'], { stdio: 'ignore' }),
                 spawn(process.execPath, [otherScript], { stdio: 'ignore' }),
                 spawn(process.execPath, [pairScript, copyPidFile], { stdio: 'ignore', env: withoutThreadpoolSize }),
+                spawn(process.execPath, [nestedScript, dcScript, nestedPidFile], { stdio: 'ignore' }),
             ];
             try {
                 await new Promise((resolve) => setTimeout(resolve, 500));
                 await waitUntil(() => fs.existsSync(copyPidFile), 15_000, 'the copy of the stand-in pair runs');
+                await waitUntil(() => fs.existsSync(nestedPidFile), 15_000, 'the independent nested server runs');
                 // Without a copy (under --inspect, say) the first process writes the file itself, and the count would hold anyway
                 assert.notStrictEqual(Number(fs.readFileSync(copyPidFile, 'utf8')), standIns[3].pid, 'the stand-in pair should run as two processes');
                 const result = await runReport(env);
                 const after = JSON.parse(zipFile(result, 'report.json')).desktopCommanderMcp;
-                assert.strictEqual(after.running, before.running + 2,
-                    `only the stand-in MCP, and the stand-in pair once, count: before ${before.running}, after ${after.running}`);
+                assert.strictEqual(after.running, before.running + 4,
+                    `one standalone, one bootstrap pair, two nested servers: before ${before.running}, ` +
+                    `after ${after.running}`);
                 assert(Date.parse(after.since) <= startedAt + 2000, `since is the earliest start: ${after.since}`);
                 const txt = zipFile(result, 'report.txt');
                 const line = txt.split('\n').find((l) => l.startsWith('MCP ')) ?? '';
@@ -565,8 +579,9 @@ async function runTests() {
             } finally {
                 for (const child of standIns) child.kill();
                 // The pair's copy ends by itself once the process that started it is gone; this is in case it doesn't
-                if (fs.existsSync(copyPidFile)) {
-                    try { process.kill(Number(fs.readFileSync(copyPidFile, 'utf8'))); } catch { /* already gone */ }
+                for (const pidFile of [copyPidFile, nestedPidFile]) {
+                    if (!fs.existsSync(pidFile)) continue;
+                    try { process.kill(Number(fs.readFileSync(pidFile, 'utf8'))); } catch { /* already gone */ }
                 }
             }
         });

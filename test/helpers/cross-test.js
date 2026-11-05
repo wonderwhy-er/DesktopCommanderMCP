@@ -87,8 +87,10 @@ export async function crossTest({
     if (exit === 0) exit = await run('npm run test:coverage', dir);
     fs.mkdirSync(outDir, { recursive: true });
     for (const folder of ['test-results', 'coverage']) {
+      const destination = path.join(outDir, folder);
+      fs.rmSync(destination, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
       const made = path.join(dir, folder);
-      if (fs.existsSync(made)) fs.cpSync(made, path.join(outDir, folder), { recursive: true });
+      if (fs.existsSync(made)) fs.cpSync(made, destination, { recursive: true });
     }
     const named = { code: codeSha, testsFrom: testsSha, exit };
     fs.writeFileSync(path.join(outDir, 'cross-test.json'), `${JSON.stringify(named, null, 2)}\n`);
