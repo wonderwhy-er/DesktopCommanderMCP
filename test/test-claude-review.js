@@ -26,7 +26,7 @@ const modes={list:['list_directory',{path:'pr'}],glob:['glob',{pattern:'missing*
  grep:['grep_search',{pattern:'missing-pattern'}],review:['read_file',{path:'review/note.txt'}],
  traversal:['read_file',{path:'pr/../review/note.txt'}],missing:['read_file',{path:'pr/missing'}],
  normalized:['read_file',{path:'pr/sub/../a.txt'}],pemsource:['read_file',{path:'pr/pem.txt'}],
- eof:['read_file',{path:'pr/a.txt',start_line:999}]};
+ eof:['read_file',{path:'pr/a.txt',start_line:999}],emptyfile:['read_file',{path:'pr/empty.txt'}]};
 const mode=prompt.startsWith('source-guard:')?modes[prompt.slice('source-guard:'.length)]:undefined;
 const read=await rpc('tools/call',mode?{name:mode[0],arguments:mode[1]}:{name:'read_file',arguments:{path:'pr/a.txt'}});
 const denied=await rpc('tools/call',{name:'write_file',arguments:{path:'pr/a.txt',content:'changed'}});
@@ -48,6 +48,7 @@ function setup() {
  const folder=fs.mkdtempSync(path.join(os.tmpdir(),'claude-review-test-'));
  fs.mkdirSync(path.join(folder,'pr')); fs.mkdirSync(path.join(folder,'review'));
  fs.writeFileSync(path.join(folder,'pr/a.txt'),'frozen source');
+ fs.writeFileSync(path.join(folder,'pr/empty.txt'),'');
  fs.writeFileSync(path.join(folder,'review/note.txt'),'supplemental evidence');
  const cli=path.join(folder,'fake.mjs'); fs.writeFileSync(cli,fixture);
  const options={folder,cli,key:'fixture-api-only',calls:3,timeoutMs:15000,maxTurns:20,out:path.join(folder,'out'),prompt:'review',environment:{...process.env,GH_TOKEN:'github-secret-fixture',OPENAI_API_KEY:'openai-secret-fixture',CLAUDE_CODE_OAUTH_TOKEN:'unused-oauth-fixture',ANTHROPIC_AUTH_TOKEN:'unused-bearer-fixture'}};
@@ -147,6 +148,13 @@ test('an EOF-only source read does not complete a source review', async () => {
  const {folder,options}=setup();
  try {
   await assert.rejects(askClaude({...options,calls:1,prompt:'source-guard:eof'}),/read no source/);
+ } finally {fs.rmSync(folder,{recursive:true,force:true});}
+});
+
+test('an empty-file-only source read does not complete a source review', async () => {
+ const {folder,options}=setup();
+ try {
+  await assert.rejects(askClaude({...options,calls:1,prompt:'source-guard:emptyfile'}),/read no source/);
  } finally {fs.rmSync(folder,{recursive:true,force:true});}
 });
 
