@@ -79,6 +79,7 @@ async function testTelemetryExtractionFailure() {
   }
 }
 
+/** Continue after a failed case so the remaining session paths are still exercised. */
 export default async function runTests() {
   let failed = 0;
   for (const test of [testNodeLocalStart, testNodeLocalScript, testInputWithoutWaiting, testTelemetryExtractionFailure]) {
