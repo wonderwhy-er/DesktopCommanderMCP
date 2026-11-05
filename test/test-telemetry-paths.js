@@ -94,11 +94,11 @@ async function runTests() {
   let passed = true;
   try {
     await testDeniedPath();
-    console.log('âœ“ a denied path is replaced whole in telemetry, and the answer still names it');
+    console.log('✓ a denied path is replaced whole in telemetry, and the answer still names it');
     await testCommandThatStartsWithAPath();
-    console.log('âœ“ a command that starts with a path is sent as [PATH]');
+    console.log('✓ a command that starts with a path is sent as [PATH]');
   } catch (error) {
-    console.error('âœ—', error.message);
+    console.error('✗', error.message);
     passed = false;
   } finally {
     await configManager.setValue('telemetryEnabled', found.telemetryEnabled);
@@ -111,9 +111,9 @@ async function runTests() {
   try {
     assert.deepStrictEqual(left, found, 'the tests must leave the settings as they found them');
     assert.strictEqual(missingResponseCallbacks, 0, 'every request fake must receive its response callback');
-    console.log('âœ“ the settings are left as they were found');
+    console.log('✓ the settings are left as they were found');
   } catch (error) {
-    console.error('âœ—', error.message);
+    console.error('✗', error.message);
     passed = false;
   }
   return passed;
