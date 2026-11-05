@@ -17,7 +17,7 @@ You review one pull request of this repository. You can read its files, nothing 
 - Whether anything public (code, comments, docs) names internal systems, private repositories or staging addresses.
 
 ## Sort each finding
-- **real bug:** say what fails, with a concrete input.
+- **bug:** say what fails, with a concrete input.
 - **nitpick** (wording, test-only style): one line.
 - **handled elsewhere:** say where, with its file and line.
 - **not checked:** what you couldn't tell from the code here, for example how a tool or a library behaves. Write "not checked" rather than guess.
@@ -32,9 +32,9 @@ Only this JSON object, with no other text:
 {
   "summary": "One sentence: whether the change holds, and its main problem if it has one.",
   "findings": [
-    { "kind": "real bug", "file": "src/tools/edit.ts", "line": 42, "text": "One line: what fails, with a concrete input." }
+    { "kind": "bug", "file": "src/tools/edit.ts", "line": 42, "text": "One line: what fails, with a concrete input." }
   ]
 }
 ```
 
-Write by the writing style below. The summary is one sentence; each finding's `text` is one line, and a real bug's names a concrete input. `kind` is one of `real bug`, `nitpick`, `handled elsewhere`, `not checked`, `not covered`. With nothing to report, `findings` is `[]`.
+Write by the writing style below. The summary is one sentence; each finding's `text` is one line, and each bug names a concrete input. `kind` is one of `bug`, `nitpick`, `handled elsewhere`, `not checked`, `not covered`. With nothing to report, `findings` is `[]`.

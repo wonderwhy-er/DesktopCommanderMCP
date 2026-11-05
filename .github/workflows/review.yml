@@ -2,7 +2,7 @@
 # (workflow_call) once its test jobs are done, for a push to a PR with the label
 # `review`, adding that label, or a maintainer's `/review` comment, with the run's
 # results and coverage. On demand it runs alone, with no tests (gh workflow run
-# review.yml -f commit=<sha> -f base=<sha or branch>). Gemini CLI reads the PR's
+# review.yml -f commit=<sha> -f base=<sha or branch>). Claude Code reads the PR's
 # code with read-only tools and answers with findings, by the rules in
 # .github/review-prompt.md, through test/ci-review.js run: the same script as
 # `npm run review -- A..B` on a machine. A last job posts the findings as one review
@@ -25,8 +25,12 @@ on:
       base:
         type: string
         required: true
+      context:
+        type: string
+        required: false
+        default: ''
     secrets:
-      GEMINI_API_KEY:
+      CLAUDE_CODE_OAUTH_TOKEN:
         required: false
   # On demand, for anyone with write access; the maintainer check still applies.
   # The open PR whose head the commit is gets the review; with none, the job summary.
@@ -45,6 +49,11 @@ on:
         default: code
         type: choice
         options: [code, text]
+      context:
+        description: Optional pinned guide and native evidence JSON (48 KiB maximum)
+        type: string
+        required: false
+        default: ''
 
 permissions:
   contents: read
@@ -75,6 +84,7 @@ jobs:
             /test/ci-review.js
             /test/helpers/ci-platforms.js
             /test/helpers/ci-review.js
+            /test/helpers/review-context.js
             /test/check-coverage-report.js
             /test/helpers/node-test-runner.js
             /test/helpers/github-api.js
@@ -100,12 +110,13 @@ jobs:
     if: needs.request.outputs.review == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    # The Gemini key is used here, on the PR's code: so the token only reads, no
+    # The company API key is used here, on the PR's code: so the token only reads, no
     # other secret is named, and the model has read-only file tools, no shell, no
     # web and no GitHub tools (test/ci-review.js run). Our script and prompt are
-    # main's on a comment's or on-demand run; on a push or a label they're the PR's
-    # own, as for the tests (a fork PR gets no secret). Writing is the post job's.
-    # The script stops Gemini CLI after 12 minutes, inside this job's 15.
+    # read from the workflow ref. A dispatch --ref selects that code; the requested
+    # head/base are checked out separately below. A fork PR gets no secret.
+    # Writing is the post job's.
+    # The script stops Claude Code after 12 minutes, inside this job's 15.
     # Reads only: actions: read is for a text check's gh run view
     permissions:
       contents: read
@@ -113,7 +124,7 @@ jobs:
       actions: read
 
     steps:
-      # Our script and prompt (on a comment's run, main's: GitHub starts it from main)
+      # The script and prompt from this run's workflow ref, not the reviewed head below.
       - name: Checkout
         uses: actions/checkout@v7
         with:
@@ -124,11 +135,13 @@ jobs:
             /.github/text-check-prompt.md
             /.github/writing-style.md
             /test/ci-review.js
-            /test/ci-review-budget.js
+            /test/helpers/claude-review.js
+            /test/helpers/review-tools.js
             /test/check-coverage-report.js
             /test/helpers/node-test-runner.js
             /test/helpers/ci-platforms.js
             /test/helpers/ci-review.js
+            /test/helpers/review-context.js
             /test/helpers/github-api.js
           sparse-checkout-cone-mode: false
       # The PR's head, by the SHA the request job read, with the history back to its
@@ -160,22 +173,26 @@ jobs:
           pattern: coverage-*
           path: ci
       # Without the secret it stops at once and fails, so the review never passes unseen
-      - name: Review with Gemini
+      - name: Install Claude Code 2.1.293
+        run: npm install --global @anthropic-ai/claude-code@2.1.293
+      - name: Review with Claude Code
         env:
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          GEMINI_MODEL: ${{ vars.GEMINI_MODEL }}
+          # Legacy storage label: the company credential is an API key, not OAuth.
+          ANTHROPIC_API_KEY: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           # For the PR's title and description; the model never gets it
           GH_TOKEN: ${{ github.token }}
           PR: ${{ needs.request.outputs.pr }}
           HEAD_SHA: ${{ needs.request.outputs.sha }}
           BASE_SHA: ${{ needs.request.outputs.base }}
           CHECK: ${{ inputs.check }}
+          # Data only, validated against resolved target SHAs before a model request.
+          REVIEW_CONTEXT_JSON: ${{ inputs.context }}
         # check=text (on demand): each claim in the PR's description, against the change
         run: |
           text=()
           if [[ "$CHECK" == text ]]; then text=(--text pr); fi
           node test/ci-review.js run "$BASE_SHA..$HEAD_SHA" --repo pr --out review --tests ci "${text[@]}"
-      # review.json, review.md, the diff and Gemini CLI's own JSON; also when the review
+      # review.json, review.md, the diff and Claude Code's own JSON; also when the review
       # failed, so a stopped run's answer.json and session.jsonl show what it spent
       - name: Upload the review
         if: always()
@@ -189,8 +206,8 @@ jobs:
   post:
     name: post
     needs: [request, review]
-    # A text check posts nothing: its job summary has it
-    if: inputs.check != 'text'
+    # Posting starts only after the operator enables it; text checks always stay in artifacts.
+    if: inputs.check != 'text' && vars.REVIEW_POST_ENABLED == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     # Writes the review: our script (main's on a comment's or on-demand run, the
@@ -211,6 +228,7 @@ jobs:
             /test/ci-review.js
             /test/helpers/ci-platforms.js
             /test/helpers/ci-review.js
+            /test/helpers/review-context.js
             /test/check-coverage-report.js
             /test/helpers/node-test-runner.js
             /test/helpers/github-api.js

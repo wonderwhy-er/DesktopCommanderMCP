@@ -17,6 +17,14 @@ import { hookArgs } from './module-hooks.js';
 import { ROOT } from './node-test-runner.js';
 import { createTempDir, createTestEnv } from './test-env.js';
 
+/** Where each platform keeps Claude's config, in the home, as the install scripts look for it */
+export const CLAUDE_CONFIG = {
+  linux: '.config/Claude/claude_desktop_config.json',
+  darwin: 'Library/Application Support/Claude/claude_desktop_config.json',
+  win32: 'AppData/Roaming/Claude/claude_desktop_config.json',
+  freebsd: '.claude_desktop_config.json',
+};
+
 // Before the script: another platform when asked, and timers scaled down
 const PRELOAD = [
   'const { platform, timeScale } = JSON.parse(process.env.DC_STAND_INS);',
@@ -55,7 +63,7 @@ export async function runInstallScript(script, {
     const isGiven = (name) => Object.keys(given).some((each) => sameName(each, name));
     const inherited = Object.entries(testEnv.env).filter(([name]) => !isGiven(name));
     const childEnv = Object.fromEntries([...inherited, ...Object.entries(given)].filter(([, value]) => value != null));
-    const result = await new Promise((resolve) => {
+    const exited = await new Promise((resolve) => {
       const child = spawn(process.execPath, argv, { cwd: ROOT, env: childEnv });
       let stdout = '';
       let stderr = '';
@@ -70,7 +78,7 @@ export async function runInstallScript(script, {
     const entries = fs.readFileSync(log, 'utf8').split('\n').filter(Boolean).map((line) => JSON.parse(line));
     const posts = entries.filter((entry) => entry.post);
     const ran = entries.filter((entry) => entry.command).map((entry) => entry.command);
-    return { ...result, posts, commands: ran, home: snapshot(testEnv.home) };
+    return { ...exited, posts, commands: ran, home: snapshot(testEnv.home) };
   } finally {
     // A test may have made part of the home read-only: writable again, so it can go
     writable(testEnv.home);

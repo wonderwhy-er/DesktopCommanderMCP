@@ -10,16 +10,10 @@
 import assert from 'assert';
 import fs from 'fs';
 import path from 'path';
-import { runInstallScript } from './helpers/install-script.js';
+import { CLAUDE_CONFIG, runInstallScript } from './helpers/install-script.js';
 import { runIfMain, skip } from './helpers/run-if-main.js';
 
 const SCRIPT = 'uninstall-claude-server.js';
-const CLAUDE_CONFIG = {
-  linux: '.config/Claude/claude_desktop_config.json',
-  darwin: 'Library/Application Support/Claude/claude_desktop_config.json',
-  win32: 'AppData/Roaming/Claude/claude_desktop_config.json',
-  freebsd: '.claude_desktop_config.json',
-};
 const OWN_CONFIG = '.claude-server-commander/config.json';
 const SERVERS = { 'desktop-commander': { command: 'npx' }, other: { command: 'x' } };
 
@@ -35,7 +29,7 @@ const backups = (run, platform) => Object.keys(run.home)
 const said = (run, text) => `${run.stdout}${run.stderr}`.includes(text);
 const uninstall = (options = {}) => runInstallScript(SCRIPT, { platform: 'linux', ...options });
 /** A home with Claude's config (text, or an object), and Desktop Commander's own config when given */
-const homeWith = (claude, own, platform = 'linux') => (home) => {
+const homeWith = ({ claude, own, platform = 'linux' }) => (home) => {
   const text = typeof claude === 'string' ? claude : JSON.stringify(claude);
   if (claude !== undefined) put(home, CLAUDE_CONFIG[platform], text);
   if (own !== undefined) put(home, OWN_CONFIG, JSON.stringify(own));
@@ -43,7 +37,7 @@ const homeWith = (claude, own, platform = 'linux') => (home) => {
 
 async function eachPlatform() {
   for (const platform of Object.keys(CLAUDE_CONFIG)) {
-    const run = await uninstall({ platform, prepare: homeWith({ mcpServers: SERVERS }, undefined, platform) });
+    const run = await uninstall({ platform, prepare: homeWith({ claude: { mcpServers: SERVERS }, platform }) });
     assert.strictEqual(run.code, 0, `${platform}: ${run.stderr}`);
     const config = JSON.parse(run.home[CLAUDE_CONFIG[platform]]);
     assert.deepStrictEqual(config.mcpServers, { other: { command: 'x' } }, `${platform}: removed, the rest kept`);
@@ -62,7 +56,7 @@ async function nothingToRemove() {
     [{ mcpServers: { other: { command: 'x' } } }, 'uninstall_server_not_found'],
   ];
   for (const [claude, event] of cases) {
-    const run = await uninstall({ prepare: homeWith(claude, { telemetryEnabled: true, clientId: 'mine' }) });
+    const run = await uninstall({ prepare: homeWith({ claude, own: { telemetryEnabled: true, clientId: 'mine' } }) });
     assert.strictEqual(run.code, 0, `${event}: ${run.stderr}`);
     assert.ok(run.stdout.includes('was not configured or already removed'), `${event}: said`);
     assert.ok(sent(run, 'uninstall_start', event, 'uninstall_complete'), `${event}: ${events(run)}`);
@@ -73,14 +67,14 @@ async function nothingToRemove() {
 
 async function failures() {
   const telemetry = { telemetryEnabled: true };
-  const unreadable = await uninstall({ prepare: homeWith('{ not json', telemetry) });
+  const unreadable = await uninstall({ prepare: homeWith({ claude: '{ not json', own: telemetry }) });
   assert.strictEqual(unreadable.code, 1, 'a config it can\'t read: exit 1');
   assert.ok(sent(unreadable, 'uninstall_config_read_error', 'uninstall_backup_restored', 'uninstall_partial_failure'));
   assert.strictEqual(unreadable.home[CLAUDE_CONFIG.linux], '{ not json', 'the backup put back');
   assert.ok(unreadable.stdout.includes('Uninstallation completed with errors'), unreadable.stdout);
 
   const readOnly = (home) => {
-    homeWith({ mcpServers: SERVERS }, telemetry)(home);
+    homeWith({ claude: { mcpServers: SERVERS }, own: telemetry })(home);
     fs.chmodSync(path.join(home, CLAUDE_CONFIG.linux), 0o444);
   };
   const unwritable = await uninstall({ prepare: readOnly });
@@ -90,7 +84,8 @@ async function failures() {
   assert.ok(said(unwritable, 'backup restoration failed'), unwritable.stdout);
   // The write fails once, as a briefly locked file does: the backup goes back, and it still exits 1
   const locked = await uninstall({
-    prepare: homeWith({ mcpServers: SERVERS }, telemetry), fs: { failWriteOnce: 'claude_desktop_config.json' },
+    prepare: homeWith({ claude: { mcpServers: SERVERS }, own: telemetry }),
+    fs: { failWriteOnce: 'claude_desktop_config.json' },
   });
   assert.strictEqual(locked.code, 1, 'a write that failed: exit 1');
   assert.ok(sent(locked, 'uninstall_config_write_error', 'uninstall_backup_restored'), events(locked).join(', '));
@@ -104,7 +99,7 @@ async function noBackup() {
   if (process.platform === 'win32') return skip('Windows can\'t make a folder read-only: no failed backup checked');
   const lockFolder = (home) => fs.chmodSync(path.dirname(path.join(home, CLAUDE_CONFIG.linux)), 0o555);
   const prepare = (home) => {
-    homeWith({ mcpServers: SERVERS }, { telemetryEnabled: true })(home);
+    homeWith({ claude: { mcpServers: SERVERS }, own: { telemetryEnabled: true } })(home);
     lockFolder(home);
   };
   const run = await uninstall({ prepare });
@@ -124,12 +119,14 @@ async function noBackup() {
 
 async function ownConfig() {
   // Its own config without a client id, or unreadable: telemetry stays as the config says, off when unreadable
-  const noId = await uninstall({ prepare: homeWith({ mcpServers: SERVERS }, { telemetryEnabled: true }) });
+  const noId = await uninstall({
+    prepare: homeWith({ claude: { mcpServers: SERVERS }, own: { telemetryEnabled: true } }),
+  });
   const clientId = JSON.parse(noId.posts[0].body).client_id;
   assert.match(clientId, /^[0-9a-f-]{36}$/, 'a new client id when its config has none');
   const unreadable = await uninstall({
     prepare: (home) => {
-      homeWith({ mcpServers: SERVERS })(home);
+      homeWith({ claude: { mcpServers: SERVERS } })(home);
       put(home, OWN_CONFIG, '{ not json');
     },
   });

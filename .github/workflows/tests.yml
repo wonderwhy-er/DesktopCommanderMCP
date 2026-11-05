@@ -84,6 +84,7 @@ jobs:
             /test/helpers/ci-platforms.js
             /test/ci-review.js
             /test/helpers/ci-review.js
+            /test/helpers/review-context.js
             /test/check-coverage-report.js
             /test/helpers/node-test-runner.js
             /test/helpers/github-api.js
@@ -282,7 +283,7 @@ jobs:
       sha: ${{ needs.platforms.outputs.sha }}
       base: ${{ needs.platforms.outputs.base }}
     secrets:
-      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
 
   comment:
     name: comment

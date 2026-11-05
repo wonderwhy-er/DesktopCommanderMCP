@@ -486,7 +486,7 @@ export default async function run() {
   for (const input of ['pr: ${{ needs.platforms.outputs.pr }}', 'sha: ${{ needs.platforms.outputs.sha }}', 'base: ${{ needs.platforms.outputs.base }}']) {
     assert.ok(reviewJob.includes(input), `it passes ${input}`);
   }
-  assert.deepStrictEqual([...new Set(jobLines(workflow, 'review').join('\n').match(/secrets\.\w+/g))], ['secrets.GEMINI_API_KEY'], 'only the Gemini key goes to it');
+  assert.deepStrictEqual([...new Set(jobLines(workflow, 'review').join('\n').match(/secrets\.\w+/g))], ['secrets.CLAUDE_CODE_OAUTH_TOKEN'], 'only the Gemini key goes to it');
   // A called workflow's jobs get no more than the calling job grants, or GitHub won't start the run
   const pairs = (lines) => lines.map((line) => line.split(':').map((part) => part.trim()));
   const granted = Object.fromEntries(pairs(blockUnder(jobLines(workflow, 'review'), 'permissions')));

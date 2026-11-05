@@ -9,18 +9,11 @@
 import assert from 'assert';
 import fs from 'fs';
 import path from 'path';
-import { runInstallScript } from './helpers/install-script.js';
+import { CLAUDE_CONFIG, runInstallScript } from './helpers/install-script.js';
 import { ROOT } from './helpers/node-test-runner.js';
 import { runIfMain } from './helpers/run-if-main.js';
 
 const SCRIPT = 'setup-claude-server.js';
-// Where each platform keeps Claude's config, in the home
-const CLAUDE_CONFIG = {
-  linux: '.config/Claude/claude_desktop_config.json',
-  darwin: 'Library/Application Support/Claude/claude_desktop_config.json',
-  win32: 'AppData/Roaming/Claude/claude_desktop_config.json',
-  freebsd: '.claude_desktop_config.json',
-};
 const ANSWERED = {
   'npm --version': { stdout: '10.9.0' },
   pkill: { stdout: '' },
@@ -122,7 +115,7 @@ async function restartFails() {
   const answering = (command, answer) => setup({ platform: 'linux', commands: { ...ANSWERED, [command]: answer } });
   const notRunning = await answering('pkill', { error: 'no process' });
   assert.strictEqual(notRunning.code, 0, notRunning.stderr);
-  assert.ok(sent(notRunning, 'npx_setup_kill_claude_not_needed'), 'Claude wasn\'t running: fine');
+  assert.ok(sent(notRunning, 'npx_setup_kill_claude_not_needed'), 'Claude not running: fine');
   const noStart = await answering('claude', { error: 'not found' });
   assert.strictEqual(noStart.code, 0, noStart.stderr);
   assert.ok(sent(noStart, 'npx_setup_start_claude_error', 'npx_setup_restart_claude_error'));
