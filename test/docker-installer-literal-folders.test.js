@@ -12,6 +12,9 @@ const cases = [
   { path: 'C:\\Program Files [x]\\WindowsApps\\Claude_1.2_x64__fixture\\app\\Claude.exe', expected: true },
   { path: 'C:\\Plain\\Claude\\Claude.exe', expected: true },
   { path: 'C:\\Plain\\ClaudeOther\\Claude.exe', expected: false },
+  { path: 'C:/Users/Jo[1]/AppData/Local/Programs/Claude/Claude.exe', expected: true },
+  { path: 'C:/Program Files [x]/WindowsApps/Claude_1.2_x64__fixture/app/Claude.exe', expected: true },
+  { path: 'C:/Users/Jo1/AppData/Local/Programs/Claude/Claude.exe', expected: false },
 ];
 let failed = false;
 for (const shell of shells) {

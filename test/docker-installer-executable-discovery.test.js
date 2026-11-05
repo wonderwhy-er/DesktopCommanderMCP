@@ -20,7 +20,14 @@ try {
     const env = Object.fromEntries(Object.entries(process.env).filter(([key]) =>
       !['programfiles', 'localappdata', 'programfiles(x86)'].includes(key.toLowerCase())));
     Object.assign(env, { ProgramFiles: programFiles, LOCALAPPDATA: path.join(temp, 'LocalData'), 'ProgramFiles(x86)': path.join(temp, 'x86') });
-    const commands = `$env:ProgramFiles = ${psQuote(programFiles)}; $env:LOCALAPPDATA = ${psQuote(env.LOCALAPPDATA)}; \${env:ProgramFiles(x86)} = ${psQuote(env['ProgramFiles(x86)'])}; $script:ClaudeDesktopFolders = @(); function Get-ItemProperty { [CmdletBinding()] param($Path) @() }; Write-Output ('FOUND ' + (Find-ClaudeExecutable))`;
+    // Windows aliases environment names by case; Unix PowerShell needs both spellings.
+    const commands = `$env:ProgramFiles = ${psQuote(programFiles)};
+      $env:PROGRAMFILES = ${psQuote(programFiles)};
+      $env:LOCALAPPDATA = ${psQuote(env.LOCALAPPDATA)};
+      \${env:ProgramFiles(x86)} = ${psQuote(env['ProgramFiles(x86)'])};
+      $script:ClaudeDesktopFolders = @();
+      function Get-ItemProperty { [CmdletBinding()] param($Path) @() };
+      Write-Output ('FOUND ' + (Find-ClaudeExecutable))`;
     const missing = runInstallerPs1(commands, { shell, env });
     const found = /^FOUND (.*)$/m.exec(missing.stdout)?.[1]?.trim();
     const rejects = missing.status === 0 && found === '';

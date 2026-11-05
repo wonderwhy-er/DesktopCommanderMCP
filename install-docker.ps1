@@ -297,13 +297,14 @@ function Test-ClaudeDesktopExecutablePath {
 
     $desktopFolders = @("$env:LOCALAPPDATA\AnthropicClaude") + $script:ClaudeDesktopFolders
     # Installation roots are literal paths; only the Store package name is a wildcard.
+    # PowerShell uses native path separators, including when the fixtures run on Unix.
     $desktopPatterns = @($desktopFolders | ForEach-Object {
-        [System.Management.Automation.WildcardPattern]::Escape($_) + '\*'
+        [System.Management.Automation.WildcardPattern]::Escape(($_ -replace '\\', '/')) + '/*'
     })
-    $desktopPatterns += (
-        [System.Management.Automation.WildcardPattern]::Escape("$env:ProgramFiles\WindowsApps\") + 'Claude_*\*'
-    )
-    return [bool]($Path -and ($desktopPatterns | Where-Object { $Path -like $_ }))
+    $storeRoot = "$env:ProgramFiles\WindowsApps\" -replace '\\', '/'
+    $desktopPatterns += [System.Management.Automation.WildcardPattern]::Escape($storeRoot) + 'Claude_*/*'
+    $normalizedPath = $Path -replace '\\', '/'
+    return [bool]($Path -and ($desktopPatterns | Where-Object { $normalizedPath -like $_ }))
 }
 
 function Find-ClaudeProcess {
