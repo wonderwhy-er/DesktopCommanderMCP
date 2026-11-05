@@ -153,6 +153,32 @@ async function runTests() {
         }
     });
 
+    await test('a host name matching a UUID segment does not split the UUID', () => {
+        const hostname = os.hostname;
+        try {
+            for (const segment of UUID.split('-')) {
+                const host = `${segment}.local`;
+                os.hostname = () => host;
+                assert.strictEqual(
+                    redact(`host ${host}; bare ${segment}; device ${UUID}`),
+                    'host <host>; bare <host>; device <id>',
+                );
+            }
+        } finally {
+            os.hostname = hostname;
+        }
+    });
+
+    await test('overlapping UUID and host name ranges leave neither value partially visible', () => {
+        const hostname = os.hostname;
+        os.hostname = () => `${UUID.split('-').slice(1).join('-')}.local`;
+        try {
+            assert.strictEqual(redact(`device ${UUID}.local`), 'device <id>');
+        } finally {
+            os.hostname = hostname;
+        }
+    });
+
     await test('a plain status line comes out unchanged', () => {
         const line = "Channel subscribed (recovered after 2 attempts) — socket=open(1) ch=joined attempt=0";
         assert.strictEqual(redact(line), line);
