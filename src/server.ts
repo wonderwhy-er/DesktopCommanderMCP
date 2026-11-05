@@ -1439,7 +1439,10 @@ async function handleCallToolRequest(request: CallToolRequest): Promise<ServerRe
         ];
 
         if (!EXCLUDED_TOOLS.includes(name)) {
-            toolHistory.addCall(name, args, result, duration);
+            // A failed audit-setting read must not reject an otherwise successful tool call.
+            void toolHistory.addCall(name, args, result, duration).catch((error) => {
+                console.error('Error recording tool call history:', error);
+            });
         }
 
         // Track success or failure based on result
