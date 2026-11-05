@@ -10,6 +10,7 @@ const file = (what) => ({ what, inFile: true });
 const runtime = (what) => ({ what, inFile: false });
 
 const cases = [
+  ['A bare POSIX shell has no script filename to warn about', 'bash', []],
   ['PowerShell abbreviated version mode does not execute a trailing file',
     'pwsh -ver ignored.ps1', []],
   ['PowerShell short version prefix does not execute a trailing file',
@@ -118,4 +119,12 @@ test('POSIX literal backslashes do not turn filenames into shells or builtins', 
   assert.equal(child.status, 0, child.stderr || child.stdout);
   const answers = JSON.parse(child.stdout.trim().split(/\r?\n/).at(-1));
   assert.deepEqual(answers, [{ verdict: 'allowed' }, { verdict: 'allowed' }, { verdict: 'allowed' }]);
+});
+
+test('Boolean validation preserves allowed, blocked, failed and unseen decisions', async () => {
+  for (const [command, allowed] of [
+    ['echo ready', true], ['sudo ls', false], ['eval "$CMD"', true], ['echo "unclosed', false],
+  ]) {
+    assert.equal(await commandManager.validateCommand(command, 'bash'), allowed, command);
+  }
 });

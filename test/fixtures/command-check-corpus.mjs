@@ -188,6 +188,10 @@ export const CORPUS = [
   { id: 'exp_brace_var', group: 'expansion', shell: 'bash', expect: 'unknowable', command: '{$X,ls}', note: 'the name is $X\'s value, known only at run time, or ls when $X is empty' },
   { id: 'exp_brace_var_quoted', group: 'expansion', shell: 'bash', expect: 'unknowable', command: '{"$X",sudo} id', note: 'a quoted "$X" stays a word even when it is empty, so sudo is an argument' },
   { id: 'exp_brace_var_text', group: 'expansion', shell: 'bash', expect: 'unknowable', command: '{x$X,sudo} id', note: 'x$X is never empty, so sudo is an argument' },
+  { id: 'exp_brace_empty_dq', group: 'expansion', shell: 'bash', expect: null, command: '{"",sudo} id', note: 'empty double quotes keep the first command word; sudo is an argument' },
+  { id: 'exp_brace_empty_sq', group: 'expansion', shell: 'bash', expect: null, command: "{'',sudo} id", note: 'empty single quotes keep the first command word too' },
+  { id: 'exp_brace_empty_prefix', group: 'expansion', shell: 'bash', expect: null, command: '""{,sudo} id', note: 'empty quotes before the braces keep the empty expansion' },
+  { id: 'exp_brace_empty_nested', group: 'expansion', shell: 'bash', expect: null, command: '{{"",x},sudo} id', note: 'nested empty quotes keep the first word' },
 
   // ---- A blocked name written another way: the shell still runs the same program ----
   { id: 'name_amp_quote', group: 'name', shell: 'powershell', expect: 'sudo', command: "& 'sudo' whoami", note: 'the call operator runs the quoted name' },

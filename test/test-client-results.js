@@ -96,11 +96,7 @@ async function processToolsSendOnlyText(client) {
   console.log('✓ start_process, interact_with_process, list_sessions: nothing internal is sent');
 }
 
-/**
- * start_process's refusal names the blocked entry or says why the check failed,
- * and a program the check can't see is noted (#870, #873; it said "Error:
- * Command not allowed: <command>")
- */
+/** Client text must keep the refusal cause and unseen-command note so callers can explain the result. */
 async function startProcessSaysWhatTheCheckSaw(client, dir) {
   const blocked = await client.callTool({ name: 'start_process', arguments: { command: 'mkfs', timeout_ms: 1000 } });
   assert.strictEqual(textOf(blocked), 'Error: Command not allowed: "mkfs" is in the blockedCommands setting.',
@@ -114,7 +110,9 @@ async function startProcessSaysWhatTheCheckSaw(client, dir) {
   // A file that isn't there, so the shell runs nothing
   const script = path.join(dir, 'missing.sh');
   const unseen = await client.callTool({ name: 'start_process', arguments: { command: `sh "${script}"`, timeout_ms: 10000 } });
-  assert(textOf(unseen).endsWith(`\n\nNote: the blocklist could not check the commands in ${script}, because they are in that file, not in this command.`),
+  const note = `\n\nNote: the blocklist could not check the commands in ${script}, `
+    + 'because they are in that file, not in this command.';
+  assert(textOf(unseen).endsWith(note),
     `a script file given to a shell should be noted at the end of the answer, got: ${textOf(unseen)}`);
   console.log("✓ start_process: the refusal names the blocked entry or why the check failed, and a program the check can't see is noted");
 }
