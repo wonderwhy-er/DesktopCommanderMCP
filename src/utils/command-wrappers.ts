@@ -469,12 +469,14 @@ const TEXT_PROGRAMS = new Map<string, { rules: PosixWrapper; shell: string }>([
   ['su', { shell: 'sh', rules: {
     letters: 'gGsw', flags: 'flmpP', long: ['group', 'supp-group', 'shell', 'whitelist-environment'],
     longFlags: ['fast', 'login', 'preserve-environment', 'pty', 'help', 'version'],
-    texts: { letters: 'c', long: ['command', 'session-command'] }, optionsAfterTexts: true, permute: true, shellArgumentsAfter: 1,
+    texts: { letters: 'c', long: ['command', 'session-command'] },
+    optionsAfterTexts: true, permute: true, shellArgumentsAfter: 1,
   } }],
   ['runuser', { shell: 'sh', rules: {
     letters: 'gGswu', flags: 'flmpP', long: ['group', 'supp-group', 'shell', 'whitelist-environment', 'user'],
     longFlags: ['fast', 'login', 'preserve-environment', 'pty', 'help', 'version'],
-    texts: { letters: 'c', long: ['command', 'session-command'] }, optionsAfterTexts: true, permute: true, shellArgumentsAfter: 1,
+    texts: { letters: 'c', long: ['command', 'session-command'] },
+    optionsAfterTexts: true, permute: true, shellArgumentsAfter: 1,
     operandRoles: { u: 'program', user: 'program' },
   } }],
   ['sg', { shell: 'sh', rules: { texts: { letters: 'c', long: [] }, optionsAfterTexts: true, permute: true, textOperands: 1 } }],
