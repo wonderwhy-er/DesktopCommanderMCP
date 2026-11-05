@@ -185,7 +185,7 @@ function powerShellRuns({ words, wordTexts }: FoundCommand, program: string): Sh
       // -CommandWithArgs: the next word is the command, and the words after it are its $args
       if (parameter === 'cwa' || parameter === 'commandwithargs') return addTexts(i + 1 < words.length ? [wordTexts[i + 1]] : [], [words[i + 1]]);
       if ('file'.startsWith(parameter)) {
-        if (i + 1 < words.length) files.add(words[i + 1]);
+        if (i + 1 < words.length && words[i + 1] !== '-') files.add(words[i + 1]);
         return;
       }
       // A parameter's value, also one known only at run time. When the next word is written as a parameter is (-wd /c:

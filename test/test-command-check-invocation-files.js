@@ -3,6 +3,7 @@ import { before, test } from 'node:test';
 import { spawnSync } from 'node:child_process';
 import { commandManager } from '../dist/command-manager.js';
 import { isTestHome } from './helpers/test-env.js';
+import { isShellAvailable } from '../dist/utils/shell.js';
 
 before(() => assert.ok(isTestHome(), 'Run through test/run-all-tests.js with a fresh test home'));
 
@@ -15,7 +16,7 @@ const cases = [
   ['PowerShell short version prefix does not execute a trailing file',
     'pwsh -ve ignored.ps1', []],
   ['Windows PowerShell version abbreviation consumes its version before command text',
-    'powershell -Ver 5.1 -Command "Write-Output deploy.ps1"', []],
+    'powershell -Ver 5.1 -Command "Write-Output deploy.ps1"', [], 'powershell'],
   ['Windows PowerShell version abbreviation preserves the actual script file',
     'powershell -Ver 5.1 -File deploy.ps1', [file('deploy.ps1')]],
   ['Bash clustered POSIX option suppresses startup and is not a script file',
@@ -69,7 +70,7 @@ const cases = [
   ['PowerShell abbreviated command mode does not label its text as a file',
     'pwsh -c "Write-Output deploy.ps1"', []],
   ['Windows PowerShell command mode uses the same text boundary',
-    'powershell -Command "Write-Output deploy.ps1"', []],
+    'powershell -Command "Write-Output deploy.ps1"', [], 'powershell'],
   ['PowerShell command-with-args does not classify a command argument as a file',
     'pwsh -CommandWithArgs "Write-Output" deploy.ps1', []],
   ['PowerShell encoded command mode does not classify text as a file',
@@ -88,10 +89,19 @@ const cases = [
     'pwsh -File -', []],
 ];
 
-for (const [name, command, unseen] of cases) {
+for (const [name, command, unseen, reader] of cases) {
   test(name, async () => {
     // Only the outer Bash text is parsed; none of these input commands runs.
     const answer = await commandManager.checkCommand(command, 'bash');
+    if (reader && !isShellAvailable(reader)) {
+      // Missing inner readers fail closed; still verify the file-mode boundary without executing a shell.
+      assert.equal(answer.verdict, 'failed', JSON.stringify(answer));
+      assert.match(answer.reason, /isn't installed here/);
+      const reading = await commandManager.readCommands(command, 'bash');
+      const files = reading.commands.flatMap(found => commandManager.scriptFiles(found, 'posix'));
+      assert.deepEqual(files, unseen);
+      return;
+    }
     assert.equal(answer.verdict, unseen.length ? 'unseen' : 'allowed', JSON.stringify(answer));
     assert.deepEqual(answer.unseen ?? [], unseen);
   });

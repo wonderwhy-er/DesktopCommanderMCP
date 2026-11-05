@@ -5,6 +5,7 @@ import { runIfMain } from './helpers/run-if-main.js';
 
 export default async function runTests() {
   const cases = [
+    [['pwsh', '-File', '-'], []],
     [['pwsh', '–c', 'Get-Date'], []],
     [['pwsh', '-Command', 'Get-Date'], []],
     [['pwsh', '/Command', 'Get-Date'], []],
@@ -18,7 +19,7 @@ export default async function runTests() {
       wordTexts: words.map(w => w ?? '$FILE'), start: 0, nameAtRunTime: false };
     assert.deepEqual(commandManager.scriptFiles(found, 'posix'), expected, JSON.stringify(words));
   }
-  console.log('PASS: seven actual manager host-file readings; no command execution');
+  console.log('PASS: eight actual manager host-file readings; no command execution');
   return true;
 }
 runIfMain(import.meta.url, runTests);
