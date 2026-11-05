@@ -21,6 +21,11 @@ import {
 
 // Each session runs a program that starts one child of its own
 const TREE_LEVELS = 2;
+// How long a tree's processes get to report their PIDs (two Node starts:
+// about a second here) and to be gone once killed (at once, but on macOS the
+// orphans wait for launchd to reap them). Each wait ends when that happens, so
+// this much holds up on a loaded machine; a process left running never goes
+const TREE_TIMEOUT_MS = 30_000;
 
 const listedPids = async () => {
   const result = await listSessions();
@@ -37,7 +42,7 @@ async function assertTerminated(shellPid, treePids) {
   // force_terminate returns once the shell has exited, so no wait is needed here
   const listedAfter = await listedPids();
   // The OS may take a moment to finish tearing down processes it was told to kill
-  const stillRunning = await waitForExit([shellPid, ...treePids]);
+  const stillRunning = await waitForExit([shellPid, ...treePids], TREE_TIMEOUT_MS);
   assert.deepStrictEqual(stillRunning, [],
     `force_terminate should end the shell ${shellPid} and the processes it started (${treePids.join(', ')}); still running: ${stillRunning.join(', ')}`);
   assert(!listedAfter.includes(shellPid), `Terminated process ${shellPid} should disappear from list_sessions`);
@@ -56,8 +61,8 @@ async function testListAndTerminateSessions() {
     const pid2 = second.structuredContent?.pid;
     shellPids.push(pid1, pid2);
     assert(pid1 && pid2 && pid1 !== pid2, `Should start two separate processes, got ${pid1} and ${pid2}`);
-    const tree1 = await readTreePids(dirs[0], TREE_LEVELS);
-    const tree2 = await readTreePids(dirs[1], TREE_LEVELS);
+    const tree1 = await readTreePids(dirs[0], TREE_LEVELS, TREE_TIMEOUT_MS);
+    const tree2 = await readTreePids(dirs[1], TREE_LEVELS, TREE_TIMEOUT_MS);
 
     const sessions = (await listSessions()).structuredContent.sessions;
     for (const pid of [pid1, pid2]) {

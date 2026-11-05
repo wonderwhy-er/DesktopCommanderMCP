@@ -7,7 +7,9 @@ import { fileURLToPath } from 'node:url';
 import { runIfMain } from './helpers/run-if-main.js';
 
 const TEST_FILE = fileURLToPath(import.meta.url);
-const TIMEOUT_MS = 5_000;
+// Each wait ends as soon as its message or write arrives (well under a second
+// here); this much holds up on a loaded machine
+const TIMEOUT_MS = 30_000;
 const RESTRICTED_DIR = path.join(os.tmpdir(), 'dc-issue-678-restricted');
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));

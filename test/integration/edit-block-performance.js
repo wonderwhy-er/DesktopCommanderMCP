@@ -45,12 +45,14 @@ const RESPONSIVENESS_MAX_LATENCY_MS = 5000;
 
 // Fuzzy-scan event-loop regression: a deliberately slow fuzzy fallback (large
 // file, large absent old_string) must not block concurrent pings. The general
-// responsiveness probe above is too loose for this (5s limit); a synchronous
-// scan blocks for ~3-4s and would slip under it, so this scenario pings on a
-// tight interval with a strict latency ceiling.
-const FUZZY_SCAN_FILE_MB = 2;
+// responsiveness probe above is too loose for this (5s limit), so this scenario
+// pings on a tight interval with a strict latency ceiling. The scan takes ~1s
+// here, so a synchronous one would block past the ceiling; a bigger one isn't
+// needed and would pass the product's own 30s fuzzy limit (FUZZY_SEARCH_TIMEOUT_MS)
+// on a slow machine under coverage, which slows the scan about five times.
+const FUZZY_SCAN_FILE_MB = 0.5;
 const FUZZY_SCAN_QUERY_KB = 8;
-const FUZZY_SCAN_PING_INTERVAL_MS = 200;
+const FUZZY_SCAN_PING_INTERVAL_MS = 100;
 const FUZZY_SCAN_MIN_PING_COUNT = 5;
 const FUZZY_SCAN_MAX_PING_LATENCY_MS = 500;
 

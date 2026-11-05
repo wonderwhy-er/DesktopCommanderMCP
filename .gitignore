@@ -58,3 +58,6 @@ test_files/
 test_fix.js
 test_search.js
 .ripgrep-downloads/
+
+# Test reports: junit.xml, results.json, results.tap per runner (test/README.md)
+test-results/

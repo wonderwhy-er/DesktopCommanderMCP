@@ -1,7 +1,7 @@
 /**
  * node:local: an interact_with_process call without a timeout_ms of its own
  * runs the script under the session's timeout, the one start_process was
- * given and list_sessions shows ("PID: -1000 (node:local), Timeout: 20000ms").
+ * given and list_sessions shows ("PID: -1000 (node:local), Timeout: 40000ms").
  * interact_with_process's default for other processes (8000ms) was applied
  * instead, so every script was ended at 8 s whatever the session's timeout,
  * and a shorter session timeout never applied. A call's own timeout_ms still
@@ -16,14 +16,19 @@ import assert from 'assert';
 import { startProcess, interactWithProcess, forceTerminate, listSessions } from '../dist/tools/improved-process-tools.js';
 import { runIfMain } from './helpers/run-if-main.js';
 
-// Longer than interact_with_process's 8000ms default
-const LONG_SESSION_TIMEOUT_MS = 20000;
+// Longer than interact_with_process's 8000ms default, and than the script by
+// 30 s, so a loaded machine still finishes it; under the 50 s wait ceiling
+const LONG_SESSION_TIMEOUT_MS = 40000;
 const LONG_SCRIPT_MS = 9500;
 // Shorter than the script it ends
 const SHORT_TIMEOUT_MS = 1500;
-const SHORT_SCRIPT_MS = 6000;
-// A script ended by a 1.5 s timeout answers well before its 6 s are up
-const ENDED_WITHIN_MS = 4500;
+// Long enough that a slow kill can't let the script finish first. A wrong
+// timeout either lets it print 'done' (the session's 40 s) or ends it only
+// after ENDED_WITHIN_MS (the 8 s default)
+const SHORT_SCRIPT_MS = 30000;
+// A script ended by a 1.5 s timeout answers by then: 1.5-3.2 s, the kill
+// included, on an idle machine; under the 8 s default, which must fail it
+const ENDED_WITHIN_MS = 7000;
 // A small ceiling stands in for MAX_PROCESS_WAIT_MS so the test doesn't wait a minute
 const CAP_MS = 1500;
 
