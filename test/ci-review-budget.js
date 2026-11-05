@@ -1,6 +1,7 @@
 /**
- * The AI review's budget (test/ci-review.js run): Gemini CLI's BeforeTool hook, which
- * runs before every tool call. The first N calls go through; every later one is refused
+ * The legacy Gemini CLI budget hook, not used by the hosted Claude runner.
+ * The hosted runner enforces its budget in test/helpers/claude-review.js.
+ * This BeforeTool hook runs before every legacy Gemini tool call. The first N calls go through; every later one is refused
  * with a reason the model reads, so it answers from what it has read. (A refusal keeps the
  * answer; Gemini CLI's own turn stop, model.maxSessionTurns, ends the session without one.
  * A BeforeToolSelection hook's toolConfig mode NONE didn't stop the reads in 0.66.0.)
