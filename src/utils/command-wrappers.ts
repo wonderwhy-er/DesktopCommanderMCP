@@ -564,6 +564,7 @@ function startedPrograms(command: FoundCommand, shell: string): Started[] {
     }));
   }
   if (shellType === 'cmd' && name === 'start') return cmdStartProgramsAt(command).map(from);
+  if (shellType === 'cmd' && name === 'call') return words.length > 1 ? [from(1)] : [];
   return [];
 }
 

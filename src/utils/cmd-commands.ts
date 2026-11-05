@@ -263,7 +263,9 @@ class CmdReader {
    */
   private startsCommandAfter(words: Token[], parens: number): boolean {
     const first = commandName(words[0]).toLowerCase();
-    if (first === 'else' || first === 'call') return words.length === 1;
+    if (first === 'else') return words.length === 1;
+    // CALL can carry its program in the same token: call,net user must keep net.
+    if (first === 'call') return words.length === 1 && afterName(words[0]) === '';
     if (first === 'for') {
       return words.length > 1 && parens === 0 && words[words.length - 1].value.toLowerCase() === 'do';
     }
