@@ -10,7 +10,7 @@
 import assert from 'assert';
 import fs from 'fs';
 import path from 'path';
-import { CLAUDE_CONFIG, runInstallScript } from './helpers/install-script.js';
+import { CLAUDE_CONFIG, isRoot, runInstallScript } from './helpers/install-script.js';
 import { runIfMain, skip } from './helpers/run-if-main.js';
 
 const SCRIPT = 'uninstall-claude-server.js';
@@ -77,11 +77,15 @@ async function failures() {
     homeWith({ claude: { mcpServers: SERVERS }, own: telemetry })(home);
     fs.chmodSync(path.join(home, CLAUDE_CONFIG.linux), 0o444);
   };
-  const unwritable = await uninstall({ prepare: readOnly });
-  assert.strictEqual(unwritable.code, 1, 'a config it can\'t write: exit 1');
-  const failed = ['uninstall_config_write_error', 'uninstall_backup_restore_failed', 'uninstall_config_error'];
-  assert.ok(sent(unwritable, ...failed), events(unwritable).join(', '));
-  assert.ok(said(unwritable, 'backup restoration failed'), unwritable.stdout);
+  if (isRoot()) {
+    skip('Root bypasses chmod write denial: read-only uninstall config update not checked');
+  } else {
+    const unwritable = await uninstall({ prepare: readOnly });
+    assert.strictEqual(unwritable.code, 1, 'a config it can\'t write: exit 1');
+    const failed = ['uninstall_config_write_error', 'uninstall_backup_restore_failed', 'uninstall_config_error'];
+    assert.ok(sent(unwritable, ...failed), events(unwritable).join(', '));
+    assert.ok(said(unwritable, 'backup restoration failed'), unwritable.stdout);
+  }
   // The write fails once, as a briefly locked file does: the backup goes back, and it still exits 1
   const locked = await uninstall({
     prepare: homeWith({ claude: { mcpServers: SERVERS }, own: telemetry }),
@@ -97,6 +101,7 @@ async function failures() {
 async function noBackup() {
   // A folder it can't write in: no backup, and on it goes (Windows can't make a folder read-only)
   if (process.platform === 'win32') return skip('Windows can\'t make a folder read-only: no failed backup checked');
+  if (isRoot()) return skip('Root bypasses chmod write denial: read-only backup folder not checked');
   const lockFolder = (home) => fs.chmodSync(path.dirname(path.join(home, CLAUDE_CONFIG.linux)), 0o555);
   const prepare = (home) => {
     homeWith({ claude: { mcpServers: SERVERS }, own: { telemetryEnabled: true } })(home);
@@ -124,6 +129,11 @@ async function ownConfig() {
   });
   const clientId = JSON.parse(noId.posts[0].body).client_id;
   assert.match(clientId, /^[0-9a-f-]{36}$/, 'a new client id when its config has none');
+  const disabled = await uninstall({
+    prepare: homeWith({ claude: { mcpServers: SERVERS }, own: { telemetryEnabled: false, clientId: 'mine' } }),
+  });
+  assert.strictEqual(disabled.code, 0, disabled.stderr);
+  assert.deepStrictEqual(disabled.posts, [], 'an explicit telemetry opt-out sends no requests');
   const unreadable = await uninstall({
     prepare: (home) => {
       homeWith({ claude: { mcpServers: SERVERS } })(home);

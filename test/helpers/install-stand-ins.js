@@ -42,7 +42,7 @@ function respond(req, answer) {
   response.emit('end');
   return response.emit('close');
 }
-export function request(url) {
+export function request(url, options = {}) {
   const req = new EventEmitter();
   let body = '';
   req.write = (chunk) => { body += chunk; return true; };
@@ -52,7 +52,8 @@ export function request(url) {
     // A body that isn't JSON names no event; it gets the default answer, which is what the test plans for it
     try { event = JSON.parse(body).events?.[0]?.name ?? null; } catch {}
     const answer = answerFor(event);
-    fs.appendFileSync(log, JSON.stringify({ post: String(url), event, answer, body }) + '\\n');
+    fs.appendFileSync(log, JSON.stringify({ post: String(url), method: options.method,
+      headers: options.headers, event, answer, body }) + '\\n');
     setImmediate(() => respond(req, answer));
   };
   return req;
