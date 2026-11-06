@@ -45,8 +45,8 @@ async function withWindowsSampler(testContext, check) {
   }
 }
 
-test('Windows sampler distinguishes launch, script startup and a query that has not returned', async (t) => {
-  await withWindowsSampler(t, ({ memory, sampler, launch }) => {
+test('Windows sampler distinguishes launch, script startup and a query that has not returned', async (testContext) => {
+  await withWindowsSampler(testContext, ({ memory, sampler, launch }) => {
     assert.equal(launch.program, 'powershell.exe');
     assert.deepEqual(launch.options.stdio, ['ignore', 'pipe', 'pipe']);
     assert.equal(memory.diagnostics().spawned, false);
@@ -65,8 +65,8 @@ test('Windows sampler distinguishes launch, script startup and a query that has 
   });
 });
 
-test('fragmented Windows samples preserve peak bytes and report only counters', async (t) => {
-  await withWindowsSampler(t, ({ memory, sampler }) => {
+test('fragmented Windows samples preserve peak bytes and report only counters', async (testContext) => {
+  await withWindowsSampler(testContext, ({ memory, sampler }) => {
     sampler.stdout.write('DC_MEMORY_RE');
     sampler.stdout.write('ADY\r\nDC_MEMORY_QUERY_STARTED\nDC_MEMORY_QUERY_DONE 1\n');
     sampler.stdout.write(`${process.pid} node.exe 12`);
@@ -81,8 +81,8 @@ test('fragmented Windows samples preserve peak bytes and report only counters', 
   });
 });
 
-test('empty CIM queries stay unmeasured and malformed output is counted without retaining text', async (t) => {
-  await withWindowsSampler(t, ({ memory, sampler }) => {
+test('empty CIM queries stay unmeasured and malformed output is counted without retaining text', async (testContext) => {
+  await withWindowsSampler(testContext, ({ memory, sampler }) => {
     sampler.stdout.write('DC_MEMORY_QUERY_STARTED\nDC_MEMORY_QUERY_DONE 0\n');
     sampler.stdout.write('private-output-must-not-appear\n');
     sampler.stderr.write('private-error-must-not-appear');
@@ -96,8 +96,8 @@ test('empty CIM queries stay unmeasured and malformed output is counted without 
   });
 });
 
-test('a CIM query failure is explicit without exposing the PowerShell error body', async (t) => {
-  await withWindowsSampler(t, ({ memory, sampler, launch }) => {
+test('a CIM query failure is explicit without exposing the PowerShell error body', async (testContext) => {
+  await withWindowsSampler(testContext, ({ memory, sampler, launch }) => {
     const script = launch.args.at(-1);
     assert.ok(script.includes('-ErrorAction Stop'));
     assert.ok(script.includes('DC_MEMORY_QUERY_FAILED'));
@@ -108,8 +108,8 @@ test('a CIM query failure is explicit without exposing the PowerShell error body
   });
 });
 
-test('unexpected sampler exit and spawn failure remain failures', async (t) => {
-  await withWindowsSampler(t, ({ memory, sampler }) => {
+test('unexpected sampler exit and spawn failure remain failures', async (testContext) => {
+  await withWindowsSampler(testContext, ({ memory, sampler }) => {
     sampler.emit('exit', 23, null);
     assert.equal(memory.diagnostics().exited, true);
     assert.equal(memory.diagnostics().exitCode, 23);
@@ -119,8 +119,8 @@ test('unexpected sampler exit and spawn failure remain failures', async (t) => {
   });
 });
 
-test('stopping the sampler kills its child without recording a sampling failure', async (t) => {
-  await withWindowsSampler(t, ({ memory, sampler, stops }) => {
+test('stopping the sampler kills its child without recording a sampling failure', async (testContext) => {
+  await withWindowsSampler(testContext, ({ memory, sampler, stops }) => {
     memory.stop();
     assert.equal(stops(), 1);
     sampler.emit('exit', null, 'SIGTERM');
