@@ -10,6 +10,7 @@ import { resolveShellPath } from '../dist/utils/shell.js';
 import { readPowerShellCommands, runningPowerShellHelpers } from '../dist/utils/powershell-commands.js';
 import { createTempDir, isTestHome, withEnv } from './helpers/test-env.js';
 
+const fixtureProgramName = process.platform === 'win32' ? 'pwsh.exe' : 'pwsh';
 const blockedToken = 'parser_trust_blocked_fixture';
 const command = "Write-Output 'trusted parser fixture'";
 let launchFixtureSequence = 0;
@@ -52,7 +53,7 @@ async function withParserFixture(runBehavior) {
 
 async function withSpawnGuard(runBehavior) {
   await withParserFixture(async (dir) => {
-    const fixture = path.join(dir, process.platform === 'win32' ? 'pwsh.exe' : 'pwsh');
+    const fixture = path.join(dir, fixtureProgramName);
     fs.writeFileSync(fixture, 'fixture executable, never run', { mode: 0o700 });
     const marker = path.join(dir, 'spawn-attempted');
     const originalSpawn = childProcess.spawn;
@@ -164,8 +165,7 @@ exit 23
       assert.match(JSON.stringify(await refusedStart(fixture)), /trusted PowerShell parser/i);
       assert.equal(fs.existsSync(marker), false, 'The reader failure must refuse start_process');
       await withEnv({ PATH: dir }, async () => {
-        const bareName = process.platform === 'win32' ? 'pwsh.exe' : 'pwsh';
-        assert.match(JSON.stringify(await refusedStart(bareName)), /trusted PowerShell parser/i);
+        assert.match(JSON.stringify(await refusedStart(fixtureProgramName)), /trusted PowerShell parser/i);
         assert.equal(fs.existsSync(marker), false, 'A PATH change must not approve a different parser identity');
       });
     });
@@ -186,8 +186,7 @@ exit 23
   test('relative launch PATH retains approved absolute and bare names after chdir', async () => {
     await withLaunchAuthority(async (fixture) => {
       await expectApprovedParser({ ...fixture, requested: fixture.executable });
-      const bareName = process.platform === 'win32' ? 'pwsh.exe' : 'pwsh';
-      await expectApprovedParser({ ...fixture, requested: bareName });
+      await expectApprovedParser({ ...fixture, requested: fixtureProgramName });
     });
   });
 
@@ -196,8 +195,9 @@ exit 23
       const impostor = path.join(otherDirectory, 'bin', path.basename(executable));
       fs.mkdirSync(path.dirname(impostor));
       fs.writeFileSync(impostor, 'different current-cwd executable, never run', { mode: 0o700 });
-      const bareName = process.platform === 'win32' ? 'pwsh.exe' : 'pwsh';
-      await assert.rejects(async () => reader.readPowerShellCommands(command, bareName), /trusted PowerShell parser/i);
+      await assert.rejects(
+        async () => reader.readPowerShellCommands(command, fixtureProgramName), /trusted PowerShell parser/i
+      );
       await assert.rejects(async () => reader.readPowerShellCommands(command, impostor), /trusted PowerShell parser/i);
       assert.equal(launches.length, 0, 'A resolved impostor must not use the native-name fallback');
     });
