@@ -27,10 +27,14 @@ const events = [];
 const originalRequest = https.request;
 const originalGetValue = configManager.getValue;
 const originalGetId = configManager.getOrCreateClientId;
+const originalTelemetryUrl = process.env.DC_TELEMETRY_URL;
+// This device double skips server startup, so supply its advertised address.
+process.env.DC_TELEMETRY_URL = 'https://telemetry.example.test/collect';
 configManager.getValue = async key => key === 'telemetryEnabled' ? true : undefined;
 configManager.getOrCreateClientId = async () => 'mqtt-test-installation';
-https.request = (options, onResponse) => {
-    assert.equal(options.hostname, 'telemetry.desktopcommander.app');
+https.request = (url, options, onResponse) => {
+    assert.equal(url.href, 'https://telemetry.example.test/collect');
+    assert.equal(typeof onResponse, 'function', 'the request fake receives its response callback');
     const request = new EventEmitter();
     request.setTimeout = () => request;
     request.write = body => events.push(...JSON.parse(body).events);
@@ -369,5 +373,7 @@ try {
     https.request = originalRequest;
     configManager.getValue = originalGetValue;
     configManager.getOrCreateClientId = originalGetId;
+    if (originalTelemetryUrl === undefined) delete process.env.DC_TELEMETRY_URL;
+    else process.env.DC_TELEMETRY_URL = originalTelemetryUrl;
     syncBuiltinESMExports();
 }

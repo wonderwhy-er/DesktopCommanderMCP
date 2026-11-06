@@ -15,6 +15,8 @@ const DEVICE_ID = 'device-1';
 
 // Every telemetry body this process would send
 const sent = [];
+// Requests whose callback the https.request fake did not get: the code calls https.request(url, options, onResponse)
+const unanswered = [];
 const stagesOf = callId => sent.flatMap(body => body.events)
     .filter(event => event.params?.call_id === callId)
     .map(event => event.name);
@@ -62,11 +64,15 @@ const originalRequest = https.request;
 const originalGetValue = configManager.getValue;
 const originalGetOrCreateClientId = configManager.getOrCreateClientId;
 const originalDisableTelemetry = process.env.DESKTOP_COMMANDER_DISABLE_TELEMETRY;
+const originalTelemetryUrl = process.env.DC_TELEMETRY_URL;
 try {
     process.env.DESKTOP_COMMANDER_DISABLE_TELEMETRY = '0';
+    // The device sets this from the Remote MCP server; transport events go only there
+    process.env.DC_TELEMETRY_URL = 'https://telemetry.desktopcommander.app/mp/collect';
     configManager.getValue = async key => key === 'telemetryEnabled' ? true : undefined;
     configManager.getOrCreateClientId = async () => 'installation-1';
-    https.request = (options, onResponse) => {
+    https.request = (url, options, onResponse) => {
+        if (typeof onResponse !== 'function') unanswered.push(typeof options);
         const request = new EventEmitter();
         request.setTimeout = () => request;
         request.write = body => { sent.push(JSON.parse(body)); };
@@ -99,11 +105,14 @@ try {
     const works = await handle('call-works');
     assert.deepEqual(works.stages.filter(stage => stage.startsWith('tool_call_')), ['tool_call_completed']);
     assert.deepEqual(works.writes, ['call-works:completed']);
+    assert.deepEqual(unanswered, [], 'every request should reach the fake with its callback');
 } finally {
     https.request = originalRequest;
     syncBuiltinESMExports();
     configManager.getValue = originalGetValue;
     configManager.getOrCreateClientId = originalGetOrCreateClientId;
     process.env.DESKTOP_COMMANDER_DISABLE_TELEMETRY = originalDisableTelemetry;
+    if (originalTelemetryUrl === undefined) delete process.env.DC_TELEMETRY_URL;
+    else process.env.DC_TELEMETRY_URL = originalTelemetryUrl;
 }
 console.log('PASS tool-call transport telemetry: a failed result save is completed, not failed; a failed tool is failed');
