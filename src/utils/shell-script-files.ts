@@ -13,9 +13,13 @@ const POWERSHELL_VALUE_OPTIONS = [
 ];
 const POWERSHELL_VALUE_ALIASES = new Set(['-ep', '-if', '-of', '-wd', '-ea']);
 
-/** Option values must not be mistaken for the shell's script filename. */
-function posixValueOption(arg: string): boolean {
-    return POSIX_VALUE_OPTIONS.has(arg) || /^[-+][a-zA-Z]*[oO]/.test(arg);
+/** Each grouped o/O takes its own value; keep the option identity for startup-mode changes. */
+function posixValueOptions(arg: string): string[] {
+    if (POSIX_VALUE_OPTIONS.has(arg)) return [arg];
+    if (!/^[-+][a-zA-Z]+$/.test(arg)) return [];
+    return [...arg.slice(1)]
+        .filter((letter) => letter === 'o' || letter === 'O')
+        .map((letter) => arg[0] + letter);
 }
 
 /** Command/stdin mode owns later words, so only a positional file before that boundary is a script. */
@@ -24,8 +28,9 @@ function posixScriptFile(args: FileWord[]): FileWord | undefined {
         const arg = args[i];
         if (arg === null) return arg;
         if (/^-[a-zA-Z]*[cs]/.test(arg) || arg === '--command') return undefined;
-        if (posixValueOption(arg)) {
-            i++;
+        const valueOptions = posixValueOptions(arg);
+        if (valueOptions.length > 0) {
+            i += valueOptions.length;
             continue;
         }
         if (!arg.startsWith('-') && !arg.startsWith('+')) return arg;
@@ -54,8 +59,12 @@ function bashStartupFile(args: FileWord[]): FileWord | undefined {
             if (arg.includes('i')) interactive = arg[0] === '-';
             if (arg.includes('l')) login = arg[0] === '-';
         }
-        if (posixValueOption(arg)) {
-            if (args[++i] === 'posix' && /^[-+][a-zA-Z]*o/.test(arg)) posix = arg[0] === '-';
+        const valueOptions = posixValueOptions(arg);
+        if (valueOptions.length > 0) {
+            for (const option of valueOptions) {
+                const value = args[++i];
+                if (option.endsWith('o') && value === 'posix') posix = option[0] === '-';
+            }
             continue;
         }
         if (!arg.startsWith('-') && !arg.startsWith('+')) break;
