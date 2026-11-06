@@ -141,10 +141,10 @@ A change to a shared module reaches most tests, because many tests start the who
 
 `npm run review -- A..B` reviews the frozen head B through Claude Code, using `ANTHROPIC_API_KEY` locally. CI maps the existing protected secret `CLAUDE_CODE_OAUTH_TOKEN` to that API-key environment variable; its storage label does not describe the authentication kind. The model is pinned to `claude-haiku-5-5` at medium effort. Install Claude Code 2.1.293 or later. See [API configuration and safeguards](../.github/review-api.md).
 
+The hosted workflow pins request, review and posting scripts to approved Haiku commit `100ef96121cd32b3f466b965e0680027b90edc73`; the requested product head is checked out separately.
+
 The output folder is `test-results/review/` unless `--out` names another one. It contains `review.md`, `review.json`, `diff.patch`, `answer.json` and a redacted `session.jsonl`. Missing credentials or an incomplete API response fail the review. The broker reads only the exported head and diff; code review has no shell or writes. Text checks retain bounded read-only git/gh evidence reads, `--results` inputs and explicit `not checked` findings.
 
 The review receives the run's tests and coverage through `--tests`, or a local clean coverage stamp at B. Uncovered changed lines remain findings. `npm run review -- A..B --text <file> [--results <file>]...` checks a text against that evidence and writes `text-check.md` and `text-check.json`.
 
 Adding or re-adding `review` requests AI review alone. A maintainer's `/review` comment runs the labelled platforms and then calls `review.yml` with the protected review credential; `/test windows` requests only Windows and no review. A maintainer may dispatch `review.yml` with `--ref <workflow-branch>`, `commit`, `base` and `check=code` or `check=text`. During cutover leave `REVIEW_POST_ENABLED` unset or `false`: artifacts are uploaded, and the job that posts review comments is skipped. Set it to exactly `true` after accepting the artifacts. Text checks always stay in the job summary and artifacts.
-
-The hosted workflow pins request, review and posting scripts to approved Haiku commit `100ef96121cd32b3f466b965e0680027b90edc73`; the requested product head is checked out separately.
