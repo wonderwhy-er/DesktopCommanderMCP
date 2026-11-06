@@ -8,7 +8,9 @@ import {readPosixCommands} from './utils/posix-commands.js';
 import {readPowerShellCommands} from './utils/powershell-commands.js';
 import {readCmdCommands} from './utils/cmd-commands.js';
 import {withStartedPrograms} from './utils/command-wrappers.js';
-import type {CmdDelayedExpansion, CommandReading, FoundCommand} from './utils/command-reading.js';
+import type {
+    CmdDelayedExpansion, CommandReadOptions, CommandReading, FoundCommand
+} from './utils/command-reading.js';
 
 /**
  * The check's answer for one command.
@@ -270,13 +272,13 @@ class CommandManager {
      * echo (date)), as main reads it: by the names extractCommands() finds.
      */
     async readCommands(
-        command: string, shell: string, cmdDelayedExpansion: CmdDelayedExpansion = 'unknown'
+        command: string, shell: string, options: CommandReadOptions = {}
     ): Promise<CommandReading> {
         switch (getShellType(shell)) {
             case 'powershell':
                 return readPowerShellCommands(command, shell);
             case 'cmd':
-                return readCmdCommands(command, cmdDelayedExpansion);
+                return readCmdCommands(command, options);
         }
         const reading = await readPosixCommands(command);
         // fish's name, as getShellSpawnArgs() finds it
@@ -383,9 +385,9 @@ class CommandManager {
      *   PowerShell or start_process answers.
      */
     checkCommand(
-        command: string, shell: string, cmdDelayedExpansion: CmdDelayedExpansion = 'unknown'
+        command: string, shell: string, options: CommandReadOptions = {}
     ): Promise<CommandCheck> {
-        return this.checkText(command, shell, new Map(), cmdDelayedExpansion);
+        return this.checkText(command, shell, new Map(), options);
     }
 
     /**
@@ -395,19 +397,20 @@ class CommandManager {
      * this the work doubled with each pair.
      */
     private checkText(command: string, shell: string, checked: Map<string, Promise<CommandCheck>>,
-                      cmdDelayedExpansion: CmdDelayedExpansion = 'unknown'): Promise<CommandCheck> {
+                      options: CommandReadOptions = {}): Promise<CommandCheck> {
+        const { cmdDelayedExpansion = 'unknown' } = options;
         const mode = getShellType(shell) === 'cmd' ? cmdDelayedExpansion : 'unknown';
         const key = `${shell}\0${mode}\0${command}`;
         let check = checked.get(key);
         if (check === undefined) {
-            check = this.checkOnce(command, shell, checked, mode);
+            check = this.checkOnce(command, shell, checked, { cmdDelayedExpansion: mode });
             checked.set(key, check);
         }
         return check;
     }
 
     private async checkOnce(command: string, shell: string, checked: Map<string, Promise<CommandCheck>>,
-                            cmdDelayedExpansion: CmdDelayedExpansion): Promise<CommandCheck> {
+                            options: CommandReadOptions): Promise<CommandCheck> {
         try {
             const config = await configManager.getConfig();
             const blockedCommands = config.blockedCommands || [];
@@ -415,7 +418,8 @@ class CommandManager {
             const shellType = getShellType(shell);
             // PowerShell runs nothing when it isn't there or can't parse the command: it, or start_process, answers
             if (shellType === 'powershell' && !isShellAvailable(shell)) return { verdict: 'allowed' };
-            const reading = await this.readCommands(command, shell, cmdDelayedExpansion);
+            const { cmdDelayedExpansion = 'unknown' } = options;
+            const reading = await this.readCommands(command, shell, options);
             // A parse error is the command's fault, not the server's, so it isn't logged or sent
             if (reading.parseError !== undefined) {
                 return shellType === 'powershell'
@@ -454,7 +458,7 @@ class CommandManager {
                         : [runs, shell].find((candidate) => getShellType(candidate) === 'powershell' && isShellAvailable(candidate));
                     const inner: CommandCheck = reader === undefined
                         ? { verdict: 'failed', reason: `${runs} isn't installed here, so the command given to it can't be read` }
-                        : await this.checkText(text, reader, checked, innerMode);
+                        : await this.checkText(text, reader, checked, { cmdDelayedExpansion: innerMode });
                     if (inner.verdict === 'blocked') return inner;
                     if (inner.verdict === 'failed') unreadable ??= inner;
                     if (inner.verdict === 'unseen') unseen.push(...inner.unseen);

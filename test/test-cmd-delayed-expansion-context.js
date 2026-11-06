@@ -19,16 +19,16 @@ beforeEach(() => {
   configManager.getConfig = async () => ({ blockedCommands: ['!tool!'] });
   // A declared mode-aware reader boundary isolates the shared transport/memo contract.
   // Actual reader classification is checked by test-cmd-delayed-expansion-runtime.js.
-  commandManager.readCommands = async (text, shell, mode = 'unknown') => {
-    calls.push({ text, shell, mode });
+  commandManager.readCommands = async (text, shell, { cmdDelayedExpansion = 'unknown' } = {}) => {
+    calls.push({ text, shell, mode: cmdDelayedExpansion });
     if (text === payload) {
       return { functions: [], commands: [{
-        name: '!tool!', words: [mode === 'on' ? null : '!tool!', 'harmless'],
+        name: '!tool!', words: [cmdDelayedExpansion === 'on' ? null : '!tool!', 'harmless'],
         written: ['!tool!', 'harmless'], wordTexts: ['!tool!', 'harmless'],
-        start: 0, nameAtRunTime: mode === 'on',
+        start: 0, nameAtRunTime: cmdDelayedExpansion === 'on',
       }] };
     }
-    return originalRead.call(commandManager, text, shell, mode);
+    return originalRead.call(commandManager, text, shell, { cmdDelayedExpansion });
   };
 });
 afterEach(() => {
@@ -42,12 +42,13 @@ test('unknown top-level context preserves prior literal blocking', async () => {
 });
 
 test('explicit off reaches the reader and preserves literal blocking', async () => {
-  assert.deepEqual(await commandManager.checkCommand(payload, 'cmd', 'off'), { verdict: 'blocked', name: '!tool!' });
+  const answer = await commandManager.checkCommand(payload, 'cmd', { cmdDelayedExpansion: 'off' });
+  assert.deepEqual(answer, { verdict: 'blocked', name: '!tool!' });
   assert.equal(calls[0].mode, 'off');
 });
 
 test('explicit on reaches the reader as runtime rather than a literal block', async () => {
-  assert.equal((await commandManager.checkCommand(payload, 'cmd', 'on')).verdict, 'unseen');
+  assert.equal((await commandManager.checkCommand(payload, 'cmd', { cmdDelayedExpansion: 'on' })).verdict, 'unseen');
   assert.equal(calls[0].mode, 'on');
 });
 
@@ -63,13 +64,14 @@ test('identical nested text checked on then off has distinct memo entries', asyn
 });
 
 test('a new cmd without a known flag does not inherit outer on', async () => {
-  assert.deepEqual(await commandManager.checkCommand(`cmd /c "${payload}"`, 'cmd', 'on'),
+  assert.deepEqual(await commandManager.checkCommand(`cmd /c "${payload}"`, 'cmd', { cmdDelayedExpansion: 'on' }),
     { verdict: 'blocked', name: '!tool!' });
   assert(calls.some(({ text, mode }) => text === payload && mode === 'unknown'));
 });
 
 test('same-shell command text retains its existing on context', async () => {
-  assert.equal((await commandManager.checkCommand(`gsudo "${payload}"`, 'cmd', 'on')).verdict, 'unseen');
+  const answer = await commandManager.checkCommand(`gsudo "${payload}"`, 'cmd', { cmdDelayedExpansion: 'on' });
+  assert.equal(answer.verdict, 'unseen');
   assert(calls.some(({ text, mode }) => text === payload && mode === 'on'));
 });
 

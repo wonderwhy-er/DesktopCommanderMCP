@@ -8,6 +8,10 @@
 /** Explicit CMD delayed expansion; unknown retains the check's prior literal-name policy. */
 export type CmdDelayedExpansion = 'on' | 'off' | 'unknown';
 
+export interface CommandReadOptions {
+  readonly cmdDelayedExpansion?: CmdDelayedExpansion;
+}
+
 /** One command the shell would run */
 export interface FoundCommand {
   /**

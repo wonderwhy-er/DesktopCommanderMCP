@@ -1,4 +1,4 @@
-import type { CmdDelayedExpansion, CommandReading, FoundCommand } from './command-reading.js';
+import type { CommandReadOptions, CommandReading, FoundCommand } from './command-reading.js';
 
 /**
  * The command check's reader for cmd. There is no parser for cmd to use, so
@@ -69,7 +69,7 @@ function commandWordValue(text: string): string {
   return value;
 }
 
-function tokenize(text: string, delayedExpansion: CmdDelayedExpansion): Token[] {
+function tokenize(text: string, { cmdDelayedExpansion = 'unknown' }: CommandReadOptions): Token[] {
   const tokens: Token[] = [];
   let i = 0;
   while (i < text.length) {
@@ -125,7 +125,7 @@ function tokenize(text: string, delayedExpansion: CmdDelayedExpansion): Token[] 
       const lead = /^[;,=@]*/.exec(written)![0].length;
       const drive = /^[A-Za-z]:/.test(value.slice(lead));
       const end = ends.find((at) => at.value >= lead && !(drive && value[at.value] === '/'));
-      const atRunTime = /%[^%\s]+%/.test(written) || (delayedExpansion === 'on' && hasDelayedVariable(value));
+      const atRunTime = /%[^%\s]+%/.test(written) || (cmdDelayedExpansion === 'on' && hasDelayedVariable(value));
       const ending = { nameEnd: end?.value, textEnd: end?.text };
       tokens.push({ kind: 'word', value, text: written, start, atRunTime, lead, ...ending });
     }
@@ -173,7 +173,7 @@ class CmdReader {
   readonly commands: FoundCommand[] = [];
 
   constructor(private readonly tokens: Token[], private readonly text: string,
-              private readonly delayedExpansion: CmdDelayedExpansion) {}
+              private readonly options: CommandReadOptions) {}
 
   /** Reads commands and the operators between them, up to the end, or up to the ) that closes a group */
   readList(inGroup: boolean): void {
@@ -277,7 +277,7 @@ class CmdReader {
         offsets.push(i);
         command += this.text[i];
       }
-      const reader = new CmdReader(tokenize(command, this.delayedExpansion), command, this.delayedExpansion);
+      const reader = new CmdReader(tokenize(command, this.options), command, this.options);
       reader.readList(false);
       this.commands.push(...reader.commands.map(found => ({ ...found, start: offsets[found.start] })));
     }
@@ -322,7 +322,7 @@ class CmdReader {
     const firstWords = rest ? [name, rest] : [name];
     // Executable words and arguments have different caret phases. Keep the
     // argument reading intact and classify the executable's spelling separately.
-    const nameAtRunTime = first.atRunTime || (this.delayedExpansion === 'on'
+    const nameAtRunTime = first.atRunTime || (this.options.cmdDelayedExpansion === 'on'
       && hasDelayedVariable(commandWordValue(first.text.slice(0, first.textEnd))));
     this.commands.push({
       name,
@@ -343,9 +343,10 @@ class CmdReader {
 
 /** Reads a command for cmd */
 export async function readCmdCommands(
-  command: string, delayedExpansion: CmdDelayedExpansion = 'unknown'
+  command: string, { cmdDelayedExpansion = 'unknown' }: CommandReadOptions = {}
 ): Promise<CommandReading> {
-  const reader = new CmdReader(tokenize(command, delayedExpansion), command, delayedExpansion);
+  const options = { cmdDelayedExpansion };
+  const reader = new CmdReader(tokenize(command, options), command, options);
   try {
     reader.readList(false);
   } catch (error) {
