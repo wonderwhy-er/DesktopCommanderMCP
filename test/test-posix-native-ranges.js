@@ -12,6 +12,52 @@ const { readPosixCommands } = await import('../dist/utils/posix-commands.js');
 const { withStartedPrograms } = await import('../dist/utils/command-wrappers.js');
 const { posixBraceSemantics } = await import('../dist/utils/posix-shell-capabilities.js');
 
+test('Path-only Windows launch environment captures a nonstandard endpoint without executing it',
+  { skip: process.platform !== 'win32' }, () => {
+    const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'dc-posix-path-only-'));
+    try {
+      const nativeFolder = path.join(folder, 'native');
+      fs.mkdirSync(nativeFolder);
+      const endpoint = path.join(nativeFolder, 'bash.exe');
+      // The version transport is stubbed before import: this header fixture is NEVER executed.
+      fs.writeFileSync(endpoint, Buffer.from('4d5a0000', 'hex'));
+      const moduleUrl = new URL('../dist/utils/posix-shell-capabilities.js', import.meta.url).href;
+      const code = `import assert from 'node:assert/strict';
+        import childProcess from 'node:child_process'; import { syncBuiltinESMExports } from 'node:module';
+        import fs from 'node:fs';
+        for (const name of Object.keys(process.env)) if (name.toLowerCase() === 'path') delete process.env[name];
+        process.env.Path = ${JSON.stringify(nativeFolder)};
+        assert.equal(process.env.PATH, process.env.Path, 'real Windows process.env is case insensitive');
+        assert.deepEqual(Object.keys(process.env).filter(name => name.toLowerCase() === 'path'), ['Path']);
+        const queries = [];
+        childProcess.execFile = (file, args, options, callback) => {
+          queries.push(file); assert.deepEqual(args, ['--version']);
+          assert.equal(file.toLowerCase(), fs.realpathSync(${JSON.stringify(endpoint)}).toLowerCase());
+          assert.deepEqual(Object.keys(options.env).filter(name => name.toLowerCase() === 'path'), ['PATH']);
+          assert.equal(options.env.PATH, process.env.PATH);
+          callback(null, 'GNU bash, version 3.2.57\\n');
+        };
+        syncBuiltinESMExports();
+        const { posixBraceSemantics: capability } = await import(${JSON.stringify(moduleUrl)});
+        assert.equal(await capability(${JSON.stringify(endpoint)}), 'bash3');
+        assert.equal(await capability('bash.exe'), 'bash3');
+        assert.equal(queries.length, 1, 'one cached mocked query, no native/custom process execution');`;
+      const answer = spawnSync(process.execPath, ['--input-type=module', '-e', code],
+        { cwd: folder, encoding: 'utf8', timeout: 5000, env: { ...process.env } });
+      assert.equal(answer.status, 0, answer.stderr);
+    } finally {
+      fs.rmSync(folder, { recursive: true, force: true });
+    }
+  });
+
+test('named brace options select one semantics and preserve the default vector', async () => {
+  const { braceWords, unquotedChars } = await import('../dist/utils/brace-expansion.js');
+  const chars = unquotedChars('python{03..04}');
+  assert.deepEqual(braceWords(chars), ['python03', 'python04']);
+  assert.deepEqual(braceWords(chars, { semantics: 'bash3' }), ['python3', 'python4']);
+  assert.deepEqual(braceWords(unquotedChars('python{2..3..-1}'), { semantics: 'zsh' }), ['python3', 'python2']);
+});
+
 test('unsupported endpoints keep every legacy field and existing static block candidate', async () => {
   for (const input of ['python{03..04}', 'python{2..3..-1}', 'python{3..2..-1}',
     'env python{3..2..-1}', 'echo {sudo,ls}', '{"",sudo}', '{$X,sudo} id', 'sudo {1..1001}']) {

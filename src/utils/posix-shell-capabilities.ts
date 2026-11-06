@@ -5,9 +5,12 @@ import type { BraceSemantics } from './brace-expansion.js';
 
 /** Captured at server import, before a command can change cwd, PATH or startup variables. */
 const launchCwd = fs.realpathSync(process.cwd());
+const launchPathValue = process.env.PATH ?? '';
 const launchEnv = { ...process.env };
-const launchPath = (launchEnv.PATH ?? '').split(path.delimiter)
+const launchPath = launchPathValue.split(path.delimiter)
   .map((folder) => path.resolve(launchCwd, folder));
+// process.env is case-insensitive on Windows; its plain-object copy is not.
+for (const name of Object.keys(launchEnv)) if (name.toLowerCase() === 'path') delete launchEnv[name];
 launchEnv.PATH = launchPath.join(path.delimiter);
 delete launchEnv.BASH_ENV;
 delete launchEnv.ENV;
@@ -54,18 +57,22 @@ function capture(file: string): Endpoint | undefined {
   return endpoint;
 }
 
+function isLaunchExecutable(file: string): boolean {
+  try {
+    fs.accessSync(file, process.platform === 'win32' ? fs.constants.F_OK : fs.constants.X_OK);
+    return fs.statSync(file).isFile();
+  } catch {
+    // A missing or inaccessible PATH entry cannot be the executable selected at launch.
+    return false;
+  }
+}
+
 // Bare names bind to the FIRST launch-PATH executable, including an unsupported script.
 for (const name of names) {
   let first = true;
   for (const folder of launchPath) {
     const file = path.join(folder, name);
-    try {
-      fs.accessSync(file, process.platform === 'win32' ? fs.constants.F_OK : fs.constants.X_OK);
-      if (!fs.statSync(file).isFile()) continue;
-    } catch {
-      // A missing or inaccessible PATH entry cannot be the executable selected at launch.
-      continue;
-    }
+    if (!isLaunchExecutable(file)) continue;
     const endpoint = capture(file);
     if (first) aliases.set(key(name), endpoint);
     first = false;
