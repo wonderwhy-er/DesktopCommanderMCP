@@ -267,8 +267,11 @@ jobs:
           retention-days: 14
           overwrite: true
 
-  # The AI review, after the test jobs, passed or failed: review.yml, given this run's
-  # results and coverage. Adding the review label, or no platform label, runs it alone, with no test results.
+  # The AI review runs when requested, after any test jobs finish, passed or failed.
+  # review.yml receives this run's results and coverage.
+  # Adding or re-adding review requests review alone.
+  # A /review comment with no platform labels also requests review alone.
+  # Having no platform labels starts nothing by itself.
   review:
     name: review
     needs: [platforms, unit]

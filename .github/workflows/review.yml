@@ -1,14 +1,18 @@
-# The AI review of a maintainer's PR, after its tests: tests.yml calls this workflow
-# (workflow_call) once its test jobs are done, for adding or re-adding `review`,
-# or a maintainer's `/review` comment, with the run's
-# results and coverage. On demand it runs no tests of its own (gh workflow run
-# review.yml -f commit=<sha> -f base=<sha or branch>). Claude Code reads the PR's
-# code with read-only tools and answers with findings, by the rules in
-# .github/review-prompt.md, through test/ci-review.js run: the same script as
-# `npm run review -- A..B` on a machine. A last job posts the findings as one review
-# with event COMMENT, and the job summary has them all. On demand, check=text checks
-# the PR's description against the change instead, in the job summary only. See
-# test/README.md.
+# The AI review of a maintainer's PR runs through tests.yml.
+# tests.yml calls this workflow after any requested tests finish.
+# Adding or re-adding `review` requests a review.
+# A maintainer's `/review` comment requests the labelled tests and a review.
+# The review receives the run's results and coverage.
+# On demand, it runs without tests:
+# gh workflow run review.yml -f commit=<sha> -f base=<sha or branch>
+# Claude Code reads the PR's code with read-only tools.
+# test/ci-review.js run applies the rules in .github/review-prompt.md.
+# `npm run review -- A..B` uses the same script locally.
+# A last job posts findings as one COMMENT review.
+# The job summary includes all findings.
+# On demand, check=text checks the PR's description against the change.
+# Text checks appear in the job summary only.
+# See test/README.md.
 ---
 name: Review
 
