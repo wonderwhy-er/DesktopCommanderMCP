@@ -166,9 +166,12 @@ test('quoted caret command names are inspected as runtime names when CMD expansi
   assert.ok(answer.unseen.some(item => item.what.includes('DC_CMD')));
 });
 
-for (const text of ['calc/"!DC_CMD^_TOOL!"', 'calc,"!DC_CMD^_TOOL!"']) {
-  test(`literal executable stays blocked before a runtime-looking suffix: ${text}`, async t => {
-    t.mock.method(configManager, 'getConfig', async () => ({ blockedCommands: ['calc'] }));
+for (const text of [
+  'calc/"!DC_CMD^_TOOL!"', 'calc,"!DC_CMD^_TOOL!"',
+  'calc/!x!', 'calc,!x!', 'calc;!x!', 'calc=!x!', 'calc/"!x!"', 'calc,"!x!"',
+]) {
+  test(`literal executable stays blocked before a runtime-looking suffix: ${text}`, async testContext => {
+    testContext.mock.method(configManager, 'getConfig', async () => ({ blockedCommands: ['calc'] }));
     const [found] = (await readCmdCommands(text, { cmdDelayedExpansion: 'on' })).commands;
     assert.equal(found.name, 'calc');
     assert.equal(found.nameAtRunTime, false, 'an argument suffix is not part of the executable');
@@ -187,4 +190,24 @@ test('named CMD options are read without changing the caller context', async t =
   assert.equal((await readCmdCommands('!tool! harmless', enabled)).commands[0].nameAtRunTime, true);
   assert.deepEqual(enabled, { cmdDelayedExpansion: 'on' });
   assert.deepEqual(disabled, { cmdDelayedExpansion: 'off' });
+});
+
+
+test('a runtime attached argument does not erase the literal executable or its argument spelling', async () => {
+  const [found] = (await readCmdCommands('calc/!x!', { cmdDelayedExpansion: 'on' })).commands;
+  assert.equal(found.nameAtRunTime, false);
+  assert.deepEqual(found.words, ['calc', null]);
+  assert.deepEqual(found.written, ['calc', '/!x!']);
+  assert.deepEqual(found.wordTexts, ['calc', '/!x!']);
+});
+
+test('quoted and drive-path executable variables remain runtime names', async testContext => {
+  testContext.mock.method(configManager, 'getConfig', async () => ({ blockedCommands: ['calc'] }));
+  for (const text of ['"calc/!x!" fixture', 'C:/folder/!x!.exe fixture', '!x!/literal']) {
+    const [found] = (await readCmdCommands(text, { cmdDelayedExpansion: 'on' })).commands;
+    assert.equal(found.nameAtRunTime, true, text);
+    assert.equal(found.words[0], null, text);
+    assert.equal((await commandManager.checkCommand(text, 'cmd', { cmdDelayedExpansion: 'on' })).verdict,
+      'unseen', text);
+  }
 });
