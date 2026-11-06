@@ -81,7 +81,8 @@ test('fragmented Windows samples preserve peak bytes and report only counters', 
   });
 });
 
-test('empty CIM queries stay unmeasured and malformed output is counted without retaining text', async (testContext) => {
+test('empty CIM queries stay unmeasured and malformed output is counted without retaining text',
+  async (testContext) => {
   await withWindowsSampler(testContext, ({ memory, sampler }) => {
     sampler.stdout.write('DC_MEMORY_QUERY_STARTED\nDC_MEMORY_QUERY_DONE 0\n');
     sampler.stdout.write('private-output-must-not-appear\n');
