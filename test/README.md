@@ -95,18 +95,19 @@ A change to a shared module reaches most tests, because many tests start the who
 
 `.github/workflows/tests.yml` runs on pull requests opened by the maintainers in `MAINTAINERS` (`test/helpers/ci-platforms.js`), the one list both workflows check.
 - **Platforms: add the `linux` label to run the tests on Linux.** The same goes for `windows` and `macos`. With none of them, nothing runs.
-  - A push runs every labelled platform. A new push cancels the older push's run.
-  - Adding a label runs its platform at once. Another label, or removing one, runs nothing and cancels nothing.
+  - Adding or re-adding a platform label runs only its platform at once. Re-adding it cancels its older run.
+  - New commits and reopening run no tests or AI review, even when labels remain. Remove and re-add a label to request a new run.
+  - Another label, or removing one, runs nothing and cancels nothing.
   - A PR opened with its labels runs each platform once: GitHub sends a label event for each, and opening the PR starts nothing itself.
   - A first job, `platforms`, picks them (`test/ci-platforms.js`, `test/helpers/ci-platforms.js`).
 - **From a PR comment:** a maintainer writes `/test linux`, `/test windows` or `/test macos`, or several at once (`/test windows macos`), and CI runs those platforms on the PR's head.
   - Only comments from the logins in `MAINTAINERS` count. Other comments are ignored.
   - **It only works once this workflow is on main:** GitHub runs comment-started workflows from the default branch's workflow file.
 - **On demand:** `gh workflow run tests.yml -f commit=<sha> -f platforms=linux,windows -f tests=<value>` runs exactly that commit on those platforms (Linux when none). GitHub lets only people with write access start it, and it works once this workflow is on main. The `tests` values (`test/run-ci.js`'s `planFor`):
-  - empty, the default: everything a push or label run runs (below), shown as "everything" in the comment;
+  - empty, the default: everything a label run runs (below), shown as "everything" in the comment;
   - `test`: the suite (`npm test`'s files); `integration`; `repro`; `docker`: `test/docker/`, Linux only, failing when there's none to run;
   - `timed`: the timed tests in `test/timed.txt`, one job per test and platform, each alone on its own runner, without coverage. Each job's results are an artifact of their own (`results-<runner>-timed-<test>`, a `/` as `-`). The comment's row for the platform counts them all, and a job that stopped before its test ran counts as failed, with its step;
-  - `changed:A..B`: what a push runs, each runner with `--changed A B`;
+  - `changed:A..B`: the default test set, each runner with `--changed A B`;
   - `files:a.js,b.js`: exactly those, each through its folder's runner (`test/`, `repro/`, `integration/`, `docker/`).
   - The run checks out the commit, with a read-only token and no npm cache. When the commit is an open PR's head, its rows go into that PR's comment, with the `tests` value (`Ran`) and the commit. Otherwise only the job summary has them: a run of an older commit leaves the comment as it is.
 - **Cross-tests: one commit's tests on another commit's code, with coverage.** They show what breaks, or loses coverage, when tests move between versions.
@@ -128,13 +129,13 @@ A change to a shared module reaches most tests, because many tests start the who
 - **Artifacts:** each platform uploads `results-<runner>` (`test-results/`) and `coverage-<runner>` (`coverage/`), e.g. `coverage-ubuntu-latest`. They download as zip files (logged in); open the coverage report's `index.html`.
 - **The PR comment:** a last job writes one comment on the PR, with no prose. It has:
   - a heading with the commit;
-  - the results: a row per platform, with its tests passed of how many, what it ran (`everything` for what a push runs), with a note for a part that didn't run and why, how many tests `test/excluded.txt` leaves out (`; 2 excluded (test/excluded.txt)`) and how many checks were skipped, its test job's minutes (`…` while it runs), its commit and its run;
+  - the results: a row per platform, with its tests passed of how many, what it ran (`everything` for a default run), with a note for a part that didn't run and why, how many tests `test/excluded.txt` leaves out (`; 2 excluded (test/excluded.txt)`) and how many checks were skipped, its test job's minutes (`…` while it runs), its commit and its run;
   - it fails closed: a job that failed while its results show no failure, a `results.json` that can't be read, and a run where no test file ran each make the row ❌ and say which;
   - the coverage: a row per platform, with lines, branches and functions, and links to its report and results;
   - a **Combined** row: the three platforms together, a line, branch or function covered when any platform ran it. The 100 % target is on this figure. It comes only from one run's three `coverage-final.json` files (`test/combined-coverage.js`). With fewer, or one that can't be read, the row has no figure and says why;
   - the lines by area, collapsed, a column per platform and the combined one, then one total.
 - **The combined figure on your machine:** `node test/combined-coverage.js <coverage-final.json>...`, for example the three downloaded `coverage-<runner>` reports, prints the table by area.
-- **A run replaces only its own platforms' rows,** so a platform that didn't run in the latest push keeps its last row, with its own commit. The comment keeps each platform's results as hidden data for that. The job summary has the same text.
+- **A run replaces only its own platforms' rows,** so a platform that didn't run in the latest request keeps its last row, with its own commit. The comment keeps each platform's results as hidden data for that. The job summary has the same text.
 
 ## AI review
 
@@ -144,6 +145,6 @@ The output folder is `test-results/review/` unless `--out` names another one. It
 
 The review receives the run's tests and coverage through `--tests`, or a local clean coverage stamp at B. Uncovered changed lines remain findings. `npm run review -- A..B --text <file> [--results <file>]...` checks a text against that evidence and writes `text-check.md` and `text-check.json`.
 
-`tests.yml` runs the labelled platforms and then calls `review.yml` with the protected review credential. A maintainer may dispatch `review.yml` with `--ref <workflow-branch>`, `commit`, `base` and `check=code` or `check=text`. During cutover leave `REVIEW_POST_ENABLED` unset or `false`: artifacts are uploaded, and the job that posts review comments is skipped. Set it to exactly `true` after accepting the artifacts. Text checks always stay in the job summary and artifacts.
+Adding or re-adding `review` requests AI review alone. A maintainer's `/review` comment runs the labelled platforms and then calls `review.yml` with the protected review credential; `/test windows` requests only Windows and no review. A maintainer may dispatch `review.yml` with `--ref <workflow-branch>`, `commit`, `base` and `check=code` or `check=text`. During cutover leave `REVIEW_POST_ENABLED` unset or `false`: artifacts are uploaded, and the job that posts review comments is skipped. Set it to exactly `true` after accepting the artifacts. Text checks always stay in the job summary and artifacts.
 
 The hosted workflow pins request, review and posting scripts to approved Haiku commit `100ef96121cd32b3f466b965e0680027b90edc73`; the requested product head is checked out separately.
