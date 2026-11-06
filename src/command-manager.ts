@@ -8,7 +8,7 @@ import {readPosixCommands} from './utils/posix-commands.js';
 import {readPowerShellCommands} from './utils/powershell-commands.js';
 import {readCmdCommands} from './utils/cmd-commands.js';
 import {withStartedPrograms} from './utils/command-wrappers.js';
-import type {CommandReading, FoundCommand} from './utils/command-reading.js';
+import type {CmdDelayedExpansion, CommandReading, FoundCommand} from './utils/command-reading.js';
 
 /**
  * The check's answer for one command.
@@ -269,12 +269,14 @@ class CommandManager {
      * bash reader, and where that can't parse fish's own syntax (for … end,
      * echo (date)), as main reads it: by the names extractCommands() finds.
      */
-    async readCommands(command: string, shell: string): Promise<CommandReading> {
+    async readCommands(
+        command: string, shell: string, cmdDelayedExpansion: CmdDelayedExpansion = 'unknown'
+    ): Promise<CommandReading> {
         switch (getShellType(shell)) {
             case 'powershell':
                 return readPowerShellCommands(command, shell);
             case 'cmd':
-                return readCmdCommands(command);
+                return readCmdCommands(command, cmdDelayedExpansion);
         }
         const reading = await readPosixCommands(command);
         // fish's name, as getShellSpawnArgs() finds it
@@ -380,8 +382,10 @@ class CommandManager {
      *   error or a missing PowerShell is allowed instead: nothing runs, and
      *   PowerShell or start_process answers.
      */
-    checkCommand(command: string, shell: string): Promise<CommandCheck> {
-        return this.checkText(command, shell, new Map());
+    checkCommand(
+        command: string, shell: string, cmdDelayedExpansion: CmdDelayedExpansion = 'unknown'
+    ): Promise<CommandCheck> {
+        return this.checkText(command, shell, new Map(), cmdDelayedExpansion);
     }
 
     /**
@@ -390,17 +394,20 @@ class CommandManager {
      * In pwsh $a pwsh $a … each text gives every later one again, so without
      * this the work doubled with each pair.
      */
-    private checkText(command: string, shell: string, checked: Map<string, Promise<CommandCheck>>): Promise<CommandCheck> {
-        const key = `${shell}\0${command}`;
+    private checkText(command: string, shell: string, checked: Map<string, Promise<CommandCheck>>,
+                      cmdDelayedExpansion: CmdDelayedExpansion = 'unknown'): Promise<CommandCheck> {
+        const mode = getShellType(shell) === 'cmd' ? cmdDelayedExpansion : 'unknown';
+        const key = `${shell}\0${mode}\0${command}`;
         let check = checked.get(key);
         if (check === undefined) {
-            check = this.checkOnce(command, shell, checked);
+            check = this.checkOnce(command, shell, checked, mode);
             checked.set(key, check);
         }
         return check;
     }
 
-    private async checkOnce(command: string, shell: string, checked: Map<string, Promise<CommandCheck>>): Promise<CommandCheck> {
+    private async checkOnce(command: string, shell: string, checked: Map<string, Promise<CommandCheck>>,
+                            cmdDelayedExpansion: CmdDelayedExpansion): Promise<CommandCheck> {
         try {
             const config = await configManager.getConfig();
             const blockedCommands = config.blockedCommands || [];
@@ -408,7 +415,7 @@ class CommandManager {
             const shellType = getShellType(shell);
             // PowerShell runs nothing when it isn't there or can't parse the command: it, or start_process, answers
             if (shellType === 'powershell' && !isShellAvailable(shell)) return { verdict: 'allowed' };
-            const reading = await this.readCommands(command, shell);
+            const reading = await this.readCommands(command, shell, cmdDelayedExpansion);
             // A parse error is the command's fault, not the server's, so it isn't logged or sent
             if (reading.parseError !== undefined) {
                 return shellType === 'powershell'
@@ -431,19 +438,21 @@ class CommandManager {
             for (const found of running) {
                 unseen.push(...this.findUnseen([found], shellType));
                 const run = shellRuns(found);
-                const texts = [
-                    ...sameShellTexts(found, shellType).texts.map((text) => ({ text, runs: shell })),
+                const texts: { text: string; runs: string; cmdDelayedExpansion: CmdDelayedExpansion }[] = [
+                    ...sameShellTexts(found, shellType).texts.map((text) => ({ text, runs: shell, cmdDelayedExpansion })),
                     // su -c's text runs in sh, runas's command line as cmd reads it
-                    ...run.texts.map((text) => ({ text, runs: run.shell ?? found.name })),
+                    ...run.texts.map((text) => ({
+                        text, runs: run.shell ?? found.name, cmdDelayedExpansion: run.cmdDelayedExpansion ?? 'unknown',
+                    })),
                 ];
-                for (const { text, runs } of texts) {
+                for (const { text, runs, cmdDelayedExpansion: innerMode } of texts) {
                     // The shell that runs the command looks a PowerShell's name up itself, in its working folder
                     // too: one the check can't find is read by the PowerShell running the command, when that is one
                     const reader = getShellType(runs) !== 'powershell' ? runs
                         : [runs, shell].find((candidate) => getShellType(candidate) === 'powershell' && isShellAvailable(candidate));
                     const inner: CommandCheck = reader === undefined
                         ? { verdict: 'failed', reason: `${runs} isn't installed here, so the command given to it can't be read` }
-                        : await this.checkText(text, reader, checked);
+                        : await this.checkText(text, reader, checked, innerMode);
                     if (inner.verdict === 'blocked') return inner;
                     if (inner.verdict === 'failed') unreadable ??= inner;
                     if (inner.verdict === 'unseen') unseen.push(...inner.unseen);

@@ -1,5 +1,5 @@
 import { getShellType, POSIX_SHELLS, programName, type ShellType } from './shell.js';
-import type { FoundCommand } from './command-reading.js';
+import type { CmdDelayedExpansion, FoundCommand } from './command-reading.js';
 import { sameShellProgramReadings, shellOptionReadings, textProgramReadings, type OptionReadings } from './command-wrappers.js';
 
 /**
@@ -39,6 +39,8 @@ export interface ShellRun {
   file?: string | null;
   /** The shell that reads its texts, when it isn't the program itself: sh for su -c's, cmd for runas's command line */
   shell?: string;
+  /** A new CMD invocation's explicit mode; absent/unknown never inherits the outer CMD mode. */
+  cmdDelayedExpansion?: CmdDelayedExpansion;
 }
 
 /**
@@ -245,19 +247,28 @@ function cmdRuns({ words, wordTexts }: FoundCommand): ShellRun {
   // Each word is a switch or a part of the command, so one known only at run time may hold any command (cmd $opts)
   const noted = words.slice(1).includes(null) ? { file: null } : {};
   let alwaysDropsQuotes = false;
+  let cmdDelayedExpansion: CmdDelayedExpansion = 'unknown';
   for (let i = 1; i < wordTexts.length; i++) {
     const word = wordTexts[i];
     if (!word.startsWith('/')) break;
     const run = /^((?:\/(?![ckr])[^/]*)*)\/[ckr](.*)$/is.exec(word);
+    const switches = run ? run[1] : word;
+    if (words[i] === null) {
+      cmdDelayedExpansion = 'unknown';
+    } else {
+      for (const match of switches.matchAll(/\/v:(on|off)(?=\/|$)/gi)) {
+        cmdDelayedExpansion = match[1].toLowerCase() as 'on' | 'off';
+      }
+    }
     // /s: cmd drops the quotes around the command in every case
     if (/\/s(?:\/|$)/i.test(run ? run[1] : word)) alwaysDropsQuotes = true;
     if (!run) continue;
     const lineWords = run[2] ? [run[2], ...wordTexts.slice(i + 1)] : wordTexts.slice(i + 1);
     if (lineWords.length === 0) break;
     const line = lineWords.map((lineWord) => (lineWord === '' || /\s/.test(lineWord) ? `"${lineWord}"` : lineWord)).join(' ');
-    return { texts: cmdQuoteReadings(line, alwaysDropsQuotes), ...noted };
+    return { texts: cmdQuoteReadings(line, alwaysDropsQuotes), cmdDelayedExpansion, ...noted };
   }
-  return { texts: [], ...noted };
+  return { texts: [], cmdDelayedExpansion, ...noted };
 }
 
 /**
