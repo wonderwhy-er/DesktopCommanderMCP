@@ -123,7 +123,6 @@ test('the command consumer distinguishes quoted scalars from word-expanding opti
   }
 });
 
-
 test('runtime POSIX option values cannot hide an explicit interactive startup file', () => {
   for (const flag of ['+o', '+oo', '-o']) {
     const values = flag === '+oo' ? ['pipefail', null] : [null];
