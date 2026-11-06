@@ -114,12 +114,21 @@ describe('PowerShell discovery outcomes', { concurrency: false }, () => {
     });
   }
 
-  for (const [failingShell, candidates, repairedMajorVersion] of [
+  for (const [failingShell, initialCandidates, repairedMajorVersion] of [
     ['powershell', { powershell: { ...valid(5), status: 9 }, pwsh: valid(7) }, 5],
     ['pwsh', { powershell: valid(5), pwsh: { ...valid(7), status: 9 } }, 7],
   ]) {
-    test(`a working peer does not hide ${failingShell} failure or poison later recovery`, async () => {
+    test(`a working peer does not hide ${failingShell} failure`, async () => {
+      const candidates = { ...initialCandidates };
       await withCandidates(candidates, (discover) => {
+        assert.throws(discover, new RegExp(`${failingShell}.*9`));
+      });
+    });
+
+    test(`failed ${failingShell} discovery does not cache partial success`, async () => {
+      const candidates = { ...initialCandidates };
+      await withCandidates(candidates, (discover) => {
+        // Recovery needs a failed attempt before the executable is repaired.
         assert.throws(discover, new RegExp(`${failingShell}.*9`));
         candidates[failingShell] = valid(repairedMajorVersion);
         assert.deepEqual(discover(), ['powershell', 'pwsh'], 'Failed discovery must not cache partial success');
