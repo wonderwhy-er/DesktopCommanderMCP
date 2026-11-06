@@ -97,15 +97,51 @@ test('empty CIM queries stay unmeasured and malformed output is counted without 
   });
 });
 
-test('a CIM query failure is explicit without exposing the PowerShell error body', async (testContext) => {
+test('a failed CIM query stays observable and a later sample recovers', async (testContext) => {
   await withWindowsSampler(testContext, ({ memory, sampler, launch }) => {
     const script = launch.args.at(-1);
     assert.ok(script.includes('-ErrorAction Stop'));
     assert.ok(script.includes('DC_MEMORY_QUERY_FAILED'));
     sampler.stdout.write('DC_MEMORY_QUERY_STARTED\nDC_MEMORY_QUERY_FAILED\n');
     assert.equal(memory.diagnostics().queriesFailed, 1);
-    assert.match(memory.failure(), /could not query process memory/);
-    assert.equal(memory.peakOf(process.pid), 0);
+    assert.equal(memory.peakOf(process.pid), 0, 'a failed query is not a measurement');
+    assert.equal(memory.failure(), undefined, 'a recoverable query error is not a terminal failure');
+    sampler.stdout.write(`DC_MEMORY_QUERY_STARTED\nDC_MEMORY_QUERY_DONE 1\n${process.pid} node.exe 128\n`);
+    assert.equal(memory.peakOf(process.pid), 128 * 1024);
+    assert.equal(memory.peakOfName('node'), 128 * 1024);
+    assert.equal(memory.diagnostics().queriesCompleted, 1);
+    assert.equal(memory.diagnostics().queriesFailed, 1, 'recovery retains the diagnostic count');
+    assert.equal(memory.failure(), undefined);
+    sampler.stdout.write('DC_MEMORY_QUERY_STARTED\nDC_MEMORY_QUERY_FAILED\n');
+    assert.equal(memory.peakOf(process.pid), 128 * 1024, 'a later query error retains the measured peak');
+    assert.equal(memory.diagnostics().queriesFailed, 2);
+    assert.equal(memory.failure(), undefined);
+  });
+});
+
+test('a query error cannot mask or clear a later terminal exit', async (testContext) => {
+  await withWindowsSampler(testContext, ({ memory, sampler }) => {
+    sampler.stdout.write('DC_MEMORY_QUERY_FAILED\n');
+    sampler.emit('exit', 23, null);
+    assert.match(memory.failure(), /exit code 23/);
+    sampler.stdout.write(`${process.pid} node.exe 128\nDC_MEMORY_QUERY_FAILED\n`);
+    assert.equal(memory.peakOf(process.pid), 128 * 1024);
+    assert.equal(memory.diagnostics().queriesFailed, 2);
+    assert.match(memory.failure(), /exit code 23/, 'later samples or query errors cannot clear terminal failure');
+  });
+});
+
+test('a spawn error remains the first terminal failure through query errors and later samples',
+  async (testContext) => {
+  await withWindowsSampler(testContext, ({ memory, sampler }) => {
+    sampler.stdout.write('DC_MEMORY_QUERY_FAILED\n');
+    sampler.emit('error', new Error('controlled spawn failure'));
+    assert.match(memory.failure(), /controlled spawn failure/);
+    sampler.stdout.write(`${process.pid} node.exe 128\nDC_MEMORY_QUERY_FAILED\n`);
+    sampler.emit('exit', 23, null);
+    assert.equal(memory.peakOf(process.pid), 128 * 1024);
+    assert.match(memory.failure(), /controlled spawn failure/, 'keep the first terminal failure');
+    assert.equal(memory.diagnostics().queriesFailed, 2);
   });
 });
 
