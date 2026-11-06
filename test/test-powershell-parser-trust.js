@@ -51,23 +51,30 @@ async function withParserFixture(runBehavior) {
   }
 }
 
+async function withMockedSpawn({ spawn, runBehavior }) {
+  const originalSpawn = childProcess.spawn;
+  childProcess.spawn = spawn;
+  syncBuiltinESMExports();
+  try {
+    await runBehavior();
+  } finally {
+    childProcess.spawn = originalSpawn;
+    syncBuiltinESMExports();
+  }
+}
+
 async function withSpawnGuard(runBehavior) {
   await withParserFixture(async (dir) => {
-    const fixture = path.join(dir, fixtureProgramName);
-    fs.writeFileSync(fixture, 'fixture executable, never run', { mode: 0o700 });
+    const untrustedProgramPath = path.join(dir, fixtureProgramName);
+    fs.writeFileSync(untrustedProgramPath, 'fixture executable, never run', { mode: 0o700 });
     const marker = path.join(dir, 'spawn-attempted');
-    const originalSpawn = childProcess.spawn;
-    childProcess.spawn = () => {
-      fs.writeFileSync(marker, 'unexpected parser or fallback launch');
-      throw new Error('An untrusted parser launch was attempted');
-    };
-    syncBuiltinESMExports();
-    try {
-      await runBehavior({ dir, fixture, marker });
-    } finally {
-      childProcess.spawn = originalSpawn;
-      syncBuiltinESMExports();
-    }
+    await withMockedSpawn({
+      spawn: () => {
+        fs.writeFileSync(marker, 'unexpected parser or fallback launch');
+        throw new Error('An untrusted parser launch was attempted');
+      },
+      runBehavior: () => runBehavior({ dir, untrustedProgramPath, marker }),
+    });
   });
 }
 
@@ -80,24 +87,22 @@ async function withLaunchAuthority(runBehavior) {
     const executable = path.join(launchDirectory, 'bin', process.platform === 'win32' ? 'pwsh.EXE' : 'pwsh');
     fs.writeFileSync(executable, 'trusted launch-PATH fixture, never executed', { mode: 0o700 });
     const originalDirectory = process.cwd();
-    const originalSpawn = childProcess.spawn;
     const launches = [];
-    childProcess.spawn = (program, args, options) => {
-      launches.push({ program, cwd: options.cwd });
-      throw new Error('launch-PATH spawn intercepted');
-    };
-    syncBuiltinESMExports();
     try {
-      await withEnv({ PATH: 'bin' }, async () => {
-        process.chdir(launchDirectory);
-        const reader = await import(`../dist/utils/powershell-commands.js?launch-fixture=${++launchFixtureSequence}`);
-        process.chdir(otherDirectory);
-        await runBehavior({ dir, reader, executable, otherDirectory, launches });
+      await withMockedSpawn({
+        spawn: (program, args, options) => {
+          launches.push({ program, cwd: options.cwd });
+          throw new Error('launch-PATH spawn intercepted');
+        },
+        runBehavior: () => withEnv({ PATH: 'bin' }, async () => {
+          process.chdir(launchDirectory);
+          const reader = await import(`../dist/utils/powershell-commands.js?launch-fixture=${++launchFixtureSequence}`);
+          process.chdir(otherDirectory);
+          await runBehavior({ dir, reader, executable, otherDirectory, launches });
+        }),
       });
     } finally {
       process.chdir(originalDirectory);
-      childProcess.spawn = originalSpawn;
-      syncBuiltinESMExports();
     }
   });
 }
@@ -152,17 +157,19 @@ exit 23
   });
 
   test('mismatched and missing direct-reader identities refuse before any parser spawn', async () => {
-    await withSpawnGuard(async ({ dir, fixture, marker }) => {
-      await assert.rejects(async () => readPowerShellCommands(command, fixture), /trusted PowerShell parser/i);
-      const missingCandidate = path.join(dir, 'missing', path.basename(fixture));
+    await withSpawnGuard(async ({ dir, untrustedProgramPath, marker }) => {
+      await assert.rejects(
+        async () => readPowerShellCommands(command, untrustedProgramPath), /trusted PowerShell parser/i
+      );
+      const missingCandidate = path.join(dir, 'missing', path.basename(untrustedProgramPath));
       await assert.rejects(async () => readPowerShellCommands(command, missingCandidate), /trusted PowerShell parser/i);
       assert.equal(fs.existsSync(marker), false, 'Identity validation must precede every parser spawn');
     });
   });
 
   test('start_process refuses a custom identity before and after a PATH change', async () => {
-    await withSpawnGuard(async ({ dir, fixture, marker }) => {
-      assert.match(JSON.stringify(await refusedStart(fixture)), /trusted PowerShell parser/i);
+    await withSpawnGuard(async ({ dir, untrustedProgramPath, marker }) => {
+      assert.match(JSON.stringify(await refusedStart(untrustedProgramPath)), /trusted PowerShell parser/i);
       assert.equal(fs.existsSync(marker), false, 'The reader failure must refuse start_process');
       await withEnv({ PATH: dir }, async () => {
         assert.match(JSON.stringify(await refusedStart(fixtureProgramName)), /trusted PowerShell parser/i);
@@ -172,21 +179,23 @@ exit 23
   });
 
   test('missing launch endpoints do not fall back to a request-selected executable', async () => {
-    await withSpawnGuard(async ({ dir, fixture, marker }) => {
+    await withSpawnGuard(async ({ dir, untrustedProgramPath, marker }) => {
       const emptyPath = path.join(dir, 'empty-path');
       fs.mkdirSync(emptyPath);
       await withEnv({ PATH: emptyPath }, async () => {
         const reader = await import('../dist/utils/powershell-commands.js?missing-native-parser');
-        await assert.rejects(async () => reader.readPowerShellCommands(command, fixture), /trusted PowerShell parser/i);
+        await assert.rejects(
+          async () => reader.readPowerShellCommands(command, untrustedProgramPath), /trusted PowerShell parser/i
+        );
         assert.equal(fs.existsSync(marker), false, 'An unavailable native endpoint must not trigger another probe');
       });
     });
   });
 
   test('relative launch PATH retains approved absolute and bare names after chdir', async () => {
-    await withLaunchAuthority(async (fixture) => {
-      await expectApprovedParser({ ...fixture, requested: fixture.executable });
-      await expectApprovedParser({ ...fixture, requested: fixtureProgramName });
+    await withLaunchAuthority(async (launchContext) => {
+      await expectApprovedParser({ ...launchContext, requested: launchContext.executable });
+      await expectApprovedParser({ ...launchContext, requested: fixtureProgramName });
     });
   });
 
@@ -204,17 +213,19 @@ exit 23
   });
 
   test('filesystem symlinks or junctions retain the approved canonical identity', async () => {
-    await withLaunchAuthority(async (fixture) => {
-      const alias = createAlias({ directory: path.join(fixture.dir, 'filesystem-alias'), program: fixture.executable });
-      await expectApprovedParser({ ...fixture, requested: alias });
+    await withLaunchAuthority(async (launchContext) => {
+      const alias = createAlias({
+        directory: path.join(launchContext.dir, 'filesystem-alias'), program: launchContext.executable,
+      });
+      await expectApprovedParser({ ...launchContext, requested: alias });
     });
   });
 
   test('a distinct hard-link name does not silently gain canonical-path approval', async () => {
-    await withLaunchAuthority(async (fixture) => {
-      const { dir, reader, executable, launches } = fixture;
+    await withLaunchAuthority(async (launchContext) => {
+      const { dir, reader, executable, launches } = launchContext;
       const approvedAlias = createAlias({ directory: path.join(dir, 'approved-alias'), program: executable });
-      await expectApprovedParser({ ...fixture, requested: approvedAlias });
+      await expectApprovedParser({ ...launchContext, requested: approvedAlias });
       const linkDirectory = path.join(dir, 'hard-link');
       fs.mkdirSync(linkDirectory);
       const hardLink = path.join(linkDirectory, path.basename(executable));
@@ -265,18 +276,19 @@ exit 23
         return originalRealpath(program, ...options);
       });
       let spawned = false;
-      testContext.mock.method(childProcess, 'spawn', () => {
-        spawned = true;
-        throw new Error('unreadable identity must not be launched');
-      });
-      syncBuiltinESMExports();
       try {
-        await withEnv({ PATH: dir }, async () => {
-          const reader = await import('../dist/utils/powershell-commands.js?unreadable-launch-endpoint');
-          await assert.rejects(
-            async () => reader.readPowerShellCommands(command, executable), /trusted PowerShell parser/i
-          );
-          assert.equal(spawned, false);
+        await withMockedSpawn({
+          spawn: () => {
+            spawned = true;
+            throw new Error('unreadable identity must not be launched');
+          },
+          runBehavior: () => withEnv({ PATH: dir }, async () => {
+            const reader = await import('../dist/utils/powershell-commands.js?unreadable-launch-endpoint');
+            await assert.rejects(
+              async () => reader.readPowerShellCommands(command, executable), /trusted PowerShell parser/i
+            );
+            assert.equal(spawned, false);
+          }),
         });
       } finally {
         testContext.mock.restoreAll();
