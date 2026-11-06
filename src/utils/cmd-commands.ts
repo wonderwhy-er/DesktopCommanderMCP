@@ -318,7 +318,7 @@ class CmdReader {
 
   private addCommand(words: Token[]): void {
     const first = words[0];
-    const name = commandName(first);
+    const name = commandWordValue(first.text.slice(first.lead ?? 0, first.textEnd));
     if (!name && words.length === 1) return; // "" alone runs nothing
     const rest = afterName(first);
     const firstWords = rest ? [name, rest] : [name];

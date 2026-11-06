@@ -445,11 +445,15 @@ class CommandManager {
                 const run = shellRuns(found);
                 const texts: { text: string; runs: string; cmdDelayedExpansion: CmdDelayedExpansion }[] = [
                     ...sameShellTexts(found, shellType).texts.map((text) => ({
-                        text, runs: shell, cmdDelayedExpansion,
+                        text,
+                        runs: shell,
+                        cmdDelayedExpansion,
                     })),
                     // su -c's text runs in sh, runas's command line as cmd reads it
                     ...run.texts.map((text) => ({
-                        text, runs: run.shell ?? found.name, cmdDelayedExpansion: run.cmdDelayedExpansion ?? 'unknown',
+                        text,
+                        runs: run.shell ?? found.name,
+                        cmdDelayedExpansion: run.cmdDelayedExpansion ?? 'unknown',
                     })),
                 ];
                 for (const { text, runs, cmdDelayedExpansion: innerMode } of texts) {

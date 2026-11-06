@@ -246,7 +246,7 @@ test('quoted argument carets retain their separate argument spelling', async () 
   assert.deepEqual(found.wordTexts, ['echo', 'ca^lc']);
 });
 
-test('a variable within the complete executable stays uncovered without guessing its environment', async testContext => {
+test('a variable within the whole executable stays uncovered without guessing its environment', async testContext => {
   testContext.mock.method(configManager, 'getConfig', async () => ({ blockedCommands: ['calc'] }));
   const answer = await commandManager.checkCommand('cmd /v:on /c "calc!x!"', 'cmd');
   assert.equal(answer.verdict, 'unseen');
