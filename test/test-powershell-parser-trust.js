@@ -118,6 +118,40 @@ async function testNativeIdentitiesAndCache(dir) {
   }
 }
 
+async function testRelativeLaunchPath(dir) {
+  const launchDirectory = path.join(dir, 'launch-directory');
+  const otherDirectory = path.join(dir, 'other-directory');
+  fs.mkdirSync(path.join(launchDirectory, 'bin'), { recursive: true });
+  fs.mkdirSync(otherDirectory);
+  const executable = path.join(launchDirectory, 'bin', process.platform === 'win32' ? 'pwsh.EXE' : 'pwsh');
+  fs.writeFileSync(executable, 'trusted launch-PATH fixture, never executed', { mode: 0o700 });
+  const originalDirectory = process.cwd();
+  const originalSpawn = childProcess.spawn;
+  let attemptedProgram;
+  let attemptedDirectory;
+  childProcess.spawn = (program, args, options) => {
+    attemptedProgram = program;
+    attemptedDirectory = options.cwd;
+    throw new Error('relative PATH spawn intercepted');
+  };
+  syncBuiltinESMExports();
+  try {
+    await withEnv({ PATH: 'bin' }, async () => {
+      process.chdir(launchDirectory);
+      const isolated = await import('../dist/utils/powershell-commands.js?relative-launch-path');
+      process.chdir(otherDirectory);
+      await assert.rejects(async () => isolated.readPowerShellCommands(command, executable), /spawn intercepted/);
+      assert.ok(path.isAbsolute(attemptedProgram), 'Launch-PATH approval must retain an absolute executable');
+      assert.equal(fs.realpathSync(path.resolve(attemptedDirectory, attemptedProgram)), fs.realpathSync(executable),
+        'The helper must launch the approved identity even though its cwd differs from the launch cwd');
+    });
+  } finally {
+    process.chdir(originalDirectory);
+    childProcess.spawn = originalSpawn;
+    syncBuiltinESMExports();
+  }
+}
+
 export default async function runTests() {
   if (!isTestHome()) throw new Error('Run through test/run-all-tests.js so profiles and configuration use an isolated home');
   const dir = createTempDir('dc-test-parser-trust-');
@@ -125,6 +159,7 @@ export default async function runTests() {
   try {
     await testActualUntrustedStartup(dir);
     await testSpawnGuardAndMissingNative(dir);
+    await testRelativeLaunchPath(dir);
     await testNativeIdentitiesAndCache(dir);
   } finally {
     for (const pid of runningPowerShellHelpers()) {

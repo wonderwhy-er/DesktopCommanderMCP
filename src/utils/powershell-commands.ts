@@ -425,7 +425,8 @@ const nativeParsers = (process.platform === 'win32' ? ['powershell', 'pwsh'] : [
   .flatMap((name) => {
     const program = resolveShellPath(name);
     if (program === null) return [];
-    try { return [{ program, identity: parserIdentity(program) }]; }
+    // Relative PATH entries belong to the launch cwd, not the helper's mcpRoot cwd.
+    try { return [{ program: path.resolve(program), identity: parserIdentity(program) }]; }
     catch { return []; }
   });
 
