@@ -19,8 +19,8 @@ import type { CommandReading, DefinedFunction, FoundCommand } from './command-re
  * check never decides on a command it read only in part.
  */
 
-/** Word parts whose text is taken as written (a glob as its own text, not the files it matches) */
-const STATIC_PARTS = new Set(['Literal', 'SingleQuoted', 'AnsiCQuoted', 'Glob']);
+/** Quoted and literal text is known before execution; globs depend on the matching files */
+const STATIC_PARTS = new Set(['Literal', 'SingleQuoted', 'AnsiCQuoted']);
 
 /** Word parts that bash drops when they are empty and unquoted ($X, ${X}, $(cmd)) */
 const VANISHING_PARTS = new Set(['SimpleExpansion', 'ParameterExpansion', 'CommandExpansion']);
@@ -119,6 +119,19 @@ function wordsMade(word: Word): { value: string | null; mayVanish: boolean }[] |
   return made && made.map((text) => ({ value: text.includes('\0') ? null : text, mayVanish: MAY_VANISH.test(text) }));
 }
 
+type ExpandedWord = { value: string | null; mayVanish: boolean; source: Word };
+
+/** Keep every argument expansion aligned with its source, so wrappers see the words the shell passes */
+function commandWords(words: Word[]): ExpandedWord[] | null {
+  const expanded: ExpandedWord[] = [];
+  for (const source of words) {
+    const made = wordsMade(source);
+    if (made === null) return null;
+    expanded.push(...made.map((word) => ({ ...word, source })));
+  }
+  return expanded;
+}
+
 /** Whether bash may drop the word entirely, so that the next word is the command's name */
 function mayVanish(word: Word): boolean {
   const parts = word.parts ?? [];
@@ -163,31 +176,30 @@ export async function readPosixCommands(command: string): Promise<CommandReading
     if (node.type === 'Script') parseError ??= node.errors?.[0]?.message;
     if (node.type === 'Command' && node.name) {
       const words = [node.name, ...node.args.filter((arg): arg is Word => arg.type === 'Word')];
-      const values = words.map(wordValue);
-      // The name, and the next word too while the words before it may vanish ($EMPTY sudo ls runs sudo)
-      for (let i = 0; i < words.length; i++) {
-        const made = wordsMade(words[i]);
-        if (made === null) {
-          parseError ??= `brace expansion makes more than ${MAX_BRACE_WORDS} words, or takes too long to read`;
-          break;
-        }
-        // Each word made is the name while the ones before it may vanish; those known only at run time all
-        // give the word's text as the name, so it is given once
-        const kept = made.findIndex((word) => !word.mayVanish);
-        const names = kept < 0 ? made : made.slice(0, kept + 1);
-        names.forEach((name, k) => {
-          if (name.value === null && names.findIndex((other) => other.value === null) < k) return;
+      const expanded = commandWords(words);
+      if (expanded === null) {
+        parseError ??= `brace expansion makes more than ${MAX_BRACE_WORDS} words, or takes too long to read`;
+      } else {
+        // An unquoted runtime word may vanish, exposing the next word as the executable.
+        const runtimeSources = new Set<Word>();
+        for (let i = 0; i < expanded.length; i++) {
+          const name = expanded[i];
+          if (name.value === null && runtimeSources.has(name.source)) {
+            if (!name.mayVanish) break;
+            continue;
+          }
+          if (name.value === null) runtimeSources.add(name.source);
+          const remaining = expanded.slice(i);
           commands.push({
-            name: name.value ?? words[i].text,
-            words: [...made.slice(k).map((word) => word.value), ...values.slice(i + 1)],
-            written: [...made.slice(k).map(() => words[i].text), ...words.slice(i + 1).map((word) => word.text)],
-            // unbash's value of a word keeps the parts known only at run time as written
-            wordTexts: [...made.slice(k).map((word) => word.value ?? words[i].value), ...words.slice(i + 1).map((word) => word.value)],
-            start: backticksStart ?? (i === 0 ? node.pos : words[i].pos),
+            name: name.value ?? name.source.text,
+            words: remaining.map((word) => word.value),
+            written: remaining.map((word) => word.source.text),
+            wordTexts: remaining.map((word) => word.value ?? word.source.value),
+            start: backticksStart ?? (name.source === words[0] ? node.pos : name.source.pos),
             nameAtRunTime: name.value === null,
           });
-        });
-        if (kept >= 0) break;
+          if (!name.mayVanish) break;
+        }
       }
     }
     const inBackticks = node.type === 'CommandExpansion' && node.text.startsWith('`');
