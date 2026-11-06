@@ -204,12 +204,67 @@ export interface ShellSpawnConfig {
 }
 
 /**
+ * Detect a simple invocation of the configured Windows shell itself, such as
+ * `powershell -NoProfile -NoLogo`. Wrapping that again as
+ * `powershell -Command powershell ...` creates a second interactive console;
+ * the inner shell can call AllocConsole(), detach from Desktop Commander's
+ * stdio pipes and show a foreground window (#443/#852).
+ *
+ * This is intentionally conservative rather than a new shell parser. Only the
+ * native Windows shells we already support are considered, and quoted or
+ * metacharacter-bearing command lines keep the existing wrapper behavior.
+ */
+function directWindowsShellInvocation(shellPath: string, executable: string, command: string): string[] | null {
+  if (!isWindows()) return null;
+  // A newline is shell syntax, not generic argument whitespace. Keep multiline
+  // commands on the existing wrapper path so PowerShell/CMD parse them exactly
+  // as supplied rather than turning line boundaries into direct-spawn args.
+  if (/[\r\n]/.test(command)) return null;
+
+  const trimmed = command.trim();
+  if (!trimmed) return null;
+
+  const parts = trimmed.split(/\s+/);
+  // Do not reinterpret quoting, expansion or shell syntax here. The direct path
+  // is only for a shell name plus simple switches/words; everything else keeps
+  // the mature wrapper/parser behavior of that shell.
+  if (!parts.every((part) => /^[A-Za-z0-9_.:\/\\-]+$/.test(part))) return null;
+
+  const invokedName = path.basename(parts[0]).toLowerCase().replace(/\.exe$/, '');
+  const configuredName = path.basename(shellPath).toLowerCase().replace(/\.exe$/, '');
+  if (!['powershell', 'pwsh', 'cmd'].includes(configuredName)) return null;
+  if (invokedName !== configuredName) return null;
+
+  // A same-basename executable from another directory is not necessarily the
+  // configured shell. Preserve the user's exact command in that case instead
+  // of silently substituting Desktop Commander's configured executable.
+  let invokedExecutable: string;
+  try {
+    invokedExecutable = resolveProgramPath(parts[0]);
+  } catch {
+    return null;
+  }
+  if (path.resolve(invokedExecutable).toLowerCase() !== path.resolve(executable).toLowerCase()) return null;
+
+  return parts.slice(1);
+}
+
+/**
  * Get the appropriate spawn configuration for a given shell
  * This handles login shell flags for different shell types
  */
 export function getShellSpawnArgs(shellPath: string, command: string): ShellSpawnConfig {
   const shellName = path.basename(shellPath).toLowerCase();
   const executable = resolveProgramPath(shellPath);
+  const directArgs = directWindowsShellInvocation(shellPath, executable, command);
+  if (directArgs) {
+    return {
+      executable,
+      args: directArgs,
+      windowsVerbatim: shellName === 'cmd' || shellName === 'cmd.exe',
+      useShellOption: false
+    };
+  }
 
   // Unix shells with login flag support
   if (shellName.includes('bash') || shellName.includes('zsh')) {
