@@ -5,6 +5,7 @@ import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { validateManifest } from '@anthropic-ai/mcpb/node';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const json = (file) => JSON.parse(readFileSync(file, 'utf8'));
@@ -18,6 +19,18 @@ test('repository root contains a stable, valid MCPB manifest snapshot', () => {
     assert.equal(manifest.server.entry_point, 'dist/index.js');
     // The template's build-relative schema path does not resolve at repo root.
     assert.equal(Object.hasOwn(manifest, '$schema'), false);
+
+    // Anthropic's own published MCPB schema and icon validation.
+    assert.equal(validateManifest(path.join(root, 'manifest.json')), true);
+
+    // Keep the root copy byte-for-byte semantically aligned with the only
+    // metadata source of truth; no edits to descriptions, tools or commands.
+    const expected = JSON.parse(
+        readFileSync(path.join(root, 'manifest.template.json'), 'utf8')
+            .replace('"{{VERSION}}"', JSON.stringify(manifest.version))
+    );
+    delete expected.$schema;
+    assert.deepEqual(manifest, expected);
 });
 
 test('version sync keeps alpha private and refreshes root manifest for stable releases', () => {
