@@ -417,6 +417,41 @@ In JetBrains IDEs, go to **Settings → Tools → AI Assistant → Model Context
 </details>
 
 <details>
+<summary><b>Theia IDE</b></summary>
+
+Open **AI Configuration → MCP Servers** (or the `MCP Servers Configuration` preference) and add Desktop Commander as a local MCP server.
+
+**macOS / Linux:**
+
+```json
+{
+  "desktop-commander": {
+    "command": "npx",
+    "args": ["-y", "@wonderwhy-er/desktop-commander@latest"],
+    "autostart": true
+  }
+}
+```
+
+**Windows:** Theia recommends starting local MCP commands through a command interpreter so executable path lookup works correctly:
+
+```json
+{
+  "desktop-commander": {
+    "command": "cmd",
+    "args": ["/C", "npx -y @wonderwhy-er/desktop-commander@latest"],
+    "autostart": true
+  }
+}
+```
+
+For the current IDE session, run **MCP: Start MCP Server** after adding the configuration. With `autostart: true`, Theia starts it automatically on later IDE launches; autostart is held back for untrusted workspaces. To use Desktop Commander in chat, enable its MCP tools from the **Generic Capabilities Panel** (tools icon, or `Ctrl+Shift+.` / `Cmd+Shift+.`) or save them in the agent configuration. Theia can use local models through providers such as Ollama independently of the MCP server configuration. For direct prompt references, Theia exposes MCP functions as `~{mcp_<server-name>_<function-name>}`.
+
+See [Theia IDE AI and MCP docs](https://theia-ide.org/docs/user_ai/#mcp-integration) for more info.
+
+</details>
+
+<details>
 <summary><b>Gemini CLI</b></summary>
 
 Add to `~/.gemini/settings.json`:
