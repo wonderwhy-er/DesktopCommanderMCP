@@ -323,7 +323,7 @@ class CmdReader {
     // Executable words and arguments have different caret phases. Keep the
     // argument reading intact and classify the executable's spelling separately.
     const nameAtRunTime = first.atRunTime || (this.delayedExpansion === 'on'
-      && hasDelayedVariable(commandWordValue(first.text)));
+      && hasDelayedVariable(commandWordValue(first.text.slice(0, first.textEnd))));
     this.commands.push({
       name,
       words: [
