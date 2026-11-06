@@ -192,7 +192,6 @@ test('named CMD options are read without changing the caller context', async t =
   assert.deepEqual(disabled, { cmdDelayedExpansion: 'off' });
 });
 
-
 test('a runtime attached argument does not erase the literal executable or its argument spelling', async () => {
   const [found] = (await readCmdCommands('calc/!x!', { cmdDelayedExpansion: 'on' })).commands;
   assert.equal(found.nameAtRunTime, false);
@@ -211,7 +210,6 @@ test('quoted and drive-path executable variables remain runtime names', async te
       'unseen', text);
   }
 });
-
 
 for (const mode of ['unknown', 'off', 'on']) {
   test(`a quoted static executable consumes one caret layer in ${mode} mode`, async testContext => {
@@ -232,9 +230,10 @@ test('a doubled executable caret preserves one literal caret instead of matching
   const [found] = (await readCmdCommands(text, { cmdDelayedExpansion: 'on' })).commands;
   assert.equal(found.name, 'fi^xture');
   assert.equal(found.nameAtRunTime, false);
-  testContext.mock.method(configManager, 'getConfig', async () => ({ blockedCommands: ['fixture'] }));
+  let blockedCommands = ['fixture'];
+  testContext.mock.method(configManager, 'getConfig', async () => ({ blockedCommands }));
   assert.equal((await commandManager.checkCommand(text, 'cmd', { cmdDelayedExpansion: 'on' })).verdict, 'allowed');
-  configManager.getConfig = async () => ({ blockedCommands: ['fi^xture'] });
+  blockedCommands = ['fi^xture'];
   assert.deepEqual(await commandManager.checkCommand(text, 'cmd', { cmdDelayedExpansion: 'on' }),
     { verdict: 'blocked', name: 'fi^xture' });
 });
@@ -252,7 +251,6 @@ test('a variable within the whole executable stays uncovered without guessing it
   assert.equal(answer.verdict, 'unseen');
   assert.deepEqual(answer.unseen, [{ what: 'calc!x!', inFile: false }]);
 });
-
 
 for (const text of ['calc/%x%', 'calc,%x%', 'calc;%x%', 'calc=%x%', 'calc/"%x%"', 'calc,"%x%"']) {
   test(`a percent-variable argument cannot hide a blocked literal executable: ${text}`, async testContext => {

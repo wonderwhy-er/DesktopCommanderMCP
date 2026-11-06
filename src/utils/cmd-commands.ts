@@ -39,6 +39,14 @@ interface Token {
   textEnd?: number;
 }
 
+/** Percent expansion can span a substitution delimiter, but must start in the executable to change its name. */
+function hasPercentVariable(
+  text: string, { startsBefore = text.length }: { startsBefore?: number } = {}
+): boolean {
+  const variable = /%[^%\s]+%/.exec(text);
+  return variable !== null && variable.index < startsBefore;
+}
+
 /**
  * In explicitly enabled delayed expansion, !VAR! is runtime information
  * rather than a literal program we can claim to have checked.
@@ -127,7 +135,7 @@ function tokenize(text: string, { cmdDelayedExpansion = 'unknown' }: CommandRead
       const lead = /^[;,=@]*/.exec(written)![0].length;
       const drive = /^[A-Za-z]:/.test(value.slice(lead));
       const end = ends.find((at) => at.value >= lead && !(drive && value[at.value] === '/'));
-      const atRunTime = /%[^%\s]+%/.test(written) || (cmdDelayedExpansion === 'on' && hasDelayedVariable(value));
+      const atRunTime = hasPercentVariable(written) || (cmdDelayedExpansion === 'on' && hasDelayedVariable(value));
       const ending = { nameEnd: end?.value, textEnd: end?.text };
       tokens.push({ kind: 'word', value, text: written, start, atRunTime, lead, ...ending });
     }
@@ -326,7 +334,8 @@ class CmdReader {
     // argument reading intact and classify the executable's spelling separately.
     // !tool:old=new! starts in the executable even though its substitution spans a name delimiter.
     const nameLength = commandWordValue(first.text.slice(0, first.textEnd)).length;
-    const nameAtRunTime = /%[^%\s]+%/.test(first.text) || (this.options.cmdDelayedExpansion === 'on'
+    const nameAtRunTime = hasPercentVariable(first.text, { startsBefore: first.textEnd })
+      || (this.options.cmdDelayedExpansion === 'on'
       && hasDelayedVariable(commandWordValue(first.text), { startsBefore: nameLength }));
     const firstWordValues = firstWords.map((word) => (first.atRunTime ? null : word));
     firstWordValues[0] = nameAtRunTime ? null : name;
