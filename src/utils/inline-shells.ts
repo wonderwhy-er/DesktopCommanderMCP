@@ -112,9 +112,10 @@ function textProgramRuns(found: FoundCommand, program: string): ShellRun {
     wordTexts: [text.shell, ...at.map(i => found.wordTexts[i])],
   };
   const inner = posixShellRuns(shellWords, text.shell);
+  const file = run.file === null ? null : inner.file;
   return {
     ...run, texts: [...new Set([...run.texts, ...inner.texts])],
-    ...(run.file === null || inner.file !== undefined ? { file: null } : {}),
+    ...(file === undefined ? {} : { file }),
   };
 }
 

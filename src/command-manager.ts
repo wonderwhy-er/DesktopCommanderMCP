@@ -329,8 +329,14 @@ class CommandManager {
                 unseen.push({ what: cmd.name, inFile: false });
                 continue;
             }
-            unseen.push(...this.scriptFiles(cmd, shellType));
-            const unknown = sameShellTexts(cmd, shellType).file === null || shellRuns(cmd).file === null;
+            const files = this.scriptFiles(cmd, shellType);
+            unseen.push(...files);
+            const run = shellRuns(cmd);
+            // A text-program shell can identify a script that the ordinary file reader does not handle.
+            if (files.length === 0 && typeof run.file === 'string') {
+                unseen.push({ what: run.file, inFile: true });
+            }
+            const unknown = sameShellTexts(cmd, shellType).file === null || run.file === null;
             if (unknown && !unseen.some((item) => item.what === cmd.name && !item.inFile)) {
                 unseen.push({ what: cmd.name, inFile: false });
             }
