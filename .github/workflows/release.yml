@@ -254,7 +254,7 @@ jobs:
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add package.json server.json src/version.ts
+          git add package.json server.json src/version.ts manifest.json
           git commit -m "Release v$VERSION
 
           Automated release commit with version bump from $CURRENT to $VERSION"
@@ -309,6 +309,9 @@ jobs:
           if [ "$MANIFEST_VERSION" != "$VERSION" ]; then
             echo "bundle manifest says $MANIFEST_VERSION but this release is $VERSION"; exit 1
           fi
+          # The repo-root manifest must describe the exact stable MCPB contents.
+          # The bundled manifest alone carries the build-local $schema reference.
+          node -e 'const assert = require("node:assert/strict"); const bundled = require("./mcpb-bundle/manifest.json"); delete bundled.$schema; assert.deepStrictEqual(require("./manifest.json"), bundled);'
           ls -l "$MCPB"
 
       # Point of no return, and the only step that writes to origin. Tests,
