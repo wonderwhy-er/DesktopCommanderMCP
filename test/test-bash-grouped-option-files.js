@@ -63,3 +63,28 @@ test('the existing command consumer names the actual file after grouped options'
   }
   assert.equal((await commandManager.checkCommand('bash -oo pipefail nounset "$SCRIPT"', 'bash')).verdict, 'unseen');
 });
+
+
+test('runtime option values preserve script-selection uncertainty', () => {
+  for (const options of [
+    ['-oo', null, 'deploy.sh'],
+    ['-oo', 'pipefail', null, 'deploy.sh'],
+    ['-oO', null, 'extglob', 'deploy.sh'],
+    ['+oo', null, 'nounset', 'deploy.sh'],
+    ['-o', null, 'deploy.sh'],
+  ]) {
+    assert.deepEqual(shellScriptFiles('bash', options), [null], JSON.stringify(options));
+  }
+});
+
+test('the command consumer notes runtime option values instead of claiming complete inspection', async () => {
+  for (const command of [
+    'bash -oo $OPTIONS deploy.sh',
+    'bash -oo "$OPTIONS" deploy.sh',
+    'bash -oo pipefail "$OPTION" deploy.sh',
+  ]) {
+    assert.deepEqual(await commandManager.checkCommand(command, 'bash'), {
+      verdict: 'unseen', unseen: [{ what: 'bash', inFile: false }],
+    }, command);
+  }
+});
