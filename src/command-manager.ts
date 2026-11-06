@@ -1,7 +1,8 @@
 import path from 'path';
+import fs from 'fs';
 import {configManager} from './config-manager.js';
 import {capture} from "./utils/capture.js";
-import {getShellType, isShellAvailable, programName, type ShellType} from './utils/shell.js';
+import {getShellType, isShellAvailable, programName, resolveShellPath, type ShellType} from './utils/shell.js';
 import {sameShellTexts, shellRuns} from './utils/inline-shells.js';
 import {shellScriptFiles} from './utils/shell-script-files.js';
 import {readPosixCommands} from './utils/posix-commands.js';
@@ -276,7 +277,14 @@ class CommandManager {
             case 'cmd':
                 return readCmdCommands(command);
         }
-        const reading = await readPosixCommands(command);
+        // Resolve the actual caller selection, not the adapter's anchored launch alias.
+        // Only filesystem identity is read here; unknown endpoints keep the legacy reading.
+        let selectedEndpoint: string | undefined;
+        const selected = resolveShellPath(shell);
+        if (selected !== null) {
+            try { selectedEndpoint = fs.realpathSync(selected); } catch { /* Missing identity stays unsupported. */ }
+        }
+        const reading = await readPosixCommands(command, selectedEndpoint);
         // fish's name, as getShellSpawnArgs() finds it
         if (reading.parseError === undefined || !path.basename(shell).toLowerCase().includes('fish')) return reading;
         const { parseError, ...read } = reading;

@@ -69,7 +69,9 @@ test('actual late relative-PATH endpoint is not the captured native launch alias
     fs.mkdirSync(path.join(launch,'bin'),{recursive:true}); fs.mkdirSync(path.join(later,'bin'),{recursive:true});
     fs.symlinkSync('/bin/bash',path.join(launch,'bin','bash'));
     const marker=path.join(root,'caller-executed');
-    fs.writeFileSync(path.join(later,'bin','bash'),'#!/bin/sh\\nprintf wrong > "'+marker+'"\\n',{mode:0o700});
+    const fake=path.join(later,'bin','bash');
+    fs.writeFileSync(fake,['#!/bin/sh','printf wrong > "'+marker+'"',''].join(String.fromCharCode(10)),{mode:0o700});
+    assert.equal(fs.readFileSync(fake,'utf8').split(String.fromCharCode(10))[0],'#!/bin/sh');
     process.chdir(launch); process.env.PATH='bin:/usr/bin:/bin';
     const {commandManager}=await import(urls['command-manager']);
     const {configManager}=await import(urls['config-manager']);
