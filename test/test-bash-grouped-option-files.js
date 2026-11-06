@@ -22,9 +22,9 @@ test('separated options and a single value in a flag cluster retain the filename
   }
 });
 
-test('startup mode reads the matching lowercase o value within mixed clusters', () => {
+test('POSIX option values retain conservative explicit startup-file inspection', () => {
   for (const options of [['-oo', 'pipefail', 'posix'], ['-Oo', 'extglob', 'posix']]) {
-    assert.deepEqual(shellScriptFiles('bash', ['--rcfile', 'init.sh', '-i', ...options, '-c', 'echo safe']), []);
+    assert.deepEqual(shellScriptFiles('bash', ['--rcfile', 'init.sh', '-i', ...options, '-c', 'echo safe']), ['init.sh']);
   }
   assert.deepEqual(shellScriptFiles('bash', [
     '--rcfile', 'init.sh', '--posix', '+oo', 'pipefail', 'posix', '-i', '-c', 'echo safe',
@@ -50,10 +50,14 @@ test('explicit rcfile interaction, login and suppression controls are preserved'
   assert.deepEqual(shellScriptFiles('bash', ['--rcfile', 'startup.sh', '-i', 'deploy.sh']),
     ['startup.sh', 'deploy.sh'], 'distinct startup and main files both remain visible');
   assert.deepEqual(shellScriptFiles('bash', ['--rcfile', 'init.sh', '-i', '-c', 'echo safe']), ['init.sh']);
-  for (const options of [['--norc'], ['--login'], ['-l'], ['--posix'], ['-o', 'posix'], ['+i']]) {
-    assert.deepEqual(shellScriptFiles('bash', ['--rcfile', 'init.sh', '-i', ...options, '-c', 'echo safe']), []);
+  for (const options of [['--norc'], ['--login'], ['-l'], ['+i']]) {
+    assert.deepEqual(shellScriptFiles('bash', ['--rcfile', 'init.sh', '-i', ...options, '-c', 'echo safe']), ['init.sh']);
   }
   assert.deepEqual(shellScriptFiles('bash', ['--rcfile', 'init.sh', '-c', 'echo safe']), []);
+  for (const options of [['--posix'], ['-o', 'posix']]) {
+    assert.deepEqual(shellScriptFiles('bash', ['--rcfile', 'init.sh', '-i', ...options, '-c', 'echo safe']),
+      ['init.sh'], 'POSIX mode alone cannot prove explicit rcfile suppression across supported Bash versions');
+  }
 });
 
 test('the existing command consumer names the actual file after grouped options', async () => {
@@ -117,4 +121,21 @@ test('the command consumer distinguishes quoted scalars from word-expanding opti
       verdict: 'unseen', unseen: [{ what: 'bash', inFile: false }],
     }, value);
   }
+});
+
+
+test('runtime POSIX option values cannot hide an explicit interactive startup file', () => {
+  for (const flag of ['+o', '+oo', '-o']) {
+    const values = flag === '+oo' ? ['pipefail', null] : [null];
+    const args = ['--posix', '--rcfile', 'init.sh', '-i', flag, ...values, '-c', 'echo safe'];
+    const written = args.map(value => value === null ? '"$X"' : value);
+    assert.deepEqual(shellScriptFiles('bash', args, { written }), ['init.sh'], flag);
+  }
+});
+
+test('the real consumer names the possible startup file without a false main-script notice', async () => {
+  const command = 'bash --posix --rcfile init.sh -i +o "$X" -c "echo safe"';
+  assert.deepEqual(await commandManager.checkCommand(command, 'bash'), {
+    verdict: 'unseen', unseen: [{ what: 'init.sh', inFile: true }],
+  });
 });
