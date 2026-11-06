@@ -330,7 +330,7 @@ class CommandManager {
                 continue;
             }
             unseen.push(...this.scriptFiles(cmd, shellType));
-            const unknown = sameShellTexts(cmd, shellType).file === null || shellRuns(cmd).file === null;
+            const unknown = sameShellTexts(cmd, shellType).file === null || shellRuns(cmd, shellType).file === null;
             if (unknown && !unseen.some((item) => item.what === cmd.name && !item.inFile)) {
                 unseen.push({ what: cmd.name, inFile: false });
             }
@@ -361,7 +361,7 @@ class CommandManager {
         }
         // PowerShell text and file modes use the same host-option readings.
         if (getShellType(cmd.name) === 'powershell') {
-            const file = shellRuns(cmd).file;
+            const file = shellRuns(cmd, shellType).file;
             return file === undefined ? [] : [hidden(file)];
         }
         return shellScriptFiles(program, args).map(hidden);
@@ -430,7 +430,7 @@ class CommandManager {
             let unreadable: CommandCheck | undefined;
             for (const found of running) {
                 unseen.push(...this.findUnseen([found], shellType));
-                const run = shellRuns(found);
+                const run = shellRuns(found, shellType);
                 const texts = [
                     ...sameShellTexts(found, shellType).texts.map((text) => ({ text, runs: shell })),
                     // su -c's text runs in sh, runas's command line as cmd reads it

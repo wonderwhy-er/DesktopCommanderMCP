@@ -279,7 +279,7 @@ function cmdRuns({ words, wordTexts }: FoundCommand): ShellRun {
  */
 export function sameShellTexts(found: FoundCommand, shellType: ShellType): ShellRun {
   const { name, words, wordTexts } = found;
-  const program = programName(name);
+  const program = programName(name, shellType);
   const sameShell = sameShellProgramReadings(program, words);
   if (sameShell) {
     const run = readingsRun(sameShell, found, { script: false });
@@ -315,9 +315,10 @@ export function sameShellTexts(found: FoundCommand, shellType: ShellType): Shell
  * text in a shell (su -c 'sudo ls'): nothing for any other command. Its kind
  * of shell is taken from its name as found, as checkCommand() takes the
  * reader for a text from the shell it is given.
+ * Caller context normalizes the program's name; omission keeps the legacy default.
  */
-export function shellRuns(found: FoundCommand): ShellRun {
-  const program = programName(found.name);
+export function shellRuns(found: FoundCommand, callerShellType?: ShellType): ShellRun {
+  const program = programName(found.name, callerShellType);
   switch (getShellType(found.name)) {
     case 'powershell':
       return powerShellRuns(found, program);
