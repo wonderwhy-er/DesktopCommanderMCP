@@ -134,14 +134,14 @@ test('capability capture rejects scripts and late aliases, anchors PATH and neve
     }
   });
 
-test('existing consumer blocks the reported native programs after the H3 adapter seam', async () => {
+test('consumer blocks reported native programs with the selected range reading', async () => {
   const { commandManager } = await import('../dist/command-manager.js');
   const { configManager } = await import('../dist/config-manager.js');
   const previous = (await configManager.getConfig()).blockedCommands;
   const original = commandManager.readCommands;
   try {
     await configManager.setValue('blockedCommands', ['python3']);
-    // Model ONLY H3's pending internal seam; the production manager is not edited by this owner.
+    // Isolate native range selection; the manager's endpoint transport is checked separately.
     commandManager.readCommands = (command, shell) => readPosixCommands(command, shell);
     for (const shell of ['/bin/bash', '/bin/zsh'].filter((file) => fs.existsSync(file))) {
       const semantics = await posixBraceSemantics(shell);

@@ -27,8 +27,7 @@ function nativeFile(file: string): string | undefined {
   let descriptor: number | undefined;
   try {
     const real = fs.realpathSync(file);
-    if (!fs.statSync(real).isFile()) return undefined;
-    fs.accessSync(real, process.platform === 'win32' ? fs.constants.F_OK : fs.constants.X_OK);
+    if (!isLaunchExecutable(real)) return undefined;
     descriptor = fs.openSync(real, 'r');
     const header = Buffer.alloc(4);
     if (fs.readSync(descriptor, header, 0, 4, 0) !== 4) return undefined;
@@ -89,7 +88,7 @@ for (const file of standards) capture(file);
  * Fixed --version only, on a matching precaptured native endpoint; never caller code or a profile.
  * Native Bash5.2 retains the backslash slot that Bash5.3 omits; other Bash4/5 calls keep legacy rules.
  * Bash3.2 and Zsh5.9 defaults remain supported; startup options and profiles are not evaluated.
- * One bounded query per endpoint (at most32); unknown, unavailable or other versions retain legacy behavior.
+ * One bounded query per endpoint (at most 32); unknown, unavailable or other versions retain legacy behavior.
  */
 export function posixBraceSemantics(shell: string): Promise<BraceSemantics | undefined> {
   const bare = !shell.includes('/') && !shell.includes('\\');
