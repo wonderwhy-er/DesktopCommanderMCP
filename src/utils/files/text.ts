@@ -148,8 +148,16 @@ export class TextFileHandler implements FileHandler {
     static countLines(content: string): number {
         if (content === '') return 0;
         let lines = 1;
-        for (let i = 1; i < content.length; i++) {
-            if (lineBreakBetween(content.charCodeAt(i - 1), content.charCodeAt(i))) lines++;
+        // Keep the same readline-compatible semantics as lineBreakBetween(), but
+        // inline this hot loop so large write_file payloads do not pay a function
+        // call for every UTF-16 code unit. Stop before the final code unit because
+        // a trailing line break terminates the last line; it does not create one.
+        for (let i = 0; i < content.length - 1; i++) {
+            const current = content.charCodeAt(i);
+            if (current === LINE_FEED ||
+                (current === CARRIAGE_RETURN && content.charCodeAt(i + 1) !== LINE_FEED)) {
+                lines++;
+            }
         }
         return lines;
     }

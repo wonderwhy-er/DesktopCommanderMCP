@@ -1,7 +1,7 @@
 import {
     readFile,
     readMultipleFiles,
-    writeFile,
+    writeFileWithMetrics,
     createDirectory,
     listDirectory,
     moveFile,
@@ -12,7 +12,6 @@ import {
     type MultiFileResult
 } from '../tools/filesystem.js';
 import type { ReadOptions } from '../utils/files/base.js';
-import { TextFileHandler } from '../utils/files/text.js';
 
 import { ServerResult } from '../types.js';
 import { withTimeout } from '../utils/withTimeout.js';
@@ -343,17 +342,16 @@ export async function handleWriteFile(args: unknown): Promise<ServerResult> {
         const config = await configManager.getConfig();
         const MAX_LINES = config.fileWriteLineLimit ?? 50; // Default to 50 if not set
 
-        // Lines as read_file counts them: a final line break doesn't start another line
-        const lineCount = TextFileHandler.countLines(parsed.content);
+        // The write path already calculates content metrics for telemetry. Reuse its
+        // line count here instead of scanning the same large string a second time.
+        const { lineCount } = await writeFileWithMetrics(parsed.path, parsed.content, parsed.mode);
+
         let errorMessage = "";
         if (lineCount > MAX_LINES) {
             errorMessage = `✅ File written successfully! (${lineCount} lines)
             
 💡 Performance tip: For optimal speed, consider chunking files into ≤30 line pieces in future operations.`;
         }
-
-        // Pass the mode parameter to writeFile
-        await writeFile(parsed.path, parsed.content, parsed.mode);
 
         // Provide more informative message based on mode
         const modeMessage = parsed.mode === 'append' ? 'appended to' : 'wrote to';
