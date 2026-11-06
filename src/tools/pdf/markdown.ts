@@ -2,6 +2,7 @@ import fs from 'fs/promises';
 import type { ChildProcess } from 'child_process';
 import { randomBytes } from 'crypto';
 import { channel } from 'diagnostics_channel';
+import { errorMonitor, type EventEmitter } from 'events';
 import { existsSync, readdirSync } from 'fs';
 import { createServer, type IncomingMessage, type ServerResponse } from 'http';
 import { createRequire } from 'module';
@@ -392,11 +393,93 @@ function getChromeEnvironment(): Record<string, string | undefined> | undefined 
 interface ChromeProfile {
     /** The Chrome argument that runs Chrome on the profile folder */
     arg: string;
+    /** Failed launches report only process observations, never the render's inputs or child output. */
+    launch: (start: () => Promise<Browser>) => Promise<Browser>;
     /**
      * Call once the render is over: stops the Chrome running on the profile if
      * it still runs, then removes the folder in the background
      */
     release: () => Promise<void>;
+}
+
+/** Unknown values stay unknown; process output is counted without retaining any of its contents. */
+function emptyChromeLaunch(started: number) {
+    return {
+        phase: 'before-owner-cleanup', child: 'unobserved', spawn: 'unobserved', spawnMs: -1,
+        error: 'none', errorMs: -1, exit: 'unobserved', exitMs: -1, exitCode: -1, signal: 'none',
+        stdoutBytes: 0, stderrBytes: 0, elapsedMs: Math.round(performance.now() - started),
+    };
+}
+
+/** Node error codes are useful; error messages and arbitrary properties may contain private inputs. */
+function chromeSpawnError(error: unknown): string {
+    try {
+        const code = (error as NodeJS.ErrnoException)?.code;
+        if (code && ['ENOENT', 'EACCES', 'EPERM', 'EAGAIN', 'ENOMEM'].includes(code)) return code;
+    } catch {
+        // A custom error's property getter must not replace the original spawn error.
+    }
+    return 'other';
+}
+
+/** Stream fragments may contain private text; retain their length only. */
+function chromeOutputBytes(chunk: unknown): number {
+    if (Buffer.isBuffer(chunk)) return chunk.byteLength;
+    return typeof chunk === 'string' ? Buffer.byteLength(chunk) : 0;
+}
+
+/** Subscribe before Node can emit spawn/error; the profile match happens on the following microtask. */
+function observeChromeLaunch(child: ChildProcess, started: number) {
+    const events: EventEmitter = child;
+    const snapshot = emptyChromeLaunch(started);
+    snapshot.child = 'observed';
+    const elapsed = () => Math.round(performance.now() - started);
+    const onSpawn = () => { snapshot.spawn = 'observed'; snapshot.spawnMs = elapsed(); };
+    const onError = (error: unknown) => { snapshot.error = chromeSpawnError(error); snapshot.errorMs = elapsed(); };
+    const onExit = (code: number | null, signal: string | null) => {
+        snapshot.exit = 'observed';
+        snapshot.exitMs = elapsed();
+        snapshot.exitCode = code !== null && Number.isSafeInteger(code) ? code : -1;
+        snapshot.signal = signal && ['SIGTERM', 'SIGKILL', 'SIGABRT', 'SIGINT'].includes(signal) ? signal : 'other';
+        if (signal === null) snapshot.signal = 'none';
+    };
+    const onStdout = (chunk: unknown) => {
+        snapshot.stdoutBytes = Math.min(Number.MAX_SAFE_INTEGER, snapshot.stdoutBytes + chromeOutputBytes(chunk));
+    };
+    const onStderr = (chunk: unknown) => {
+        snapshot.stderrBytes = Math.min(Number.MAX_SAFE_INTEGER, snapshot.stderrBytes + chromeOutputBytes(chunk));
+    };
+    child.on('spawn', onSpawn);
+    events.on(errorMonitor, onError); // An ordinary 'error' listener would suppress an unhandled error.
+    child.on('exit', onExit);
+    return {
+        snapshot: () => ({ ...snapshot, elapsedMs: elapsed() }),
+        readStreams: () => { child.stdout?.on('data', onStdout); child.stderr?.on('data', onStderr); },
+        stop: () => {
+            child.off('spawn', onSpawn);
+            events.off(errorMonitor, onError);
+            child.off('exit', onExit);
+            child.stdout?.off('data', onStdout);
+            child.stderr?.off('data', onStderr);
+        },
+    };
+}
+
+/** Puppeteer may already be closing Chrome: this chronology is evidence, not a cause verdict. */
+async function launchProfileChrome(
+    start: () => Promise<Browser>, snapshot: () => ReturnType<typeof emptyChromeLaunch>,
+) {
+    try {
+        return await start();
+    } catch (error) {
+        try {
+            const failure = error instanceof Error && error.name === 'TimeoutError' ? 'timeout' : 'launch-error';
+            console.error('PDF browser launch diagnostic:', JSON.stringify({ ...snapshot(), failure }));
+        } catch {
+            // A failed diagnostic sink must never hide the launch error the caller needs.
+        }
+        throw error;
+    }
 }
 
 /**
@@ -424,12 +507,23 @@ export async function createChromeProfile(): Promise<ChromeProfile> {
     const dir = await fs.mkdtemp(join(tmpdir(), CHROME_PROFILE_PREFIX));
     const userDataDirArg = `--user-data-dir=${resolve(dir)}`;
     let chrome: ChildProcess | undefined;
+    let observation: ReturnType<typeof observeChromeLaunch> | undefined;
+    const started = performance.now();
+    const pending = new Set<() => void>();
+    let released = false;
     const onChildProcess = (message: unknown) => {
         const child = (message as { process: ChildProcess }).process;
+        const candidate = observeChromeLaunch(child, started);
+        pending.add(candidate.stop);
         // The channel announces a child before spawning it; its arguments are set in the same tick
         queueMicrotask(() => {
-            if (child.spawnargs?.includes(userDataDirArg)) {
+            pending.delete(candidate.stop);
+            if (!released && !chrome && child.spawnargs?.includes(userDataDirArg)) {
                 chrome = child;
+                observation = candidate;
+                candidate.readStreams();
+            } else {
+                candidate.stop();
             }
         });
     };
@@ -437,8 +531,13 @@ export async function createChromeProfile(): Promise<ChromeProfile> {
 
     return {
         arg: userDataDirArg,
+        launch: (start) => launchProfileChrome(start, () => observation?.snapshot() ?? emptyChromeLaunch(started)),
         release: async () => {
+            released = true;
             childProcessChannel.unsubscribe(onChildProcess);
+            for (const stop of pending) stop();
+            pending.clear();
+            observation?.stop();
             await stopChrome(chrome);
             void removeChromeProfile(dir, chrome);
         },
@@ -806,7 +905,8 @@ export async function parseMarkdownToPdf(markdown: string, options: any = {}): P
         profile = await createChromeProfile();
         server = await startRenderServer(basedir);
 
-        browser = await puppeteer.launch({
+        const profileArg = profile.arg;
+        browser = await profile.launch(() => puppeteer.launch({
             // Only the launch options resolveRender allows (ALLOWED_LAUNCH_OPTIONS);
             // Desktop Commander's own settings below come after them
             ...launchOptions,
@@ -817,8 +917,8 @@ export async function parseMarkdownToPdf(markdown: string, options: any = {}): P
             // (launch_options.args is dropped by resolveRender; userDataDir is overridden here)
             userDataDir: undefined,
             // In the Docker image Chromium can't start its sandbox (and as root refuses to start without one); the container keeps it apart
-            args: [profile.arg, ...(isDockerImage() ? ['--no-sandbox'] : [])],
-        });
+            args: [profileArg, ...(isDockerImage() ? ['--no-sandbox'] : [])],
+        }));
         await browser.setCookie({ ...server.cookie, domain: 'localhost', path: '/', httpOnly: true });
 
         // The config mdToPdf() would build, on our server's port

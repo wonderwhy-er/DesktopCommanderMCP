@@ -51,7 +51,9 @@ function assertDetached(child) {
 function readDiagnostic(captured) {
   assert.equal(captured.length, 1, 'One failed launch should emit one bounded diagnostic');
   assert.equal(captured[0][0], diagnosticPrefix);
-  const snapshot = captured[0][1];
+  assert.equal(typeof captured[0][1], 'string', 'The receiver needs one bounded JSON line');
+  assert(captured[0][1].length < 1024 && !captured[0][1].includes('\n'), 'The diagnostic must be one bounded line');
+  const snapshot = JSON.parse(captured[0][1]);
   assert.deepEqual(Object.keys(snapshot).sort(), [
     'child', 'elapsedMs', 'error', 'errorMs', 'exit', 'exitCode', 'exitMs',
     'failure', 'phase', 'signal', 'spawn', 'spawnMs', 'stderrBytes', 'stdoutBytes',
@@ -59,6 +61,16 @@ function readDiagnostic(captured) {
   for (const value of Object.values(snapshot)) {
     assert(['string', 'number'].includes(typeof value), 'Only fixed enums and numbers may leave the observer');
     if (typeof value === 'number') assert(Number.isSafeInteger(value) && value >= -1);
+  }
+  const enums = {
+    phase: ['before-owner-cleanup'], child: ['observed', 'unobserved'], spawn: ['observed', 'unobserved'],
+    error: ['none', 'ENOENT', 'EACCES', 'EPERM', 'EAGAIN', 'ENOMEM', 'other'],
+    exit: ['observed', 'unobserved'], signal: ['none', 'SIGTERM', 'SIGKILL', 'SIGABRT', 'SIGINT', 'other'],
+    failure: ['timeout', 'launch-error'],
+  };
+  for (const [field, allowed] of Object.entries(enums)) assert(allowed.includes(snapshot[field]));
+  for (const event of ['spawn', 'error', 'exit']) {
+    assert(snapshot[`${event}Ms`] <= snapshot.elapsedMs, 'Observed event times cannot follow the snapshot');
   }
   assert(!JSON.stringify(captured).includes(SENTINEL), 'Private inputs and child streams must stay private');
   return snapshot;
@@ -173,14 +185,49 @@ async function diagnosticSinkCannotReplaceFailure() {
   }
 }
 
+async function unsafeValuesStayPrivate(captured) {
+  const profile = await createChromeProfile();
+  const child = fakeChrome(profile);
+  const spawnFailure = new Error(SENTINEL);
+  Object.defineProperty(spawnFailure, 'code', { get() { throw new Error(SENTINEL); } });
+  try {
+    await Promise.resolve();
+    assert.throws(() => child.emit('error', spawnFailure), (error) => error === spawnFailure);
+    child.emit('exit', NaN, SENTINEL);
+    await assert.rejects(launch(profile, async () => { throw spawnFailure; }), (error) => error === spawnFailure);
+    const snapshot = readDiagnostic(captured);
+    assert.equal(snapshot.error, 'other');
+    assert.equal(snapshot.signal, 'other');
+    assert.equal(snapshot.exitCode, -1);
+    assert(!JSON.stringify(captured).includes(profile.arg));
+  } finally {
+    await release(profile, child);
+    assertDetached(child);
+  }
+}
+
+async function releaseBeforeMatchingRemovesListeners(captured) {
+  const profile = await createChromeProfile();
+  const child = fakeChrome(profile);
+  await release(profile, child);
+  await Promise.resolve();
+  assertDetached(child);
+  const late = fakeChrome(profile);
+  await Promise.resolve();
+  assertDetached(late);
+  assert.deepEqual(captured, [], 'Cleanup must not emit diagnostics or observe later children');
+}
+
 export default async function runTests() {
   const captured = [];
   const previous = console.error;
   const failures = [];
+  const subscribedBefore = children.hasSubscribers;
   console.error = (...arguments_) => captured.push(arguments_);
   try {
     for (const check of [timeoutKeepsOriginalFailure, errorsRemainErrors, concurrentProfilesStaySeparate,
-      successIsSilent, absentChildIsExplicit, diagnosticSinkCannotReplaceFailure]) {
+      successIsSilent, absentChildIsExplicit, diagnosticSinkCannotReplaceFailure,
+      unsafeValuesStayPrivate, releaseBeforeMatchingRemovesListeners]) {
       captured.length = 0;
       try { await check(captured); console.log(`PASS ${check.name}`); }
       catch (error) { failures.push(check.name); console.log(`FAIL ${check.name}: ${error.message}`); }
@@ -188,6 +235,7 @@ export default async function runTests() {
   } finally {
     console.error = previous;
   }
+  assert.equal(children.hasSubscribers, subscribedBefore, 'All profile channel subscriptions must be released');
   assert.deepEqual(failures, [], 'Controlled launch diagnostics must preserve failures, privacy and cleanup');
   return true;
 }
