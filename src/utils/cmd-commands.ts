@@ -13,7 +13,7 @@ import type { CommandReading, FoundCommand } from './command-reading.js';
  * - a command's name ends at ; , = and / outside "…", also after ^ (net,user
  *   and sc/query run net and sc), but a name with a drive letter keeps its /
  *   (C:/Windows/System32/sc.exe);
- * - a word with %VAR% in it is known only at run time;
+ * - a word with %VAR% or a possible delayed !VAR! expansion is known only at run time;
  * - if and for run the command after their condition or after "do";
  * - call runs the command after it (call :label runs a label of a batch file,
  *   which no blockedCommands entry names).
@@ -29,7 +29,7 @@ interface Token {
   /** The word as written, quotes and ^ included */
   text: string;
   start: number;
-  /** True when the word has %VAR% in it, so its value is known only at run time */
+  /** True when the word can contain a percent or delayed variable expansion */
   atRunTime: boolean;
   /** How many of a word's first characters are ; , = or @ as written: cmd skips them where a command starts */
   lead?: number;
@@ -37,6 +37,26 @@ interface Token {
   nameEnd?: number;
   /** Where in text the name ends, as nameEnd in value */
   textEnd?: number;
+}
+
+/**
+ * The reader has no delayed-expansion mode, so a possible !VAR! is runtime
+ * information rather than a literal program we can claim to have checked.
+ * Unquoted carets were removed while tokenizing. A remaining caret protects
+ * the next character and interrupts a variable name, as in "!literal^!".
+ */
+function hasDelayedVariable(value: string): boolean {
+  let opening = -1;
+  for (let i = 0; i < value.length; i++) {
+    if (value[i] === '^') {
+      opening = -1;
+      i++;
+    } else if (value[i] === '!') {
+      if (opening >= 0 && i > opening + 1) return true;
+      opening = i;
+    }
+  }
+  return false;
 }
 
 function tokenize(text: string): Token[] {
@@ -95,7 +115,7 @@ function tokenize(text: string): Token[] {
       const lead = /^[;,=@]*/.exec(written)![0].length;
       const drive = /^[A-Za-z]:/.test(value.slice(lead));
       const end = ends.find((at) => at.value >= lead && !(drive && value[at.value] === '/'));
-      const atRunTime = /%[^%\s]+%/.test(written);
+      const atRunTime = /%[^%\s]+%/.test(written) || hasDelayedVariable(value);
       const ending = { nameEnd: end?.value, textEnd: end?.text };
       tokens.push({ kind: 'word', value, text: written, start, atRunTime, lead, ...ending });
     }
