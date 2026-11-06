@@ -204,18 +204,60 @@ export interface ShellSpawnConfig {
 }
 
 /**
+ * Split a shell configuration value into its executable and any extra arguments.
+ *
+ * defaultShell (and the per-call shell parameter) may carry flags, e.g.
+ * "pwsh.exe -NoProfile -NoLogo" or "/bin/bash --norc". Without this split the
+ * whole string is treated as one executable path and the spawn fails. Quotes are
+ * honoured so executable paths containing spaces survive, e.g.
+ * '"C:\\Program Files\\PowerShell\\7\\pwsh.exe" -NoProfile'. See issue #448.
+ * A value that is itself an existing program, such as an unquoted
+ * "C:\\Program Files\\Git\\bin\\bash.exe", is kept whole as it was before.
+ */
+export function splitShellConfig(shell: string): { executable: string; args: string[] } {
+  if (isShellAvailable(shell)) {
+    return { executable: shell.trim(), args: [] };
+  }
+  // Shell-like: quotes group and are stripped, and may sit mid-token
+  // (--rcfile="/tmp/a b"). Backslashes are literal so Windows paths survive.
+  const tokens: string[] = [];
+  let current: string | null = null;
+  let quote: string | null = null;
+  for (const ch of shell) {
+    if (quote) {
+      if (ch === quote) quote = null;
+      else current += ch;
+    } else if (ch === '"' || ch === "'") {
+      quote = ch;
+      current ??= '';
+    } else if (/\s/.test(ch)) {
+      if (current !== null) tokens.push(current);
+      current = null;
+    } else {
+      current = (current ?? '') + ch;
+    }
+  }
+  if (current !== null) tokens.push(current);
+  const [executable = shell, ...args] = tokens;
+  return { executable, args };
+}
+
+/**
  * Get the appropriate spawn configuration for a given shell
  * This handles login shell flags for different shell types
  */
 export function getShellSpawnArgs(shellPath: string, command: string): ShellSpawnConfig {
-  const shellName = path.basename(shellPath).toLowerCase();
-  const executable = resolveProgramPath(shellPath);
+  // The shell value may include arguments (e.g. "pwsh.exe -NoProfile"); match on
+  // the executable name only and keep the caller's extra args ahead of our flags.
+  const { executable: shellExecutable, args: shellArgs } = splitShellConfig(shellPath);
+  const shellName = path.basename(shellExecutable).toLowerCase();
+  const executable = resolveProgramPath(shellExecutable);
 
   // Unix shells with login flag support
   if (shellName.includes('bash') || shellName.includes('zsh')) {
     return {
       executable,
-      args: ['-l', '-c', command],
+      args: [...shellArgs, '-l', '-c', command],
       useShellOption: false
     };
   }
@@ -224,7 +266,7 @@ export function getShellSpawnArgs(shellPath: string, command: string): ShellSpaw
   if (shellName === 'pwsh' || shellName === 'pwsh.exe') {
     return {
       executable,
-      args: ['-Login', '-Command', command],
+      args: [...shellArgs, '-Login', '-Command', command],
       useShellOption: false
     };
   }
@@ -233,7 +275,7 @@ export function getShellSpawnArgs(shellPath: string, command: string): ShellSpaw
   if (shellName === 'powershell' || shellName === 'powershell.exe') {
     return {
       executable,
-      args: ['-Command', command],
+      args: [...shellArgs, '-Command', command],
       useShellOption: false
     };
   }
@@ -242,7 +284,7 @@ export function getShellSpawnArgs(shellPath: string, command: string): ShellSpaw
   if (shellName === 'cmd' || shellName === 'cmd.exe') {
     return {
       executable,
-      args: ['/c', command],
+      args: [...shellArgs, '/c', command],
       windowsVerbatim: true,
       useShellOption: false
     };
@@ -252,7 +294,17 @@ export function getShellSpawnArgs(shellPath: string, command: string): ShellSpaw
   if (shellName.includes('fish')) {
     return {
       executable,
-      args: ['-l', '-c', command],
+      args: [...shellArgs, '-l', '-c', command],
+      useShellOption: false
+    };
+  }
+
+  // Unknown shell with extra args: spawn's shell option can't carry them, so
+  // run it the way that option would (shell -c command) with the args ahead
+  if (shellArgs.length > 0) {
+    return {
+      executable,
+      args: [...shellArgs, '-c', command],
       useShellOption: false
     };
   }
