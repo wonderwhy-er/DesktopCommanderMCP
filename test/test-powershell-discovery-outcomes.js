@@ -64,12 +64,25 @@ describe('PowerShell discovery outcomes', { concurrency: false }, () => {
     });
   });
 
-  test('successful discovery preserves candidate order and protects its cached list', async () => {
-    await withCandidates({ powershell: valid(5), pwsh: valid(7) }, (discover, probes) => {
+  test('successful discovery preserves candidate order', async () => {
+    await withCandidates({ powershell: valid(5), pwsh: valid(7) }, (discover) => {
       const shellNames = discover();
       assert.deepEqual(shellNames, ['powershell', 'pwsh'], 'Keep the existing candidate order and names');
+    });
+  });
+
+  test('successful discovery returns a defensive copy', async () => {
+    await withCandidates({ powershell: valid(5), pwsh: valid(7) }, (discover) => {
+      const shellNames = discover();
       shellNames.length = 0;
       assert.deepEqual(discover(), ['powershell', 'pwsh'], 'Callers cannot modify the cached list');
+    });
+  });
+
+  test('successful discovery caches its version probes', async () => {
+    await withCandidates({ powershell: valid(5), pwsh: valid(7) }, (discover, probes) => {
+      discover();
+      discover();
       assert.equal(probes.length, 2, 'Successful discovery is cached');
     });
   });
