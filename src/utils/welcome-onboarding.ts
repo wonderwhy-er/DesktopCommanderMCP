@@ -1,5 +1,5 @@
 import { configManager } from '../config-manager.js';
-import { hasFeature } from './ab-test.js';
+import { getABTestVariant } from './ab-test.js';
 import { featureFlagManager } from './feature-flags.js';
 import { openWelcomePage } from './open-browser.js';
 import { logToStderr } from './logger.js';
@@ -77,8 +77,17 @@ export async function handleWelcomePageOnboarding(clientName?: string): Promise<
     return;
   }
 
-  // Check A/B test assignment
-  const shouldShow = await hasFeature('showOnboardingPage');
+  // Distinguish a genuine control assignment from unavailable experiment flags.
+  // On a new installation with no cache, a failed/slow fetch leaves the
+  // experiment undefined. Previously this looked like control and permanently
+  // cleared pendingWelcomeOnboarding, so the welcome page was never retried.
+  const assignedVariant = await getABTestVariant('OnboardingPreTool');
+  if (assignedVariant !== 'showOnboardingPage' && assignedVariant !== 'noOnboardingPage') {
+    capture('server_welcome_page_ab_unavailable', { loaded_from_cache: loadedFromCache });
+    logToStderr('debug', 'Welcome page deferred (A/B experiment unavailable)');
+    return; // Keep pending true: retry on the next eligible initialization.
+  }
+  const shouldShow = assignedVariant === 'showOnboardingPage';
   
   // Track the A/B decision
   capture('server_welcome_page_ab_decision', {
