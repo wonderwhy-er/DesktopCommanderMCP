@@ -416,9 +416,16 @@ export default async function run() {
     const request = (eventName, event) => ciReview(['request'], { ...api, GITHUB_EVENT_NAME: eventName, GITHUB_EVENT_PATH: eventFile(eventName, event) }, dir);
     const pr = { number: 7, user: { login: 'mihailt' }, labels: [{ name: 'review' }], head: { sha: HEAD }, base: { sha: BASE } };
 
-    let scriptRun = await request('pull_request', { action: 'synchronize', number: 7, pull_request: pr });
+    let scriptRun = await request('pull_request', { action: 'labeled', label: { name: 'review' }, number: 7, pull_request: pr });
     assert.strictEqual(scriptRun.code, 0, scriptRun.stderr);
-    assert.strictEqual(scriptRun.output, `earlier=line\nreview=true\npr=7\nsha=${HEAD}\nbase=${BASE}\n`, 'a push to a PR labelled review');
+    assert.strictEqual(scriptRun.output, `earlier=line\nreview=true\npr=7\nsha=${HEAD}\nbase=${BASE}\n`, 'adding review requests the PR head');
+    const beforeRetained = github.requests.length;
+    for (const action of ['synchronize', 'reopened', 'unlabeled']) {
+      scriptRun = await request('pull_request', { action, label: { name: 'review' }, number: 7, pull_request: pr });
+      assert.strictEqual(scriptRun.code, 0, scriptRun.stderr);
+      assert.strictEqual(scriptRun.output, 'earlier=line\nreview=false\npr=\nsha=\nbase=\n', `${action}: no review requested`);
+    }
+    assert.strictEqual(github.requests.length, beforeRetained, 'retained or removed labels make no API call');
     scriptRun = await request('issue_comment', { action: 'created', issue: { number: 7, pull_request: {} }, comment: { body: '/review', user: { login: 'serg33v' } } });
     assert.strictEqual(scriptRun.output, `earlier=line\nreview=true\npr=7\nsha=${HEAD}\nbase=${BASE}\n`, 'a comment: the PR\'s head and base from the API');
     const before = github.requests.length;
