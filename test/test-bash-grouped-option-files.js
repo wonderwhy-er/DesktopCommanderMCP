@@ -47,6 +47,8 @@ test('a runtime filename stays unknown after all grouped option values', () => {
 });
 
 test('explicit rcfile interaction, login and suppression controls are preserved', () => {
+  assert.deepEqual(shellScriptFiles('bash', ['--rcfile', 'startup.sh', '-i', 'deploy.sh']),
+    ['startup.sh', 'deploy.sh'], 'distinct startup and main files both remain visible');
   assert.deepEqual(shellScriptFiles('bash', ['--rcfile', 'init.sh', '-i', '-c', 'echo safe']), ['init.sh']);
   for (const options of [['--norc'], ['--login'], ['-l'], ['--posix'], ['-o', 'posix'], ['+i']]) {
     assert.deepEqual(shellScriptFiles('bash', ['--rcfile', 'init.sh', '-i', ...options, '-c', 'echo safe']), []);
@@ -64,7 +66,6 @@ test('the existing command consumer names the actual file after grouped options'
   assert.equal((await commandManager.checkCommand('bash -oo pipefail nounset "$SCRIPT"', 'bash')).verdict, 'unseen');
 });
 
-
 test('runtime option values preserve script-selection uncertainty', () => {
   for (const options of [
     ['-oo', null, 'deploy.sh'],
@@ -72,6 +73,7 @@ test('runtime option values preserve script-selection uncertainty', () => {
     ['-oO', null, 'extglob', 'deploy.sh'],
     ['+oo', null, 'nounset', 'deploy.sh'],
     ['-o', null, 'deploy.sh'],
+    ['--rcfile', null, '-ic', 'echo ready'],
   ]) {
     assert.deepEqual(shellScriptFiles('bash', options), [null], JSON.stringify(options));
   }
@@ -82,6 +84,7 @@ test('the command consumer notes runtime option values instead of claiming compl
     'bash -oo $OPTIONS deploy.sh',
     'bash -oo "$OPTIONS" deploy.sh',
     'bash -oo pipefail "$OPTION" deploy.sh',
+    'bash --rcfile "$RC" -ic "echo ready"',
   ]) {
     assert.deepEqual(await commandManager.checkCommand(command, 'bash'), {
       verdict: 'unseen', unseen: [{ what: 'bash', inFile: false }],
