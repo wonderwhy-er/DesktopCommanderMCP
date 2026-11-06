@@ -12,13 +12,76 @@ import assert from 'assert';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { LoggingMessageNotificationSchema } from '@modelcontextprotocol/sdk/types.js';
 import { runIfMain, skip } from './helpers/run-if-main.js';
-import { closeClient, connectToServer } from './helpers/mcp-client.js';
+import { closeClient } from './helpers/mcp-client.js';
+import { serverTransport } from './helpers/mcp-server.js';
 import { callToolOnceLoaded } from './helpers/heavy-packages.js';
 import { waitUntil } from './helpers/wait.js';
 
 
 const textOf = (result) => result.content?.find((block) => block.type === 'text')?.text ?? '';
+
+/** Observe the existing outer transport; inner browser/PowerShell pipes are not available here. */
+export function createClientDiagnostics(transport, client) {
+  const started = Date.now();
+  let connectedAtMs = null;
+  let closedAtMs = null;
+  let error = null;
+  let stderr = '';
+  let droppedChars = 0;
+  const logs = [];
+  transport.stderr?.on('data', chunk => {
+    const next = stderr + chunk.toString();
+    droppedChars += Math.max(0, next.length - 8192);
+    stderr = next.slice(-8192);
+  });
+  client.onerror = failure => { error = String(failure.message ?? failure).slice(-1024); };
+  client.onclose = () => { closedAtMs = Date.now() - started; };
+  client.setNotificationHandler(LoggingMessageNotificationSchema, notification => {
+    logs.push({ atMs: Date.now() - started, data: JSON.stringify(notification.params).slice(-1024) });
+    if (logs.length > 8) logs.shift();
+  });
+  return {
+    connected() { connectedAtMs = Date.now() - started; },
+    snapshot(check, checkElapsedMs) {
+      return {
+        check, checkElapsedMs, elapsedMs: Date.now() - started, connectedAtMs,
+        server: { pid: transport.pid, closedAtMs, error },
+        stderr: { scope: 'outer MCP server only', tail: stderr, droppedChars },
+        recentServerLogs: [...logs],
+        observability: 'Inner PowerShell/Chrome startup, stderr and exit codes are not exposed by this transport. PowerShell drains its own stderr; the public server close event exposes no exit code.',
+      };
+    },
+  };
+}
+
+function printClientDiagnostics(snapshot, check, elapsedMs) {
+  try {
+    console.error('[client-results diagnostics]', JSON.stringify(snapshot(check, elapsedMs)));
+  } catch (error) {
+    console.error('[client-results diagnostics unavailable]', error.message);
+  }
+}
+
+/** Keep every original check and the aggregate assertion; diagnostics cannot turn a failure into a pass. */
+export async function runClientChecks(checks, client, dir, snapshot) {
+  const failures = [];
+  for (const check of checks) {
+    const started = Date.now();
+    try {
+      await check(client, dir);
+    } catch (error) {
+      failures.push(error);
+      console.error(`✗ ${error.message}`);
+      printClientDiagnostics(snapshot, check.name, Date.now() - started);
+    } finally {
+      console.log(`[client-results timing] ${check.name}: ${Date.now() - started} ms`);
+    }
+  }
+  assert.deepStrictEqual(failures.map((error) => error.message), [], `${failures.length} check(s) failed`);
+}
 
 /** write_pdf with an option Desktop Commander ignores: the answer is the plain success line */
 async function writePdfIgnoringAnOption(client, dir) {
@@ -172,25 +235,28 @@ async function searchStoppedAtMaxResultsSaysSo(client, dir) {
 export default async function runTests() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dc-client-results-'));
   let client;
-  const failures = [];
+  let diagnostics;
+  let connected = false;
   try {
-    client = await connectToServer('client-results-test');
-    for (const check of [
+    const transport = serverTransport();
+    client = new Client({ name: 'client-results-test', version: '1.0.0' }, { capabilities: {} });
+    diagnostics = createClientDiagnostics(transport, client);
+    await client.connect(transport, { timeout: 30_000 });
+    connected = true;
+    diagnostics.connected();
+    await runClientChecks([
       writePdfIgnoringAnOption, processToolsSendOnlyText, startProcessSaysWhatTheCheckSaw, searchToolsSendOnlyText,
       toolDescriptionsAsBefore, searchStoppedAtMaxResultsSaysSo,
-    ]) {
-      try {
-        await check(client, dir);
-      } catch (error) {
-        failures.push(error);
-        console.error(`✗ ${error.message}`);
-      }
+    ], client, dir, diagnostics.snapshot);
+  } catch (error) {
+    if (!connected && diagnostics) {
+      printClientDiagnostics(diagnostics.snapshot, 'server initialization', null);
     }
+    throw error;
   } finally {
     await closeClient(client);
     fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
-  assert.deepStrictEqual(failures.map((error) => error.message), [], `${failures.length} check(s) failed`);
   return true;
 }
 
