@@ -14,6 +14,9 @@ export interface WordChar {
 /** The most words of one expansion the check reads; past that it gives up rather than check part of it */
 export const MAX_BRACE_WORDS = 1000;
 
+/** Default calls retain the historical reading; native capabilities select one range grammar. */
+export type BraceSemantics = 'legacy' | 'bash3' | 'zsh';
+
 /**
  * The most steps one expansion may take, a step being a character looked at
  * to find a brace or one put in a word. The words are bounded by
@@ -51,9 +54,9 @@ export function unquotedChars(text: string): WordChar[] {
  * MAX_BRACE_STEPS steps it gives null, and the reader takes the command as
  * unreadable.
  */
-export function braceWords(chars: WordChar[]): string[] | null {
+export function braceWords(chars: WordChar[], semantics: BraceSemantics = 'legacy'): string[] | null {
   const words: string[] = [];
-  const steps = { left: MAX_BRACE_STEPS };
+  const steps = { left: MAX_BRACE_STEPS, semantics };
   let read = 0;
   try {
     for (const word of expand(chars, steps)) {
@@ -69,7 +72,7 @@ export function braceWords(chars: WordChar[]): string[] | null {
 }
 
 /** The steps an expansion has left (MAX_BRACE_STEPS) */
-type Steps = { left: number };
+type Steps = { left: number; semantics: BraceSemantics };
 
 class TooManySteps extends Error {}
 
@@ -109,7 +112,7 @@ type Brace = { open: number; close: number } & ({ commas: number[] } | { text: s
 /** The words that replace the braces, in order: each piece between the commas, expanded, or the sequence */
 function* middles(chars: WordChar[], brace: Brace, steps: Steps): Generator<ExpandedWord> {
   if ('text' in brace) {
-    for (const text of sequence(brace.text)) yield { text, quoted: false };
+    for (const text of sequence(brace.text, steps.semantics)) yield { text, quoted: false };
     return;
   }
   const bounds = [brace.open, ...brace.commas, brace.close];
@@ -129,6 +132,7 @@ const LETTERS = /^([A-Za-z])\.\.([A-Za-z])(?:\.\.([-+]?\d+))?$/;
  */
 function findBrace(chars: WordChar[], steps: Steps): Brace | null {
   take(steps, chars.length);
+  const { semantics } = steps;
   for (let open = 0; open < chars.length; open++) {
     if (!isSyntax(chars[open], '{')) continue;
     let depth = 0;
@@ -150,33 +154,48 @@ function findBrace(chars: WordChar[], steps: Steps): Brace | null {
     if (commas.length > 0) return { open, close, commas };
     const inside = chars.slice(open + 1, close);
     const text = textOf(inside);
-    if (inside.every((c) => !c.quoted) && (NUMBERS.test(text) || LETTERS.test(text))) return { open, close, text };
+    const range = NUMBERS.exec(text) ?? LETTERS.exec(text);
+    if (semantics === 'zsh' && range && (range[1].startsWith('+') || range[2].startsWith('+'))) continue;
+    if (semantics === 'zsh' && range?.[3] !== undefined
+      && (range[3].startsWith('+') || LETTERS.test(text))) continue;
+    if (inside.every((c) => !c.quoted) && range && !(semantics === 'bash3' && range[3] !== undefined)) {
+      return { open, close, text };
+    }
   }
   return null;
 }
 
 /** The words of a {1..10}, {01..10..2} or {a..e} sequence (findBrace has matched its text) */
-function* sequence(text: string): Generator<string> {
+function* sequence(text: string, semantics: BraceSemantics): Generator<string> {
   const numbers = NUMBERS.exec(text);
   if (numbers) {
     const [, first, last, increment] = numbers;
+    if (semantics === 'zsh' && increment !== undefined && Number(increment) === 0) {
+      yield text;
+      return;
+    }
     // Match bash: a leading zero (after -, not +) pads to the longer endpoint's width, including its sign.
-    const width = /^-?0\d/.test(first) || /^-?0\d/.test(last) ? Math.max(first.length, last.length) : 0;
+    let width = semantics !== 'bash3' && (/^-?0\d/.test(first) || /^-?0\d/.test(last))
+      ? Math.max(first.length, last.length) : 0;
+    // Zsh takes the width from the first padded endpoint, even across a sign change.
+    if (semantics === 'zsh' && width) width = /^-?0\d/.test(first) ? first.length : last.length;
     const pad = (n: number): string => (
       n < 0 ? '-' + String(-n).padStart(width - 1, '0') : String(n).padStart(width, '0')
     );
-    for (const n of range(Number(first), Number(last), increment)) yield pad(n);
+    for (const n of range(Number(first), Number(last), increment, semantics)) yield pad(n);
     return;
   }
   const [, first, last, increment] = LETTERS.exec(text)!;
-  for (const n of range(first.charCodeAt(0), last.charCodeAt(0), increment)) {
-    // bash leaves out the backslash, which lies between "Z" and "a"
-    if (n !== 0x5c) yield String.fromCharCode(n);
+  for (const n of range(first.charCodeAt(0), last.charCodeAt(0), increment, semantics)) {
+    // Bash3 removes the generated backslash after expansion; the legacy reading omits its word.
+    if (n === 0x5c && semantics === 'bash3') yield '';
+    if (n !== 0x5c || semantics === 'zsh') yield String.fromCharCode(n);
   }
 }
 
 /** from, from ± step, … as far as to, in either direction; bash takes a missing or zero step as 1 */
-function* range(from: number, to: number, increment: string | undefined): Generator<number> {
+function* range(from: number, to: number, increment: string | undefined, semantics: BraceSemantics): Generator<number> {
+  if (semantics === 'zsh' && Number(increment) < 0) [from, to] = [to, from];
   const size = Math.abs(Number(increment ?? 1)) || 1;
   const step = from <= to ? size : -size;
   for (let n = from; Math.abs(n - from) <= Math.abs(to - from); n += step) yield n;

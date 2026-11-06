@@ -1,5 +1,7 @@
 import { parse, forEachChild, type SyntaxNode, type Word, type WordPart } from 'unbash';
 import { braceWords, quotedChars, unquotedChars, MAX_BRACE_WORDS, type WordChar } from './brace-expansion.js';
+import { posixBraceSemantics } from './posix-shell-capabilities.js';
+import type { BraceSemantics } from './brace-expansion.js';
 import type { CommandReading, DefinedFunction, FoundCommand } from './command-reading.js';
 
 /**
@@ -111,21 +113,21 @@ function partChars(part: WordPart): WordChar[] {
  * A brace expansion makes several and bash drops the empty ones: {,sudo} ls
  * runs sudo, {,} sudo runs sudo, and {$X,sudo} id runs sudo when $X is empty.
  */
-function wordsMade(word: Word): { value: string | null; mayVanish: boolean }[] | null {
+function wordsMade(word: Word, semantics: BraceSemantics): { value: string | null; mayVanish: boolean }[] | null {
   if (!word.parts?.some((part) => part.type === 'BraceExpansion')) {
     return [{ value: wordValue(word), mayVanish: mayVanish(word) }];
   }
-  const made = braceWords(braceChars(word));
+  const made = braceWords(braceChars(word), semantics);
   return made && made.map((text) => ({ value: text.includes('\0') ? null : text, mayVanish: MAY_VANISH.test(text) }));
 }
 
 type ExpandedWord = { value: string | null; mayVanish: boolean; source: Word };
 
 /** Keep every argument expansion aligned with its source, so wrappers see the words the shell passes */
-function commandWords(words: Word[]): ExpandedWord[] | null {
+function commandWords(words: Word[], semantics: BraceSemantics): ExpandedWord[] | null {
   const expanded: ExpandedWord[] = [];
   for (const source of words) {
-    const made = wordsMade(source);
+    const made = wordsMade(source, semantics);
     if (made === null) return null;
     expanded.push(...made.map((word) => ({ ...word, source })));
   }
@@ -179,8 +181,12 @@ function mayRunUnreadCode(command: FoundCommand): boolean {
   return name === null || (name !== undefined && CODE_RUNNERS.has(name));
 }
 
-/** Reads a command for a POSIX shell */
-export async function readPosixCommands(command: string): Promise<CommandReading> {
+/**
+ * The caller supplies its actual selected native endpoint; no endpoint or unsupported capability
+ * retains the legacy reading exactly. Capability capture happens on import, not after caller changes.
+ */
+export async function readPosixCommands(command: string, selectedShell?: string): Promise<CommandReading> {
+  const semantics = selectedShell === undefined ? 'legacy' : await posixBraceSemantics(selectedShell) ?? 'legacy';
   const script = parse(command);
   let parseError: string | undefined;
   const commands: FoundCommand[] = [];
@@ -191,7 +197,7 @@ export async function readPosixCommands(command: string): Promise<CommandReading
     if (node.type === 'Script') parseError ??= node.errors?.[0]?.message;
     if (node.type === 'Command' && node.name) {
       const words = [node.name, ...node.args.filter((arg): arg is Word => arg.type === 'Word')];
-      const expanded = commandWords(words);
+      const expanded = commandWords(words, semantics);
       if (expanded === null) {
         parseError ??= `brace expansion makes more than ${MAX_BRACE_WORDS} words, or takes too long to read`;
       } else {
