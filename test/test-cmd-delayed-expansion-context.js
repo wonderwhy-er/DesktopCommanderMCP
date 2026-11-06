@@ -18,7 +18,7 @@ beforeEach(() => {
   calls = [];
   configManager.getConfig = async () => ({ blockedCommands: ['!tool!'] });
   // A declared mode-aware reader boundary isolates the shared transport/memo contract.
-  // Actual reader classification is checked by the separately owned A3 regressions.
+  // Actual reader classification is checked by test-cmd-delayed-expansion-runtime.js.
   commandManager.readCommands = async (text, shell, mode = 'unknown') => {
     calls.push({ text, shell, mode });
     if (text === payload) {

@@ -75,10 +75,15 @@ test('existing check reports unseen rather than claiming a delayed name was chec
   assert.equal((await commandManager.checkCommand('echo fixture!', 'cmd')).verdict, 'allowed');
 });
 
-test('a blocked literal bang filename stays blocked when CMD expansion is disabled', async t => {
+test('blocked literal bang names stay blocked in unknown and explicit-off contexts', async t => {
   t.mock.method(configManager, 'getConfig', async () => ({ blockedCommands: ['!tool!'] }));
-  for (const text of ['!tool! harmless', 'cmd /v:off /c "!tool! harmless"']) {
-    assert.equal((await commandManager.checkCommand(text, 'cmd')).verdict, 'blocked', text);
+  for (const [text, mode] of [
+    ['!tool! harmless', undefined],
+    ['!tool! harmless', 'unknown'],
+    ['!tool! harmless', 'off'],
+    ['cmd /v:off /c "!tool! harmless"', undefined],
+  ]) {
+    assert.equal((await commandManager.checkCommand(text, 'cmd', mode)).verdict, 'blocked', `${mode}: ${text}`);
   }
 });
 
