@@ -31,6 +31,8 @@ function posixScriptFile(args: FileWord[]): FileWord | undefined {
         if (/^-[a-zA-Z]*[cs]/.test(arg) || arg === '--command') return undefined;
         const valueOptions = posixValueOptions(arg);
         if (valueOptions.length > 0) {
+            const optionValues = args.slice(i + 1, i + 1 + valueOptions.length);
+            if (optionValues.includes(null)) return null;
             i += valueOptions.length;
             continue;
         }
