@@ -1,4 +1,4 @@
-/** A5 metadata/consumer regression only: no runuser, su, shell script or supplied command executes. */
+/** Check script inspection notes without executing supplied commands. */
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { commandManager } from '../dist/command-manager.js';
