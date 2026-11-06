@@ -372,6 +372,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         Read PDF files and extract content as markdown and images.
                         
                         Suitable for reading authorized local files directly without starting a shell command.
+
+                        PREVIEW ORIGIN:
+                        - 'origin: "ui"' is reserved for the File Preview app's own refresh/navigation calls.
+                        - MCP hosts may surface those UI-origin calls to the model as preview metadata rather than file body content.
+                        - For file content in model context, omit 'origin' (the normal model call) or use 'origin: "llm"'.
                         
                         Supports partial file reading with:
                         - 'offset' (start line, default: 0)
