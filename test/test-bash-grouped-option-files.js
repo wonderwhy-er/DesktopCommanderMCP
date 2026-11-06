@@ -91,3 +91,28 @@ test('the command consumer notes runtime option values instead of claiming compl
     }, command);
   }
 });
+
+test('quoted scalar option values leave a following command mode free of script files', () => {
+  const args = ['-o', null, '-c', 'echo safe'];
+  for (const value of ['"$X"', '"${X}"']) {
+    const written = ['-o', value, '-c', '"echo safe"'];
+    assert.deepEqual(shellScriptFiles('bash', args, { written }), [], value);
+  }
+  for (const value of ['$X', '"$@"', '"${values[@]}"']) {
+    const written = ['-o', value, '-c', '"echo safe"'];
+    assert.deepEqual(shellScriptFiles('bash', args, { written }), [null], value);
+  }
+  assert.deepEqual(shellScriptFiles('bash', args), [null], 'missing source metadata remains conservative');
+});
+
+test('the command consumer distinguishes quoted scalars from word-expanding option values', async () => {
+  for (const value of ['"$X"', '"${X}"']) {
+    assert.deepEqual(await commandManager.checkCommand(`bash -o ${value} -c "echo safe"`, 'bash'),
+      { verdict: 'allowed' }, value);
+  }
+  for (const value of ['$X', '"$@"', '"${values[@]}"']) {
+    assert.deepEqual(await commandManager.checkCommand(`bash -o ${value} -c "echo safe"`, 'bash'), {
+      verdict: 'unseen', unseen: [{ what: 'bash', inFile: false }],
+    }, value);
+  }
+});
