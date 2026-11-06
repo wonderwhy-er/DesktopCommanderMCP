@@ -547,7 +547,7 @@ export function withStartedPrograms(commands: FoundCommand[], shell: string): Fo
 /** The programs a command starts when it is a wrapper: none for any other command */
 function startedPrograms(command: FoundCommand, shell: string): Started[] {
   const shellType = getShellType(shell);
-  const name = programName(command.name);
+  const name = programName(command.name, shellType);
   const { words, written, wordTexts } = command;
   const from = (at: number): Started => ({ words: words.slice(at), written: written.slice(at), wordTexts: wordTexts.slice(at) });
   // runuser -u starts the program and its arguments directly, without a shell's text parsing.
@@ -557,7 +557,7 @@ function startedPrograms(command: FoundCommand, shell: string): Started[] {
   }
   const posix = PROGRAMS.get(name)
     ?? (shellType === 'posix' ? POSIX_SHELL_COMMANDS.get(name) : undefined)
-    ?? (programName(shell) === 'fish' ? FISH_COMMANDS.get(name) : undefined);
+    ?? (programName(shell, shellType) === 'fish' ? FISH_COMMANDS.get(name) : undefined);
   if (posix) return posixPrograms(command, posix);
   // Its own arguments are in -ArgumentList, a text the check doesn't read, so a program Start-Process starts has only its name
   if (shellType === 'powershell' && name === 'start-process') {
