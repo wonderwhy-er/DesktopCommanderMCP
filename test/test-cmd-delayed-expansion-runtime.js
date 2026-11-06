@@ -252,3 +252,33 @@ test('a variable within the whole executable stays uncovered without guessing it
   assert.equal(answer.verdict, 'unseen');
   assert.deepEqual(answer.unseen, [{ what: 'calc!x!', inFile: false }]);
 });
+
+
+for (const text of ['calc/%x%', 'calc,%x%', 'calc;%x%', 'calc=%x%', 'calc/"%x%"', 'calc,"%x%"']) {
+  test(`a percent-variable argument cannot hide a blocked literal executable: ${text}`, async testContext => {
+    testContext.mock.method(configManager, 'getConfig', async () => ({ blockedCommands: ['calc'] }));
+    for (const options of [{}, { cmdDelayedExpansion: 'off' }, { cmdDelayedExpansion: 'on' }]) {
+      const [found] = (await readCmdCommands(text, options)).commands;
+      assert.equal(found.name, 'calc');
+      assert.equal(found.nameAtRunTime, false);
+      assert.equal(found.words[0], 'calc');
+      assert.equal(found.words[1], null, 'the attached argument remains runtime information');
+      assert.deepEqual(await commandManager.checkCommand(text, 'cmd', options), { verdict: 'blocked', name: 'calc' });
+    }
+  });
+}
+
+test('percent variables beginning in the executable remain runtime across a substitution delimiter', async () => {
+  for (const text of ['%x% fixture', '%x:old=new% fixture', 'C:/%x%/fixture.exe']) {
+    const [found] = (await readCmdCommands(text)).commands;
+    assert.equal(found.nameAtRunTime, true, text);
+    assert.equal(found.words[0], null, text);
+  }
+});
+
+test('a percent runtime argument retains source text independently from its literal executable', async () => {
+  const [found] = (await readCmdCommands('calc/%x%')).commands;
+  assert.deepEqual(found.words, ['calc', null]);
+  assert.deepEqual(found.written, ['calc', '/%x%']);
+  assert.deepEqual(found.wordTexts, ['calc', '/%x%']);
+});
