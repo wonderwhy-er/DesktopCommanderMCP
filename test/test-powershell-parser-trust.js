@@ -3,12 +3,12 @@ import childProcess from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { syncBuiltinESMExports } from 'node:module';
+import { before, describe, test } from 'node:test';
 import { configManager } from '../dist/config-manager.js';
 import { startProcess } from '../dist/tools/improved-process-tools.js';
 import { resolveShellPath } from '../dist/utils/shell.js';
 import { readPowerShellCommands, runningPowerShellHelpers } from '../dist/utils/powershell-commands.js';
 import { createTempDir, isTestHome, withEnv } from './helpers/test-env.js';
-import { runIfMain, skip } from './helpers/run-if-main.js';
 
 const blockedToken = 'parser_trust_blocked_fixture';
 const command = "Write-Output 'trusted parser fixture'";
@@ -27,9 +27,9 @@ async function refusedStart(shell) {
   }
 }
 
-async function testActualUntrustedStartup(dir) {
+async function testActualUntrustedStartup(dir, testContext) {
   if (process.platform === 'win32') {
-    skip('The actual executable marker fixture uses a POSIX script; Windows runs the spawn guard and native parser checks');
+    testContext.skip('Actual executable marker uses a POSIX script; Windows runs spawn-guard and native-parser checks');
     return;
   }
   const executable = path.join(dir, 'pwsh');
@@ -44,7 +44,8 @@ exit 23
 `, { mode: 0o700 });
   await withEnv({ PARSER_TRUST_MARKER: parserMarker, PARSER_TRUST_EXECUTION_MARKER: executionMarker }, async () => {
     const result = await refusedStart(executable);
-    assert.equal(fs.existsSync(parserMarker), false, 'The caller-selected program must not start as the parser before refusal');
+    assert.equal(fs.existsSync(parserMarker), false,
+      'The caller-selected program must not start as the parser before refusal');
     assert.equal(fs.existsSync(executionMarker), false, 'The refused command must not start an execution session');
     assert.match(JSON.stringify(result), /trusted PowerShell parser/i);
   });
@@ -65,12 +66,14 @@ async function testSpawnGuardAndMissingNative(dir) {
     try { await readPowerShellCommands(command, fixture); } catch (error) { failure = error; }
     assert.equal(fs.existsSync(marker), false, 'Identity validation must precede every parser spawn');
     assert.match(failure?.message ?? '', /trusted PowerShell parser/i);
-    await assert.rejects(async () => readPowerShellCommands(command, path.join(dir, 'missing', path.basename(fixture))), /trusted PowerShell parser/i);
+    const missingCandidate = path.join(dir, 'missing', path.basename(fixture));
+    await assert.rejects(async () => readPowerShellCommands(command, missingCandidate), /trusted PowerShell parser/i);
     assert.match(JSON.stringify(await refusedStart(fixture)), /trusted PowerShell parser/i);
     assert.equal(fs.existsSync(marker), false, 'start_process must refuse through the reader failure channel');
 
     await withEnv({ PATH: dir }, async () => {
-      assert.match(JSON.stringify(await refusedStart(process.platform === 'win32' ? 'pwsh.exe' : 'pwsh')), /trusted PowerShell parser/i);
+      const bareName = process.platform === 'win32' ? 'pwsh.exe' : 'pwsh';
+      assert.match(JSON.stringify(await refusedStart(bareName)), /trusted PowerShell parser/i);
       assert.equal(fs.existsSync(marker), false, 'Changing PATH after import must not approve a new parser identity');
     });
     const emptyPath = path.join(dir, 'empty-path');
@@ -78,7 +81,8 @@ async function testSpawnGuardAndMissingNative(dir) {
     await withEnv({ PATH: emptyPath }, async () => {
       const isolated = await import('../dist/utils/powershell-commands.js?missing-native-parser');
       await assert.rejects(async () => isolated.readPowerShellCommands(command, fixture), /trusted PowerShell parser/i);
-      assert.equal(fs.existsSync(marker), false, 'No trusted endpoint must never trigger a candidate or alternate parser probe');
+      assert.equal(fs.existsSync(marker), false,
+        'No trusted endpoint must trigger a candidate or alternate parser probe');
     });
   } finally {
     childProcess.spawn = original;
@@ -86,22 +90,25 @@ async function testSpawnGuardAndMissingNative(dir) {
   }
 }
 
-async function testNativeIdentitiesAndCache(dir) {
+async function testNativeIdentitiesAndCache(dir, testContext) {
   const names = process.platform === 'win32' ? ['powershell', 'pwsh'] : ['pwsh'];
-  const installed = names.map((name) => ({ name, program: resolveShellPath(name) })).filter(({ program }) => program !== null);
+  const installed = names.map((name) => ({ name, program: resolveShellPath(name) }))
+    .filter(({ program }) => program !== null);
   if (!installed.length) {
-    skip('No native PowerShell on launch PATH for actual parser identity/profile/cache checks');
+    testContext.skip('No native PowerShell on launch PATH for actual parser identity/profile/cache checks');
     return;
   }
   const seen = new Set();
   for (const { name, program } of installed) {
     const byName = await readPowerShellCommands(command, name);
-    assert.ok(byName.commands.some((found) => found.name.toLowerCase() === 'write-output'), `${name}: actual native AST reading`);
+    assert.ok(byName.commands.some((found) => found.name.toLowerCase() === 'write-output'),
+      `${name}: actual native AST reading`);
     const pids = runningPowerShellHelpers();
     assert.equal(pids.length, seen.size + 1, 'Each native family has its own helper');
     const currentPid = pids.find((pid) => !seen.has(pid));
     seen.add(currentPid);
-    assert.deepEqual(await readPowerShellCommands(command, program), byName, 'Absolute native identity keeps its grammar');
+    assert.deepEqual(await readPowerShellCommands(command, program), byName,
+      'Absolute native identity keeps its grammar');
     const aliasDir = path.join(dir, `alias-${name}`);
     let alias;
     if (process.platform === 'win32') {
@@ -112,13 +119,16 @@ async function testNativeIdentitiesAndCache(dir) {
       alias = path.join(aliasDir, name);
       fs.symlinkSync(program, alias);
     }
-    assert.deepEqual(await readPowerShellCommands(command, alias), byName, 'A matching filesystem alias uses the native parser');
+    assert.deepEqual(await readPowerShellCommands(command, alias), byName,
+      'A matching filesystem alias uses the native parser');
     assert.deepEqual(new Set(runningPowerShellHelpers()), seen, 'Matching aliases reuse the same native helper');
     console.log(`✓ ${name}: native AST, absolute path, filesystem alias and helper cache`);
   }
 }
 
-async function testRelativeLaunchPath(dir) {
+let launchFixtureSequence = 0;
+
+async function withLaunchAuthority(dir, runBehavior) {
   const launchDirectory = path.join(dir, 'launch-directory');
   const otherDirectory = path.join(dir, 'other-directory');
   fs.mkdirSync(path.join(launchDirectory, 'bin'), { recursive: true });
@@ -127,23 +137,18 @@ async function testRelativeLaunchPath(dir) {
   fs.writeFileSync(executable, 'trusted launch-PATH fixture, never executed', { mode: 0o700 });
   const originalDirectory = process.cwd();
   const originalSpawn = childProcess.spawn;
-  let attemptedProgram;
-  let attemptedDirectory;
+  const launches = [];
   childProcess.spawn = (program, args, options) => {
-    attemptedProgram = program;
-    attemptedDirectory = options.cwd;
-    throw new Error('relative PATH spawn intercepted');
+    launches.push({ program, cwd: options.cwd });
+    throw new Error('launch-PATH spawn intercepted');
   };
   syncBuiltinESMExports();
   try {
     await withEnv({ PATH: 'bin' }, async () => {
       process.chdir(launchDirectory);
-      const isolated = await import('../dist/utils/powershell-commands.js?relative-launch-path');
+      const reader = await import(`../dist/utils/powershell-commands.js?launch-fixture=${++launchFixtureSequence}`);
       process.chdir(otherDirectory);
-      await assert.rejects(async () => isolated.readPowerShellCommands(command, executable), /spawn intercepted/);
-      assert.ok(path.isAbsolute(attemptedProgram), 'Launch-PATH approval must retain an absolute executable');
-      assert.equal(fs.realpathSync(path.resolve(attemptedDirectory, attemptedProgram)), fs.realpathSync(executable),
-        'The helper must launch the approved identity even though its cwd differs from the launch cwd');
+      await runBehavior({ reader, executable, otherDirectory, launches });
     });
   } finally {
     process.chdir(originalDirectory);
@@ -152,15 +157,58 @@ async function testRelativeLaunchPath(dir) {
   }
 }
 
-export default async function runTests() {
-  if (!isTestHome()) throw new Error('Run through test/run-all-tests.js so profiles and configuration use an isolated home');
+async function expectApprovedParser({ reader, requested, executable, launches }) {
+  const before = launches.length;
+  await assert.rejects(async () => reader.readPowerShellCommands(command, requested), /spawn intercepted/);
+  assert.equal(launches.length, before + 1);
+  const launch = launches.at(-1);
+  assert.ok(path.isAbsolute(launch.program), 'Launch-PATH approval must retain an absolute executable');
+  assert.equal(fs.realpathSync(path.resolve(launch.cwd, launch.program)), fs.realpathSync(executable));
+}
+
+async function testRelativeLaunchPath(dir) {
+  await withLaunchAuthority(dir, async (fixture) => {
+    const { reader, executable, otherDirectory, launches } = fixture;
+    await expectApprovedParser({ ...fixture, requested: executable });
+    const bareName = process.platform === 'win32' ? 'pwsh.exe' : 'pwsh';
+    await expectApprovedParser({ ...fixture, requested: bareName });
+    const impostor = path.join(otherDirectory, 'bin', path.basename(executable));
+    fs.mkdirSync(path.dirname(impostor));
+    fs.writeFileSync(impostor, 'different current-cwd executable, never run', { mode: 0o700 });
+    const before = launches.length;
+    await assert.rejects(async () => reader.readPowerShellCommands(command, bareName), /trusted PowerShell parser/i);
+    await assert.rejects(async () => reader.readPowerShellCommands(command, impostor), /trusted PowerShell parser/i);
+    assert.equal(launches.length, before, 'A resolved impostor must not use the native-name fallback');
+  });
+}
+
+async function testFilesystemIdentityBounds(dir) {
+  await withLaunchAuthority(dir, async (fixture) => {
+    const { reader, executable, launches } = fixture;
+    const aliasDirectory = path.join(dir, 'filesystem-alias');
+    const alias = path.join(aliasDirectory, path.basename(executable));
+    if (process.platform === 'win32') fs.symlinkSync(path.dirname(executable), aliasDirectory, 'junction');
+    else {
+      fs.mkdirSync(aliasDirectory);
+      fs.symlinkSync(executable, alias);
+    }
+    await expectApprovedParser({ ...fixture, requested: alias });
+    const linkDirectory = path.join(dir, 'hard-link');
+    fs.mkdirSync(linkDirectory);
+    const hardLink = path.join(linkDirectory, path.basename(executable));
+    fs.linkSync(executable, hardLink);
+    assert.notEqual(fs.realpathSync(hardLink), fs.realpathSync(executable), 'Hard links retain different real paths');
+    const before = launches.length;
+    await assert.rejects(async () => reader.readPowerShellCommands(command, hardLink), /trusted PowerShell parser/i);
+    assert.equal(launches.length, before, 'Canonical-path policy must not silently approve a hard-link alias');
+  });
+}
+
+async function withParserFixture(runBehavior) {
   const dir = createTempDir('dc-test-parser-trust-');
   const before = new Set(runningPowerShellHelpers());
   try {
-    await testActualUntrustedStartup(dir);
-    await testSpawnGuardAndMissingNative(dir);
-    await testRelativeLaunchPath(dir);
-    await testNativeIdentitiesAndCache(dir);
+    await runBehavior(dir);
   } finally {
     for (const pid of runningPowerShellHelpers()) {
       if (!before.has(pid)) {
@@ -169,8 +217,28 @@ export default async function runTests() {
     }
     fs.rmSync(dir, { recursive: true, force: true });
   }
-  console.log('✓ Untrusted PowerShell identities refuse before parser launch; available native identities retain their readings');
-  return true;
 }
 
-runIfMain(import.meta.url, runTests);
+describe('PowerShell parser trust', { concurrency: false }, () => {
+  before(() => assert.ok(isTestHome(), 'Use test/run-all-tests.js for an isolated home'));
+
+  test('a custom executable never starts before start_process refuses it', async (testContext) => {
+    await withParserFixture((dir) => testActualUntrustedStartup(dir, testContext));
+  });
+
+  test('identity mismatches and unavailable parser endpoints never trigger a probe', async () => {
+    await withParserFixture(testSpawnGuardAndMissingNative);
+  });
+
+  test('relative launch PATH survives cwd changes without approving a current-cwd impostor', async () => {
+    await withParserFixture(testRelativeLaunchPath);
+  });
+
+  test('filesystem symlinks or junctions match canonical paths while hard-link names remain distinct', async () => {
+    await withParserFixture(testFilesystemIdentityBounds);
+  });
+
+  test('native identities and aliases preserve readings and helper caches', async (testContext) => {
+    await withParserFixture((dir) => testNativeIdentitiesAndCache(dir, testContext));
+  });
+});

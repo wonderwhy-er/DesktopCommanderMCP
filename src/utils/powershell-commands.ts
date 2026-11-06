@@ -426,9 +426,21 @@ const nativeParsers = (process.platform === 'win32' ? ['powershell', 'pwsh'] : [
     const program = resolveShellPath(name);
     if (program === null) return [];
     // Relative PATH entries belong to the launch cwd, not the helper's mcpRoot cwd.
-    try { return [{ program: path.resolve(program), identity: parserIdentity(program) }]; }
-    catch { return []; }
+    try { return [{ name, program: path.resolve(program), identity: parserIdentity(program) }]; }
+    catch {
+      // An endpoint may disappear or become unreadable after lookup. Omitting it denies approval.
+      return [];
+    }
   });
+
+function launchParserForBareName(shell: string) {
+  const requestedName = shell.trim();
+  if (requestedName.includes('/') || requestedName.includes('\\')) return undefined;
+  const name = process.platform === 'win32'
+    ? requestedName.toLowerCase().replace(/\.exe$/, '')
+    : requestedName;
+  return nativeParsers.find((parser) => parser.name === name);
+}
 
 /**
  * Reads a command for a PowerShell shell ("powershell.exe", "pwsh" or a path),
@@ -437,12 +449,17 @@ const nativeParsers = (process.platform === 'win32' ? ['powershell', 'pwsh'] : [
  */
 export function readPowerShellCommands(command: string, shell: string): Promise<CommandReading> {
   const requested = resolveShellPath(shell);
-  let identity: string | undefined;
+  // A bare native name can retain its launch binding when relative PATH entries
+  // stop resolving after chdir. A currently resolved different program is never replaced.
+  let identity = requested === null ? launchParserForBareName(shell)?.identity : undefined;
   try { if (requested !== null) identity = parserIdentity(requested); }
   catch { /* A missing or unreadable identity cannot approve a parser. */ }
   const native = nativeParsers.find((parser) => parser.identity === identity);
   if (!native) {
-    throw new Error(`No trusted PowerShell parser matches "${shell}"; use a PowerShell executable from the server's launch PATH`);
+    throw new Error(
+      `No trusted PowerShell parser matches "${shell}"; ` +
+      'use a PowerShell executable from the server\'s launch PATH'
+    );
   }
   // An alias keeps the launch flags its requested name uses for execution. A
   // PowerShell 7 login helper must not share state with a non-login alias.
