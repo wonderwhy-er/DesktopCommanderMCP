@@ -62,3 +62,11 @@ test('forwarded blocked command text is still refused', () => withFixture(async 
     verdict: 'blocked', name: 'fixture_blocked',
   });
 }));
+
+test('ordinary POSIX backslash program is not reported as a forwarded shell script', {
+  skip: process.platform === 'win32' ? 'Literal backslash filename requires a POSIX filesystem' : false,
+}, () => withFixture(async () => {
+  assert.deepEqual(await commandManager.checkCommand(String.raw`'bin\bash' deploy.sh`, 'bash'), {
+    verdict: 'allowed',
+  });
+}));
