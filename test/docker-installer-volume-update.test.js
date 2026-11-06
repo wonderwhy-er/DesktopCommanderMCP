@@ -93,6 +93,11 @@ try {
         result.status === exitCode ? '' : `exit code ${result.status}, docker calls: ${calls.join(' | ')}`);
       check(`${installer.name}, ${name}: ${copies ? 'copies into dc-system' : "doesn't copy into dc-system"}`, copied === copies);
       if (!copies) check(`${installer.name}, ${name}: says nothing was changed`, output.includes('Nothing was changed'));
+      const stopFailureObserved = output.includes('Docker stop exited 1')
+        && output.includes('Error response from daemon: the stand-in docker stop failed');
+      check(`${installer.name}, ${name}: preserves the failed Bash stop reason and status`,
+        installer.name !== 'install-docker.sh' || fail !== 'stop' || stopFailureObserved,
+        fail === 'stop' ? output.trim().slice(-1000) : '');
     }
   }
 } finally {
