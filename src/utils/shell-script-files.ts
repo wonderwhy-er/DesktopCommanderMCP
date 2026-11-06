@@ -110,7 +110,8 @@ export function shellScriptFiles(program: string, args: FileWord[]): FileWord[] 
         const startup = program === 'bash' ? bashStartupFile(args) : undefined;
         const script = posixScriptFile(args);
         if (startup !== undefined) files.push(startup);
-        if (script !== undefined) files.push(script);
+        // Both unknown file roles share the same program-level inspection notice.
+        if (script !== undefined && (script !== null || startup !== null)) files.push(script);
         return files;
     }
     if (getShellType(program) === 'powershell') {
