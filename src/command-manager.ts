@@ -318,7 +318,7 @@ class CommandManager {
      * - a program chosen only when the command runs: a name that is a variable
      *   or another command's output (& $tool), or eval and Invoke-Expression,
      *   which run text the command builds (eval "$CMD");
-     * - a script file given to a shell (bash deploy.sh): the commands in it
+     * - a script file given to a shell (bash deploy.sh, or forwarded by runuser): the commands in it
      *   aren't in the text. A file named only when the command runs ("$SCRIPT")
      *   counts as a program chosen at run time, named by the shell.
      */
@@ -333,7 +333,7 @@ class CommandManager {
             unseen.push(...files);
             const run = shellRuns(cmd);
             // A text-program shell can identify a script that the ordinary file reader does not handle.
-            if (files.length === 0 && typeof run.file === 'string') {
+            if (files.length === 0 && run.shell !== undefined && typeof run.file === 'string') {
                 unseen.push({ what: run.file, inFile: true });
             }
             const unknown = sameShellTexts(cmd, shellType).file === null || run.file === null;
