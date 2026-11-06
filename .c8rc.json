@@ -4,15 +4,14 @@
     "src/**",
     "setup-claude-server.js",
     "uninstall-claude-server.js",
-    "track-installation.js",
-    "vendor/telemetry-contract/**"
+    "track-installation.js"
   ],
   "exclude": [
     "**/*.d.ts",
-    "vendor/**/*.test.js",
     "src/types.ts",
     "src/ui/file-preview/src/model.ts",
     "src/ui/file-preview/src/types.ts",
+    "src/utils/command-reading.ts",
     "src/utils/files/base.ts"
   ],
   "exclude-after-remap": true,

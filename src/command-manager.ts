@@ -1,6 +1,38 @@
 import path from 'path';
 import {configManager} from './config-manager.js';
 import {capture} from "./utils/capture.js";
+import {getShellType, isShellAvailable, programName, type ShellType} from './utils/shell.js';
+import {sameShellTexts, shellRuns} from './utils/inline-shells.js';
+import {shellScriptFiles} from './utils/shell-script-files.js';
+import {readPosixCommands} from './utils/posix-commands.js';
+import {readPowerShellCommands} from './utils/powershell-commands.js';
+import {readCmdCommands} from './utils/cmd-commands.js';
+import {withStartedPrograms} from './utils/command-wrappers.js';
+import type {CommandReading, FoundCommand} from './utils/command-reading.js';
+
+/**
+ * The check's answer for one command.
+ * - allowed: no blocked program runs.
+ * - blocked: `name` is the blockedCommands entry that one of the programs matched.
+ * - unseen: allowed, but some program is chosen only when the command runs
+ *   (eval "$CMD", Invoke-Expression $cmd, & $tool) or is in a script file
+ *   (bash deploy.sh). Each entry of `unseen` says what hides one of them.
+ * - failed: the check couldn't read the command or the settings, and
+ *   `reason` holds the error's message.
+ */
+export type CommandCheck =
+  | { verdict: 'allowed' }
+  | { verdict: 'blocked'; name: string }
+  | { verdict: 'unseen'; unseen: UnseenProgram[] }
+  | { verdict: 'failed'; reason: string };
+
+/** Something in a command that hides the program it runs from the check */
+export interface UnseenProgram {
+  /** What hides it, as the shell reads it (in PowerShell, an alias's target): "eval", "Invoke-Expression", "$tool" or "deploy.sh" */
+  what: string;
+  /** True for a script/startup file given to a shell; false for a program chosen at runtime. */
+  inFile: boolean;
+}
 
 class CommandManager {
 
@@ -231,39 +263,214 @@ class CommandManager {
         }
     }
 
-    async validateCommand(command: string): Promise<boolean> {
+    /**
+     * Reads a command with the grammar of the shell that will run it: POSIX
+     * shells (bash, zsh, sh, …), PowerShell, or cmd. fish is read with the
+     * bash reader, and where that can't parse fish's own syntax (for … end,
+     * echo (date)), as main reads it: by the names extractCommands() finds.
+     */
+    async readCommands(command: string, shell: string): Promise<CommandReading> {
+        switch (getShellType(shell)) {
+            case 'powershell':
+                return readPowerShellCommands(command, shell);
+            case 'cmd':
+                return readCmdCommands(command);
+        }
+        const reading = await readPosixCommands(command);
+        // fish's name, as getShellSpawnArgs() finds it
+        if (reading.parseError === undefined || !path.basename(shell).toLowerCase().includes('fish')) return reading;
+        const { parseError, ...read } = reading;
+        const names = this.extractCommands(command);
+        return {
+            ...read,
+            commands: (names.length > 0 ? names : [this.getBaseCommand(command)])
+                .map((name, start) => ({
+                    name, words: [name], written: [name], wordTexts: [name], start, nameAtRunTime: false
+                })),
+        };
+    }
+
+    /**
+     * The commands of a reading that run a program: the calls to the script's
+     * own functions are left out. A script can define a function with a
+     * program's name, such as an error helper named halt, and the shell then
+     * runs the function, not the program. A call is the function's when it
+     * comes after the definition, its name as written has no folder
+     * (/sbin/halt is the program), and the reader lists the function, so not
+     * one the text may remove. PowerShell finds a function whatever the case
+     * of its name, POSIX shells only by its exact name. The function's body is
+     * read as commands of its own, so a blocked program inside it is still
+     * found.
+     */
+    private withoutOwnFunctionCalls(reading: CommandReading, shellType: ShellType): FoundCommand[] {
+        const sameName = (a: string, b: string) =>
+            shellType === 'powershell' ? a.toLowerCase() === b.toLowerCase() : a === b;
+        return reading.commands.filter((cmd) => {
+            const written = cmd.words[0];
+            if (written === null || written.includes('/') || written.includes('\\')) return true;
+            return !reading.functions.some((fn) => sameName(fn.name, written) && cmd.start >= fn.end);
+        });
+    }
+
+    /**
+     * What hides a program from the check among the commands that run
+     * (CommandCheck's `unseen`), in the order the commands start:
+     * - a program chosen only when the command runs: a name that is a variable
+     *   or another command's output (& $tool), or eval and Invoke-Expression,
+     *   which run text the command builds (eval "$CMD");
+     * - a script file given to a shell (bash deploy.sh): the commands in it
+     *   aren't in the text. A file named only when the command runs ("$SCRIPT")
+     *   counts as a program chosen at run time, named by the shell.
+     */
+    private findUnseen(commands: FoundCommand[], shellType: ShellType): UnseenProgram[] {
+        const unseen: UnseenProgram[] = [];
+        for (const cmd of commands) {
+            if (cmd.nameAtRunTime) {
+                unseen.push({ what: cmd.name, inFile: false });
+                continue;
+            }
+            unseen.push(...this.scriptFiles(cmd, shellType));
+            const unknown = sameShellTexts(cmd, shellType).file === null || shellRuns(cmd).file === null;
+            if (unknown && !unseen.some((item) => item.what === cmd.name && !item.inFile)) {
+                unseen.push({ what: cmd.name, inFile: false });
+            }
+        }
+        return unseen;
+    }
+
+    /**
+     * What hides the program when a command gives a shell a script or startup file to run
+     * (bash deploy.sh, pwsh -File deploy.ps1, source deploy.sh), or when
+     * PowerShell runs one named as the command (./deploy.ps1): the file, or the
+     * shell when the file is named only when the command runs ("$SCRIPT").
+     * A shell's command text or standard input adds no file. An explicit Bash
+     * startup file can still run beside command text in interactive mode.
+     */
+    private scriptFiles(cmd: FoundCommand, shellType: ShellType): UnseenProgram[] {
+        const program = programName(cmd.name, shellType);
+        const args = cmd.words.slice(1);
+        const hidden = (file: string | null): UnseenProgram => {
+            return file === null ? { what: cmd.name, inFile: false } : { what: file, inFile: true };
+        };
+        if (shellType === 'posix' && (program === 'source' || program === '.')) {
+            return args[0] === undefined ? [] : [hidden(args[0])];
+        }
+        // PowerShell runs a .ps1 named as the command (./deploy.ps1, & ./deploy.ps1) as a script file
+        if (shellType === 'powershell' && /\.ps1$/i.test(cmd.name)) {
+            return [hidden(cmd.name)];
+        }
+        // PowerShell text and file modes use the same host-option readings.
+        if (getShellType(cmd.name) === 'powershell') {
+            const file = shellRuns(cmd).file;
+            return file === undefined ? [] : [hidden(file)];
+        }
+        return shellScriptFiles(program, args).map(hidden);
+    }
+
+    /**
+     * The check's answer for `command` run by `shell`:
+     * - allowed: no program it runs is blocked.
+     * - blocked: a program it runs is in blockedCommands, both compared in the
+     *   form programName() gives; the answer names the entry as written (a call
+     *   to the script's own function is not the program: see withoutOwnFunctionCalls).
+     * - unseen: allowed, but a program is chosen only when the command runs or
+     *   is in a script file (see findUnseen), so start_process can say the
+     *   blocklist couldn't check it.
+     * - failed: the command or the settings can't be read. In PowerShell a parse
+     *   error or a missing PowerShell is allowed instead: nothing runs, and
+     *   PowerShell or start_process answers.
+     */
+    checkCommand(command: string, shell: string): Promise<CommandCheck> {
+        return this.checkText(command, shell, new Map());
+    }
+
+    /**
+     * checkCommand() for a command, or for a command text in it: each text is
+     * checked once per command in each shell, however many readings give it.
+     * In pwsh $a pwsh $a … each text gives every later one again, so without
+     * this the work doubled with each pair.
+     */
+    private checkText(command: string, shell: string, checked: Map<string, Promise<CommandCheck>>): Promise<CommandCheck> {
+        const key = `${shell}\0${command}`;
+        let check = checked.get(key);
+        if (check === undefined) {
+            check = this.checkOnce(command, shell, checked);
+            checked.set(key, check);
+        }
+        return check;
+    }
+
+    private async checkOnce(command: string, shell: string, checked: Map<string, Promise<CommandCheck>>): Promise<CommandCheck> {
         try {
-            // Get blocked commands from config
             const config = await configManager.getConfig();
             const blockedCommands = config.blockedCommands || [];
-            
-            // Extract all commands from the command string
-            const allCommands = this.extractCommands(command);
-            
-            // If there are no commands extracted, fall back to base command
-            if (allCommands.length === 0) {
-                const baseCommand = this.getBaseCommand(command);
-                return !blockedCommands.includes(baseCommand);
+
+            const shellType = getShellType(shell);
+            // PowerShell runs nothing when it isn't there or can't parse the command: it, or start_process, answers
+            if (shellType === 'powershell' && !isShellAvailable(shell)) return { verdict: 'allowed' };
+            const reading = await this.readCommands(command, shell);
+            // A parse error is the command's fault, not the server's, so it isn't logged or sent
+            if (reading.parseError !== undefined) {
+                return shellType === 'powershell'
+                    ? { verdict: 'allowed' }
+                    : { verdict: 'failed', reason: reading.parseError };
             }
-            
-            // Check if any of the extracted commands are in the blocked list
-            for (const cmd of allCommands) {
-                if (blockedCommands.includes(cmd)) {
-                    return false; // Command is blocked
+
+            const running = withStartedPrograms(this.withoutOwnFunctionCalls(reading, shellType), shell);
+            // set_config_value checks only that the list is an array
+            const entries = blockedCommands.filter((entry): entry is string => typeof entry === 'string');
+            for (const found of running) {
+                // A name known only at run time ($tool) names no program the list could match
+                if (found.nameAtRunTime) continue;
+                const program = programName(found.name, shellType);
+                const entry = entries.find((candidate) => programName(candidate, shellType) === program);
+                if (entry !== undefined) return { verdict: 'blocked', name: entry };
+            }
+            const unseen: UnseenProgram[] = [];
+            let unreadable: CommandCheck | undefined;
+            for (const found of running) {
+                unseen.push(...this.findUnseen([found], shellType));
+                const run = shellRuns(found);
+                const texts = [
+                    ...sameShellTexts(found, shellType).texts.map((text) => ({ text, runs: shell })),
+                    // su -c's text runs in sh, runas's command line as cmd reads it
+                    ...run.texts.map((text) => ({ text, runs: run.shell ?? found.name })),
+                ];
+                for (const { text, runs } of texts) {
+                    // The shell that runs the command looks a PowerShell's name up itself, in its working folder
+                    // too: one the check can't find is read by the PowerShell running the command, when that is one
+                    const reader = getShellType(runs) !== 'powershell' ? runs
+                        : [runs, shell].find((candidate) => getShellType(candidate) === 'powershell' && isShellAvailable(candidate));
+                    const inner: CommandCheck = reader === undefined
+                        ? { verdict: 'failed', reason: `${runs} isn't installed here, so the command given to it can't be read` }
+                        : await this.checkText(text, reader, checked);
+                    if (inner.verdict === 'blocked') return inner;
+                    if (inner.verdict === 'failed') unreadable ??= inner;
+                    if (inner.verdict === 'unseen') unseen.push(...inner.unseen);
                 }
             }
-            
-            // No commands were blocked
-            return true;
+            if (unreadable) return unreadable;
+            return unseen.length > 0 ? { verdict: 'unseen', unseen } : { verdict: 'allowed' };
         } catch (error) {
+            const reason = error instanceof Error ? error.message : String(error);
             console.error('Error validating command:', error);
             capture('server_validate_command_error', {
-                error: error instanceof Error ? error.message : String(error)
+                error: reason
             });
             // Fail closed: deny the command if validation encounters an error.
             // This prevents a config read failure from bypassing all command filtering.
-            return false;
+            return { verdict: 'failed', reason };
         }
+    }
+
+    /** Whether a check's answer refuses the command */
+    isRefused(check: CommandCheck): check is Extract<CommandCheck, { verdict: 'blocked' | 'failed' }> {
+        return check.verdict === 'blocked' || check.verdict === 'failed';
+    }
+
+    /** Whether the command may run in `shell`: the check doesn't refuse it */
+    async validateCommand(command: string, shell: string): Promise<boolean> {
+        return !this.isRefused(await this.checkCommand(command, shell));
     }
 }
 
