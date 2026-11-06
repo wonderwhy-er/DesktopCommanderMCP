@@ -2,6 +2,7 @@
  * Server-side UI resource loading helpers for MCP responses. It resolves packaged UI assets, reads files safely, and exposes structured resource payloads to clients.
  */
 import fs from 'fs/promises';
+import { gzipSync } from 'node:zlib';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import {
@@ -94,6 +95,21 @@ async function readInlinedResourceHtml(distDir: string, runtimeFileName: string)
 
 export async function getFilePreviewResourceText(): Promise<string> {
     return readInlinedResourceHtml(DIST_FILE_PREVIEW_DIR, 'preview-runtime.js');
+}
+
+let cachedFullPreviewRuntime: Promise<string> | undefined;
+
+/** Serve only our bundled viewer, gzip+base64, on an explicit UI request. */
+export function getCompressedFilePreviewRuntime(): Promise<string> {
+    if (!cachedFullPreviewRuntime) {
+        cachedFullPreviewRuntime = fs.readFile(path.join(DIST_FILE_PREVIEW_DIR, 'preview-full-runtime.js'))
+            .then(bytes => gzipSync(bytes, { level: 6 }).toString('base64'))
+            .catch(error => {
+                cachedFullPreviewRuntime = undefined;
+                throw error;
+            });
+    }
+    return cachedFullPreviewRuntime;
 }
 
 export async function getConfigEditorResourceText(): Promise<string> {
