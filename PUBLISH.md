@@ -5,8 +5,8 @@ Releases are published by CI (`.github/workflows/release.yml`). A release goes t
 
 1. **npm** — `@wonderwhy-er/desktop-commander`
 2. **GitHub release** — with the `desktop-commander-<version>.mcpb` asset attached
-3. **Claude directory** — Anthropic's scanner picks the `.mcpb` off the GitHub
-   release automatically (validation on their side takes a few days)
+3. **Claude directory** — GitHub releases expose the MCPB asset for Anthropic's
+   directory pipeline; actual ingestion depends on Anthropic and must be verified
 4. **MCP Registry** — `io.github.wonderwhy-er/desktop-commander`
 
 **Who can release:** anyone with write (push) access to this repository. Both the
@@ -131,6 +131,34 @@ intentionally refuses pre-release tags. After alpha testing, reset the version
 files to a stable version before the next regular release.
 
 Install an alpha with: `npm install -g @wonderwhy-er/desktop-commander@alpha`
+
+## Repository-root MCPB manifest (discovery experiment)
+
+The repository includes [`manifest.json`](manifest.json) at its root to make
+**the most recently published stable MCPB metadata** discoverable without downloading
+an archive. This mirrors the layout used by some other MCPB projects but is an
+**experiment**, not a documented Claude directory-update trigger.
+
+- `manifest.template.json` remains the source of truth for MCPB metadata.
+- `npm run sync-version` (and `npm run bump`) regenerates the root manifest
+  when `package.json` contains a stable `X.Y.Z` version. The release scripts
+  include the regenerated file in the release commit.
+- While the working tree is on an alpha/beta version, the root manifest deliberately
+  stays at the last stable release. Never advertise prerelease metadata to
+  an unknown external directory crawler.
+- The root copy omits `$schema` because its relative path is valid only for
+  the bundle build directory. The actual `.mcpb` is still assembled from the
+  template by `scripts/build-mcpb.cjs`.
+- Release CI checks that the root manifest and the bundled manifest match
+  (ignoring the bundle-only `$schema`) before publishing.
+
+**Important:** The [official MCPB spec](https://github.com/modelcontextprotocol/mcpb/blob/main/MANIFEST.md)
+requires `manifest.json` *inside the bundle*, not at the GitHub root.
+There is no verified documentation that a root manifest or an npm update causes
+Anthropic to refresh a directory listing. Directory publishing and the existing
+Anthropic escalation remain separate operational steps.
+
+---
 
 ## Release notes
 

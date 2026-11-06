@@ -254,7 +254,7 @@ jobs:
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add package.json server.json src/version.ts
+          git add package.json server.json src/version.ts manifest.json
           git commit -m "Release v$VERSION
 
           Automated release commit with version bump from $CURRENT to $VERSION"
@@ -308,6 +308,16 @@ jobs:
           MANIFEST_VERSION=$(node -p "require('./mcpb-bundle/manifest.json').version")
           if [ "$MANIFEST_VERSION" != "$VERSION" ]; then
             echo "bundle manifest says $MANIFEST_VERSION but this release is $VERSION"; exit 1
+          fi
+          # New stable releases must keep the root manifest identical to the
+          # bundled manifest, except for the bundle-only $schema reference.
+          # Historic tags predate the root manifest: do not break tag re-runs.
+          if [ -f manifest.json ]; then
+            node -e 'const assert = require("node:assert/strict"); const bundled = require("./mcpb-bundle/manifest.json"); delete bundled.$schema; assert.deepStrictEqual(require("./manifest.json"), bundled);'
+          elif [ "${{ steps.mode.outputs.mode }}" = "tag" ]; then
+            echo "::notice::Historical tag without root manifest; skipping root manifest parity check"
+          else
+            echo "New release missing repository-root manifest"; exit 1
           fi
           ls -l "$MCPB"
 
