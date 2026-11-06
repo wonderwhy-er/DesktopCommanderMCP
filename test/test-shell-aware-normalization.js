@@ -11,7 +11,11 @@ import { isTestHome, withEnv } from './helpers/test-env.js';
 
 const windows = process.platform === 'win32';
 const ordinaryEnvironment = { WSL_DISTRO_NAME: undefined, PATHEXT: '.COM;.EXE;.BAT;.CMD' };
-const posixOnly = { skip: windows ? 'Literal backslash filenames require a POSIX filesystem; Windows path controls run separately' : false };
+const posixOnly = {
+  skip: windows
+    ? 'Literal backslash filenames require a POSIX filesystem; Windows path controls run separately'
+    : false
+};
 
 before(async () => {
   assert.ok(isTestHome(), 'Use the standard isolated test runner');
