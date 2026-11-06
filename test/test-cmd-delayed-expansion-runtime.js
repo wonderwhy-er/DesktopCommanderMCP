@@ -5,6 +5,7 @@ import { readCmdCommands } from '../dist/utils/cmd-commands.js';
 import { commandManager } from '../dist/command-manager.js';
 import { configManager } from '../dist/config-manager.js';
 import { isTestHome } from './helpers/test-env.js';
+import { shellRuns } from '../dist/utils/inline-shells.js';
 
 test('delayed variable names are runtime values, including inside double quotes', async () => {
   for (const text of [
@@ -18,6 +19,9 @@ test('delayed variable names are runtime values, including inside double quotes'
     '^!DC_CMD_TOOL^! fixture',
     '"^x!DC_CMD_TOOL!" fixture',
     '"!DC_CMD_TOOL!^x" fixture',
+    '"^!DC_CMD_TOOL^!" fixture',
+    '"!DC_CMD_TOOL^!" fixture',
+    '"!DC_CMD^_TOOL!" fixture',
   ]) {
     const reading = await readCmdCommands(text, 'on');
     assert.equal(reading.parseError, undefined, text);
@@ -27,7 +31,7 @@ test('delayed variable names are runtime values, including inside double quotes'
 });
 
 test('literal exclamation marks and delayed-phase caret escapes stay literal', async () => {
-  for (const text of ['fixture!tool', '"fixture!tool"', '"^!DC_CMD_TOOL^!"', '^^!DC_CMD_TOOL!', '"!DC_CMD_TOOL^!"', '"!DC_CMD^_TOOL!"', 'fixture', '!!']) {
+  for (const text of ['fixture!tool', '"fixture!tool"', '^^!DC_CMD_TOOL!', 'fixture', '!!']) {
     const reading = await readCmdCommands(text, 'on');
     assert.equal(reading.parseError, undefined, text);
     assert.equal(reading.commands[0].nameAtRunTime, false, text);
@@ -77,11 +81,12 @@ test('existing check reports unseen rather than claiming a delayed name was chec
 
 test('blocked literal bang names stay blocked in unknown and explicit-off contexts', async t => {
   t.mock.method(configManager, 'getConfig', async () => ({ blockedCommands: ['!tool!'] }));
+  assert.equal((await commandManager.checkCommand('!tool! harmless', 'cmd')).verdict, 'blocked', 'default context');
+  assert.equal((await commandManager.checkCommand('cmd /v:off /c "!tool! harmless"', 'cmd')).verdict,
+    'blocked', 'nested explicit-off context');
   for (const [text, mode] of [
-    ['!tool! harmless', undefined],
     ['!tool! harmless', 'unknown'],
     ['!tool! harmless', 'off'],
-    ['cmd /v:off /c "!tool! harmless"', undefined],
   ]) {
     assert.equal((await commandManager.checkCommand(text, 'cmd', mode)).verdict, 'blocked', `${mode}: ${text}`);
   }
@@ -95,11 +100,14 @@ test('explicitly enabled delayed expansion does not falsely block the written va
 
 test('reader off and unknown modes preserve literal names while on is runtime', async () => {
   const text = '!tool! harmless';
-  for (const mode of ['off', 'unknown', undefined]) {
+  for (const mode of ['off', 'unknown']) {
     const [command] = (await readCmdCommands(text, mode)).commands;
-    assert.equal(command.nameAtRunTime, false, mode ?? 'default');
+    assert.equal(command.nameAtRunTime, false, mode);
     assert.equal(command.words[0], '!tool!');
   }
+  const [defaultCommand] = (await readCmdCommands(text)).commands;
+  assert.equal(defaultCommand.nameAtRunTime, false, 'default context');
+  assert.equal(defaultCommand.words[0], '!tool!');
   assert.equal((await readCmdCommands(text, 'on')).commands[0].nameAtRunTime, true);
   for (const mode of ['on', 'off', 'unknown']) {
     assert.equal((await readCmdCommands('%tool% harmless', mode)).commands[0].nameAtRunTime, true);
@@ -121,4 +129,26 @@ test('FOR/F command text retains the explicitly enabled reader mode', async () =
   const line = "for /f %i in ('!tool! harmless') do @echo %i";
   assert.equal((await readCmdCommands(line, 'on')).commands.find(command => command.name === '!tool!').nameAtRunTime, true);
   assert.equal((await readCmdCommands(line, 'off')).commands.find(command => command.name === '!tool!').nameAtRunTime, false);
+});
+
+test('runtime CMD options retain an inspection note and cannot erase literal blocking', async t => {
+  const text = 'cmd /v:on /%sw% /c "!calc! x"';
+  const [found] = (await readCmdCommands(text)).commands;
+  const run = shellRuns(found);
+  assert.equal(run.cmdDelayedExpansion, 'unknown', 'a runtime option may override the earlier mode');
+  assert.equal(run.file, null, 'the unknown option must remain visible as uninspected command text');
+  t.mock.method(configManager, 'getConfig', async () => ({ blockedCommands: ['calc'] }));
+  const answer = await commandManager.checkCommand(text, 'cmd');
+  assert.equal(answer.verdict, 'unseen', 'do not claim this runtime-selected command was fully checked');
+  assert.ok(answer.unseen.some(item => item.what === 'cmd' && !item.inFile));
+  t.mock.method(configManager, 'getConfig', async () => ({ blockedCommands: ['!tool!'] }));
+  assert.equal((await commandManager.checkCommand('cmd /v:on /%sw% /c "!tool! x"', 'cmd')).verdict,
+    'blocked', 'unknown mode retains the literal-name policy');
+});
+
+test('quoted caret command names are inspected as runtime names when CMD expansion is on', async t => {
+  t.mock.method(configManager, 'getConfig', async () => ({ blockedCommands: ['EXPANDED_TOOL'] }));
+  const answer = await commandManager.checkCommand('cmd /v:on /c "!DC_CMD^_TOOL! fixture"', 'cmd');
+  assert.equal(answer.verdict, 'unseen', 'the command-position caret does not prevent variable expansion');
+  assert.ok(answer.unseen.some(item => item.what.includes('DC_CMD')));
 });
