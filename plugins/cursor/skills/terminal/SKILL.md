@@ -29,14 +29,16 @@ of truth; never assume the OS, shell, or installed tools — detect them.
 ## 1. Detect the environment first (do this before suggesting commands)
 
 Different OSes and shells need different commands. Before recommending or running
-anything non-trivial, call **`get_config`** (Desktop Commander) and read
-`systemInfo`:
+anything non-trivial, call **`get_config`** (Desktop Commander). Its text result
+starts with `Current configuration:` followed by a configuration JSON object;
+its structured result places that same configuration under
+`structuredContent.config` and shell hints under `structuredContent.uiHints`:
 
-- `platformName` / `isWindows` / `isMacOS` / `isLinux` — which OS.
-- `defaultShell` and `uiHints.availableShells` — which shell to target.
-- `pythonInfo`, `nodeInfo` — whether Python/Node exist and their versions.
-- `blockedCommands` — commands Desktop Commander refuses to run (see §7).
-- `allowedDirectories` — `[]` means full access; otherwise commands/paths are
+- text `systemInfo.platformName` / `isWindows` / `isMacOS` / `isLinux`, or structured `structuredContent.config.systemInfo.*` — which OS.
+- text `defaultShell`, or structured `structuredContent.config.defaultShell`, plus `structuredContent.uiHints.availableShells` — which shell to target.
+- text `systemInfo.pythonInfo` / `systemInfo.nodeInfo`, or structured `structuredContent.config.systemInfo.pythonInfo` / `nodeInfo` — whether Python/Node exist and their versions.
+- text `blockedCommands`, or structured `structuredContent.config.blockedCommands` — best-effort guardrail for command names detected by Desktop Commander's command parser (see §7), not a sandbox.
+- text `allowedDirectories`, or structured `structuredContent.config.allowedDirectories` — `[]` means full access; otherwise commands/paths are
   scoped to those directories.
 
 This one cheap call prevents the most common mistake: handing a macOS user a
@@ -148,9 +150,9 @@ blocks (read the resolved error line), non-zero exit codes (report the code).
 
 ## 7. Safety: destructive commands and chaining
 
-Desktop Commander already refuses a built-in `blockedCommands` list (things like
+Desktop Commander checks a built-in `blockedCommands` list against command names its parser extracts (things like
 `sudo`, `mkfs`, `format`, `dd`, `fdisk`, `shutdown`, `reboot`, `diskpart`,
-`reg`, `net`). Read the live list from `get_config`; don't assume it.
+`reg`, `net`). This is a best-effort guardrail, not a sandbox: it does not parse every shell construct or inspect arbitrary code executed inside interpreters or nested shells. Read the live list from `get_config`; don't assume it.
 
 Beyond that list, treat these as **destructive — never run without the user's
 explicit confirmation**, even if they'd technically succeed:
