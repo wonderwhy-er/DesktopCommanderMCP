@@ -58,6 +58,20 @@ test('named brace options select one semantics and preserve the default vector',
   assert.deepEqual(braceWords(unquotedChars('python{2..3..-1}'), { semantics: 'zsh' }), ['python3', 'python2']);
 });
 
+test('known Bash5.2 retains the generated backslash slot without changing legacy or Bash5.3', async () => {
+  const { braceWords, unquotedChars } = await import('../dist/utils/brace-expansion.js');
+  const chars = unquotedChars('x{Z..a}');
+  const legacy = ['xZ', 'x[', 'x]', 'x^', 'x_', 'x`', 'xa'];
+  assert.deepEqual(braceWords(chars), legacy);
+  assert.deepEqual(braceWords(chars, { semantics: 'legacy' }), legacy);
+  assert.deepEqual(braceWords(chars, { semantics: 'bash5.2' }),
+    ['xZ', 'x[', 'x', 'x]', 'x^', 'x_', 'x`', 'xa']);
+  for (const semantics of ['bash3', 'bash5.2']) {
+    assert.deepEqual(braceWords(unquotedChars('{Z..a}'), { semantics }),
+      ['Z', '[', '', ']', '^', '_', '`', 'a'], 'the generated empty word is retained without a prefix');
+  }
+});
+
 test('unsupported endpoints keep every legacy field and existing static block candidate', async () => {
   for (const input of ['python{03..04}', 'python{2..3..-1}', 'python{3..2..-1}',
     'env python{3..2..-1}', 'echo {sudo,ls}', '{"",sudo}', '{$X,sudo} id', 'sudo {1..1001}']) {
@@ -140,7 +154,7 @@ test('existing consumer blocks the reported native programs after the H3 adapter
       }
       assert.equal((await commandManager.checkCommand(`echo ${input}`, shell)).verdict, 'allowed');
       assert.equal((await commandManager.checkCommand(`"${input}"`, shell)).verdict, 'allowed');
-      if (semantics === 'legacy') {
+      if (semantics === 'legacy' || semantics === 'bash5.2') {
         assert.equal((await commandManager.checkCommand('python{03..04}', shell)).verdict, 'allowed',
           'modern Bash must not gain a false refusal from the Bash3 reading');
       }
@@ -162,7 +176,7 @@ for (const shell of ['/bin/bash', '/bin/zsh']) {
     for (const input of ['python{03..04}', 'python{2..3..-1}', 'python{3..2..-1}',
       'env python{03..04}', 'env python{2..3..-1}', 'echo python{03..04}', '"python{03..04}"',
       'x{-03..-01}', 'x{+03..+04}', 'x{3..1..0}', 'x{1..3..+1}', 'x{a..c..-1}', 'x{a..c..2}',
-      'x{03..-01}', 'x{-03..01}', 'x{1..03}', 'x{a..c}', 'x{Z..a}']) {
+      'x{03..-01}', 'x{-03..01}', 'x{1..03}', 'x{a..c}', 'x{Z..a}', '{Z..a}', 'env {Z..a}']) {
       const flags = shell === '/bin/bash' ? ['--noprofile', '--norc'] : ['-f'];
       const oracle = spawnSync(shell, [...flags, '-c', `set -- ${input}; builtin printf '%s\\0' "$@"`],
         { encoding: 'utf8', timeout: 3000 });
