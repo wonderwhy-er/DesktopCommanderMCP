@@ -241,4 +241,36 @@ describe('PowerShell parser trust', { concurrency: false }, () => {
   test('native identities and aliases preserve readings and helper caches', async (testContext) => {
     await withParserFixture((dir) => testNativeIdentitiesAndCache(dir, testContext));
   });
+
+  test('an unreadable launch endpoint never approves a parser identity', async (testContext) => {
+    await withParserFixture(async (dir) => {
+      const executable = path.join(dir, process.platform === 'win32' ? 'pwsh.EXE' : 'pwsh');
+      fs.writeFileSync(executable, 'unreadable identity fixture, never executed', { mode: 0o700 });
+      const originalRealpath = fs.realpathSync;
+      testContext.mock.method(fs, 'realpathSync', (program, ...options) => {
+        if (path.resolve(String(program)) === executable) {
+          throw Object.assign(new Error('controlled identity access failure'), { code: 'EACCES' });
+        }
+        return originalRealpath(program, ...options);
+      });
+      let spawned = false;
+      testContext.mock.method(childProcess, 'spawn', () => {
+        spawned = true;
+        throw new Error('unreadable identity must not be launched');
+      });
+      syncBuiltinESMExports();
+      try {
+        await withEnv({ PATH: dir }, async () => {
+          const reader = await import('../dist/utils/powershell-commands.js?unreadable-launch-endpoint');
+          await assert.rejects(
+            async () => reader.readPowerShellCommands(command, executable), /trusted PowerShell parser/i
+          );
+          assert.equal(spawned, false);
+        });
+      } finally {
+        testContext.mock.restoreAll();
+        syncBuiltinESMExports();
+      }
+    });
+  });
 });

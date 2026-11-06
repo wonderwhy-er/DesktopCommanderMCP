@@ -426,7 +426,9 @@ const nativeParsers = (process.platform === 'win32' ? ['powershell', 'pwsh'] : [
     const program = resolveShellPath(name);
     if (program === null) return [];
     // Relative PATH entries belong to the launch cwd, not the helper's mcpRoot cwd.
-    try { return [{ name, program: path.resolve(program), identity: parserIdentity(program) }]; }
+    try {
+      return [{ name, program: path.resolve(program), identity: parserIdentity(program) }];
+    }
     catch {
       // An endpoint may disappear or become unreadable after lookup. Omitting it denies approval.
       return [];
@@ -452,7 +454,9 @@ export function readPowerShellCommands(command: string, shell: string): Promise<
   // A bare native name can retain its launch binding when relative PATH entries
   // stop resolving after chdir. A currently resolved different program is never replaced.
   let identity = requested === null ? launchParserForBareName(shell)?.identity : undefined;
-  try { if (requested !== null) identity = parserIdentity(requested); }
+  try {
+    if (requested !== null) identity = parserIdentity(requested);
+  }
   catch { /* A missing or unreadable identity cannot approve a parser. */ }
   const native = nativeParsers.find((parser) => parser.identity === identity);
   if (!native) {
