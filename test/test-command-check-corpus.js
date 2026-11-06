@@ -12,7 +12,8 @@
  * skipped where that PowerShell isn't installed. The other readers need no
  * shell installed.
  *
- * Nothing is run: every command goes to commandManager.checkCommand, which only parses it.
+ * Corpus commands are only parsed by commandManager.checkCommand. A fixed native Bash builtin oracle
+ * evaluates arguments without executing those commands.
  */
 import assert from 'assert';
 import fs from 'node:fs';
