@@ -397,20 +397,21 @@ class CommandManager {
      * this the work doubled with each pair.
      */
     private checkText(command: string, shell: string, checked: Map<string, Promise<CommandCheck>>,
-                      options: CommandReadOptions = {}): Promise<CommandCheck> {
-        const { cmdDelayedExpansion = 'unknown' } = options;
-        const mode = getShellType(shell) === 'cmd' ? cmdDelayedExpansion : 'unknown';
-        const key = `${shell}\0${mode}\0${command}`;
+                      options: CommandReadOptions): Promise<CommandCheck> {
+        const optionsForShell: Required<CommandReadOptions> = {
+            cmdDelayedExpansion: getShellType(shell) === 'cmd' ? options.cmdDelayedExpansion ?? 'unknown' : 'unknown',
+        };
+        const key = `${shell}\0${optionsForShell.cmdDelayedExpansion}\0${command}`;
         let check = checked.get(key);
         if (check === undefined) {
-            check = this.checkOnce(command, shell, checked, { cmdDelayedExpansion: mode });
+            check = this.checkOnce(command, shell, checked, optionsForShell);
             checked.set(key, check);
         }
         return check;
     }
 
     private async checkOnce(command: string, shell: string, checked: Map<string, Promise<CommandCheck>>,
-                            options: CommandReadOptions): Promise<CommandCheck> {
+                            options: Required<CommandReadOptions>): Promise<CommandCheck> {
         try {
             const config = await configManager.getConfig();
             const blockedCommands = config.blockedCommands || [];
@@ -418,7 +419,7 @@ class CommandManager {
             const shellType = getShellType(shell);
             // PowerShell runs nothing when it isn't there or can't parse the command: it, or start_process, answers
             if (shellType === 'powershell' && !isShellAvailable(shell)) return { verdict: 'allowed' };
-            const { cmdDelayedExpansion = 'unknown' } = options;
+            const { cmdDelayedExpansion } = options;
             const reading = await this.readCommands(command, shell, options);
             // A parse error is the command's fault, not the server's, so it isn't logged or sent
             if (reading.parseError !== undefined) {

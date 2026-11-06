@@ -3,7 +3,6 @@ import assert from 'node:assert/strict';
 import { before, beforeEach, afterEach, test } from 'node:test';
 import { commandManager } from '../dist/command-manager.js';
 import { configManager } from '../dist/config-manager.js';
-import { programName } from '../dist/utils/shell.js';
 import { isTestHome } from './helpers/test-env.js';
 
 const payload = '!tool! harmless';
@@ -75,10 +74,17 @@ test('same-shell command text retains its existing on context', async () => {
   assert(calls.some(({ text, mode }) => text === payload && mode === 'on'));
 });
 
-test('script-file classification uses the existing explicit shell normalization', () => {
+test('POSIX script paths with forward slashes identify the sourced file on every host', () => {
+  const name = 'bin/source';
+  const found = { name, words: [name, 'fixture.sh'], written: [name, 'fixture.sh'],
+    wordTexts: [name, 'fixture.sh'], start: 0, nameAtRunTime: false };
+  assert.deepEqual(commandManager.scriptFiles(found, 'posix'), [{ what: 'fixture.sh', inFile: true }]);
+});
+
+test('POSIX script paths with backslashes follow the host path rules', () => {
   const name = String.raw`bin\source`;
   const found = { name, words: [name, 'fixture.sh'], written: [name, 'fixture.sh'],
     wordTexts: [name, 'fixture.sh'], start: 0, nameAtRunTime: false };
-  const expected = programName(name, 'posix') === 'source' ? [{ what: 'fixture.sh', inFile: true }] : [];
+  const expected = process.platform === 'win32' ? [{ what: 'fixture.sh', inFile: true }] : [];
   assert.deepEqual(commandManager.scriptFiles(found, 'posix'), expected);
 });
