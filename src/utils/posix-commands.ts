@@ -132,6 +132,21 @@ function commandWords(words: Word[]): ExpandedWord[] | null {
   return expanded;
 }
 
+/** A retained runtime word still ends name selection even when its source was already listed. */
+function commandNames(expanded: ExpandedWord[]): { index: number; name: ExpandedWord }[] {
+  const names: { index: number; name: ExpandedWord }[] = [];
+  const runtimeSources = new Set<Word>();
+  for (let index = 0; index < expanded.length; index++) {
+    const name = expanded[index];
+    if (name.value !== null || !runtimeSources.has(name.source)) {
+      names.push({ index, name });
+      if (name.value === null) runtimeSources.add(name.source);
+    }
+    if (!name.mayVanish) break;
+  }
+  return names;
+}
+
 /** Whether bash may drop the word entirely, so that the next word is the command's name */
 function mayVanish(word: Word): boolean {
   const parts = word.parts ?? [];
@@ -180,16 +195,8 @@ export async function readPosixCommands(command: string): Promise<CommandReading
       if (expanded === null) {
         parseError ??= `brace expansion makes more than ${MAX_BRACE_WORDS} words, or takes too long to read`;
       } else {
-        // An unquoted runtime word may vanish, exposing the next word as the executable.
-        const runtimeSources = new Set<Word>();
-        for (let i = 0; i < expanded.length; i++) {
-          const name = expanded[i];
-          if (name.value === null && runtimeSources.has(name.source)) {
-            if (!name.mayVanish) break;
-            continue;
-          }
-          if (name.value === null) runtimeSources.add(name.source);
-          const remaining = expanded.slice(i);
+        for (const { index, name } of commandNames(expanded)) {
+          const remaining = expanded.slice(index);
           commands.push({
             name: name.value ?? name.source.text,
             words: remaining.map((word) => word.value),
@@ -198,7 +205,6 @@ export async function readPosixCommands(command: string): Promise<CommandReading
             start: backticksStart ?? (name.source === words[0] ? node.pos : name.source.pos),
             nameAtRunTime: name.value === null,
           });
-          if (!name.mayVanish) break;
         }
       }
     }

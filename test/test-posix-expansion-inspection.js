@@ -79,3 +79,23 @@ test('RC direct-program wrappers and explicit startup-file notes retain their se
   assert.equal(startup.verdict, 'unseen');
   assert.ok(startup.unseen.some((entry) => entry.what === 'setup.sh' && entry.inFile));
 });
+
+test('unquoted empty brace alternatives vanish while quoted empty words remain', async () => {
+  for (const input of ['{,sudo} ls', '{,} sudo', '{,}{,sudo} ls']) {
+    const reading = await readPosixCommands(input);
+    assert.equal(reading.parseError, undefined, input);
+    assert.equal(reading.commands[0].name, 'sudo', input);
+    assert.equal(reading.commands[0].words[0], 'sudo', input);
+    const answer = await commandManager.checkCommand(input, 'bash');
+    assert.deepEqual(answer, { verdict: 'blocked', name: 'sudo' }, input);
+  }
+  for (const input of ['{"",sudo} ls', "''{,sudo} ls", '{,sudo}"" ls']) {
+    const reading = await readPosixCommands(input);
+    assert.equal(reading.parseError, undefined, input);
+    assert.equal(reading.commands[0].name, '', input);
+    assert.equal(reading.commands[0].words[0], '', input);
+    assert.equal((await commandManager.checkCommand(input, 'bash')).verdict, 'allowed', input);
+  }
+  assert.equal((await commandManager.checkCommand('env {,sudo} ls', 'bash')).verdict, 'blocked');
+  assert.equal((await commandManager.checkCommand('env {"",sudo} ls', 'bash')).verdict, 'allowed');
+});
