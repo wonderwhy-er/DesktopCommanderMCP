@@ -1,6 +1,6 @@
 # The AI review of a maintainer's PR, after its tests: tests.yml calls this workflow
-# (workflow_call) once its test jobs are done, for a push to a PR with the label
-# `review`, adding that label, or a maintainer's `/review` comment, with the run's
+# (workflow_call) once its test jobs are done, for adding or re-adding `review`,
+# or a maintainer's `/review` comment, with the run's
 # results and coverage. On demand it runs no tests of its own (gh workflow run
 # review.yml -f commit=<sha> -f base=<sha or branch>). Claude Code reads the PR's
 # code with read-only tools and answers with findings, by the rules in
@@ -250,7 +250,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     # Writes the review: our script (main's on a comment's or on-demand run, the
-    # PR's own on a push or a label, as for the tests) reads review.json as data.
+    # PR's own on an added label, as for the tests) reads review.json as data.
     # No secret. Without a PR (an on-demand run on a
     # commit no PR has as its head), the job summary and the review artifact only.
     permissions:

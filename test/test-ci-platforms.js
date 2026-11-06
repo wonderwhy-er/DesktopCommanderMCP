@@ -160,7 +160,7 @@ export default async function run() {
   assert.deepStrictEqual(platformsFor('issue_comment', comment('/test windows\n/review', true, 'mihailt', ['linux'])), ['linux', 'windows'],
     '/test and /review together: both');
   assert.deepStrictEqual(platformsFor('issue_comment', comment('/review', true, 'someone', ['linux'])), [], 'someone else\'s /review: nothing');
-  console.log('✓ a review event runs the labelled platforms, so the review comes after their tests');
+  console.log('✓ a /review comment requests labelled platforms; adding review requests review alone');
 
   assert.deepStrictEqual(osOf(['macos', 'linux']), ['ubuntu-latest', 'macos-latest'], 'runner images, in order');
   assert.deepStrictEqual(osOf([]), []);
@@ -210,10 +210,17 @@ export default async function run() {
       assert.strictEqual(result.status, 0, result.stderr);
       return fs.readFileSync(outputPath, 'utf8');
     };
-    assert.strictEqual(cli('pull_request', push('synchronize', ['macos', 'linux'])),
+    assert.strictEqual(cli('issue_comment', comment('/test macos linux')),
       'earlier=line\nplatforms=["linux","macos"]\nos=["ubuntu-latest","macos-latest"]\nmatrix={"os":["ubuntu-latest","macos-latest"]}\n',
       'appended to what GITHUB_OUTPUT had');
     assert.strictEqual(cli('issue_comment', comment('/test windows')), 'earlier=line\nplatforms=["windows"]\nos=["windows-latest"]\nmatrix={"os":["windows-latest"]}\n');
+    assert.strictEqual(cli('pull_request', labeled('macos', ['linux', 'macos', 'review'])),
+      'earlier=line\nplatforms=["macos"]\nos=["macos-latest"]\nmatrix={"os":["macos-latest"]}\n',
+      'an added label requests only its own platform');
+    for (const action of ['synchronize', 'reopened']) {
+      assert.strictEqual(cli('pull_request', push(action, ['linux', 'macos', 'review'])),
+        'earlier=line\nplatforms=[]\nos=[]\nmatrix={"os":[]}\n', `${action}: retained labels write an empty matrix`);
+    }
     assert.strictEqual(cli('pull_request', push('synchronize')), 'earlier=line\nplatforms=[]\nos=[]\nmatrix={"os":[]}\n', 'no label: an empty matrix');
     assert.strictEqual(cli('issue_comment', comment('/test windows', true, 'someone')), 'earlier=line\nplatforms=[]\nos=[]\nmatrix={"os":[]}\n',
       'a commenter who isn\'t on the list: an empty matrix');
