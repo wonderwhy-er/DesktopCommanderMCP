@@ -77,6 +77,6 @@ test('script-file classification uses the existing explicit shell normalization'
   const name = String.raw`bin\source`;
   const found = { name, words: [name, 'fixture.sh'], written: [name, 'fixture.sh'],
     wordTexts: [name, 'fixture.sh'], start: 0, nameAtRunTime: false };
-  const expected = programName(name, 'posix') === 'source' ? { what: 'fixture.sh', inFile: true } : undefined;
-  assert.deepEqual(commandManager.scriptFile(found, 'posix'), expected);
+  const expected = programName(name, 'posix') === 'source' ? [{ what: 'fixture.sh', inFile: true }] : [];
+  assert.deepEqual(commandManager.scriptFiles(found, 'posix'), expected);
 });
