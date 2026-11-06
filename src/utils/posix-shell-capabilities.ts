@@ -87,7 +87,8 @@ for (const file of standards) capture(file);
 
 /**
  * Fixed --version only, on a matching precaptured native endpoint; never caller code or a profile.
- * Bash3.2, Bash4/5 and Zsh5.9 default range rules only: startup options and profiles are not evaluated.
+ * Native Bash5.2 retains the backslash slot that Bash5.3 omits; other Bash4/5 calls keep legacy rules.
+ * Bash3.2 and Zsh5.9 defaults remain supported; startup options and profiles are not evaluated.
  * One bounded query per endpoint (at most32); unknown, unavailable or other versions retain legacy behavior.
  */
 export function posixBraceSemantics(shell: string): Promise<BraceSemantics | undefined> {
@@ -100,6 +101,7 @@ export function posixBraceSemantics(shell: string): Promise<BraceSemantics | und
       if (error) return resolve(undefined);
       const version = /^GNU bash, version (\d+)\.(\d+)(?:\D|$)/.exec(stdout);
       if (version?.[1] === '3' && version[2] === '2') return resolve('bash3');
+      if (version?.[1] === '5' && version[2] === '2') return resolve('bash5.2');
       if (version && ['4', '5'].includes(version[1])) return resolve('legacy');
       if (/^zsh 5\.9(?:\D|$)/.test(stdout)) return resolve('zsh');
       resolve(undefined);

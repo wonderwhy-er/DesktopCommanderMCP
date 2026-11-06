@@ -15,7 +15,7 @@ export interface WordChar {
 export const MAX_BRACE_WORDS = 1000;
 
 /** Default calls retain the historical reading; native capabilities select one range grammar. */
-export type BraceSemantics = 'legacy' | 'bash3' | 'zsh';
+export type BraceSemantics = 'legacy' | 'bash3' | 'bash5.2' | 'zsh';
 
 export interface BraceOptions {
   semantics?: BraceSemantics;
@@ -116,7 +116,8 @@ type Brace = { open: number; close: number } & ({ commas: number[] } | { text: s
 /** The words that replace the braces, in order: each piece between the commas, expanded, or the sequence */
 function* middles(chars: WordChar[], brace: Brace, steps: Steps): Generator<ExpandedWord> {
   if ('text' in brace) {
-    for (const text of sequence(brace.text, steps)) yield { text, quoted: false };
+    // A generated backslash removed by Bash3/5.2 still keeps its empty argument after quote removal.
+    for (const text of sequence(brace.text, steps)) yield { text, quoted: text === '' };
     return;
   }
   const bounds = [brace.open, ...brace.commas, brace.close];
@@ -191,8 +192,8 @@ function* sequence(text: string, { semantics }: Pick<Steps, 'semantics'>): Gener
   }
   const [, first, last, increment] = LETTERS.exec(text)!;
   for (const n of range(first.charCodeAt(0), last.charCodeAt(0), { increment, semantics })) {
-    // Bash3 removes the generated backslash after expansion; the legacy reading omits its word.
-    if (n === 0x5c && semantics === 'bash3') yield '';
+    // Bash3/5.2 remove the generated backslash after expansion; Bash5.3 omits its whole word.
+    if (n === 0x5c && (semantics === 'bash3' || semantics === 'bash5.2')) yield '';
     if (n !== 0x5c || semantics === 'zsh') yield String.fromCharCode(n);
   }
 }
