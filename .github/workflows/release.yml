@@ -309,9 +309,16 @@ jobs:
           if [ "$MANIFEST_VERSION" != "$VERSION" ]; then
             echo "bundle manifest says $MANIFEST_VERSION but this release is $VERSION"; exit 1
           fi
-          # The repo-root manifest must describe the exact stable MCPB contents.
-          # The bundled manifest alone carries the build-local $schema reference.
-          node -e 'const assert = require("node:assert/strict"); const bundled = require("./mcpb-bundle/manifest.json"); delete bundled.$schema; assert.deepStrictEqual(require("./manifest.json"), bundled);'
+          # New stable releases must keep the root manifest identical to the
+          # bundled manifest, except for the bundle-only $schema reference.
+          # Historic tags predate the root manifest: do not break tag re-runs.
+          if [ -f manifest.json ]; then
+            node -e 'const assert = require("node:assert/strict"); const bundled = require("./mcpb-bundle/manifest.json"); delete bundled.$schema; assert.deepStrictEqual(require("./manifest.json"), bundled);'
+          elif [ "${{ steps.mode.outputs.mode }}" = "tag" ]; then
+            echo "::notice::Historical tag without root manifest; skipping root manifest parity check"
+          else
+            echo "New release missing repository-root manifest"; exit 1
+          fi
           ls -l "$MCPB"
 
       # Point of no return, and the only step that writes to origin. Tests,
