@@ -2,9 +2,8 @@
  * CI's platforms (helpers/ci-platforms.js): which platforms a run tests, from
  * the event GitHub Actions passes, and the PR comment.
  * - Only the platforms whose label the PR has run: `linux`, `windows`, `macos`.
- *   With none of them, nothing runs. A push runs every labelled platform; adding
- *   one of those labels runs just its platform; another label, or removing one,
- *   runs nothing.
+ *   Adding one of those labels runs just its platform. Retained labels, another
+ *   label, or removing one, run nothing.
  * - A comment line `/test <platforms>` runs those (`linux`, `windows`, `macos`).
  *   The workflow runs it from main, so its test job checks out the PR's head by
  *   SHA, with a read-only token, no secret and no npm cache, and the comment job
@@ -12,8 +11,7 @@
  * - Only the maintainers start a run: PRs they opened, comments they wrote. One
  *   list, MAINTAINERS, for both workflows (tests.yml, review.yml); no workflow
  *   names a login.
- * - The AI review (review.yml): the label `review` on a push, adding it, a
- *   `/review` line, or an on-demand run.
+ * - The AI review (review.yml): adding `review`, a `/review` line, or an on-demand run.
  * - The PR comment has no prose: a heading with the commit, a results table with
  *   a row per platform, the coverage tables and the links. A run replaces its own
  *   platforms' rows and keeps the others' last results, and the workflow's
@@ -70,17 +68,14 @@ const results = (sha, more = {}) => ({
 const prose = (body) => body.split('\n').filter((line) => !/^(|## .*|\|.*|<!--.*-->|<details><summary>[^<]*<\/summary>|<\/details>)$/.test(line));
 
 export default async function run() {
-  // A push: every labelled platform, and nothing without a label
+  // Retained labels are not another request when a PR opens, changes or reopens.
   for (const action of ['opened', 'synchronize', 'reopened']) {
-    assert.deepStrictEqual(platformsFor('pull_request', push(action)), [], `${action}, no label: nothing runs, not even Linux`);
+    for (const labels of [[], ['linux'], ['windows'], ['macos', 'bug'], ['linux', 'windows', 'macos', 'review']]) {
+      assert.deepStrictEqual(platformsFor('pull_request', push(action, labels)), [], `${action}: retained labels request no tests`);
+      assert.strictEqual(reviewFor('pull_request', push(action, labels)), false, `${action}: retained labels request no review`);
+    }
   }
-  assert.deepStrictEqual(platformsFor('pull_request', push('synchronize', ['linux'])), ['linux']);
-  assert.deepStrictEqual(platformsFor('pull_request', push('synchronize', ['windows'])), ['windows'], 'Windows alone: no Linux');
-  assert.deepStrictEqual(platformsFor('pull_request', push('synchronize', ['macos', 'bug'])), ['macos'], 'another label adds nothing');
-  assert.deepStrictEqual(platformsFor('pull_request', push('synchronize', ['macos', 'windows', 'linux'])), ['linux', 'windows', 'macos'],
-    'every labelled platform, in order');
-  assert.deepStrictEqual(platformsFor('pull_request', push('synchronize', ['all-platforms'])), [], 'all-platforms is no label of ours');
-  console.log('✓ a push: every labelled platform, and nothing without a label');
+  console.log('✓ opening, new commits and reopening request no tests or review with retained labels');
 
   // Adding a label: just its platform
   assert.deepStrictEqual(platformsFor('pull_request', labeled('linux')), ['linux']);
@@ -96,6 +91,9 @@ export default async function run() {
   // A comment: every line that starts with /test
   assert.deepStrictEqual(platformsFor('issue_comment', comment('/test windows macos')), ['windows', 'macos']);
   assert.deepStrictEqual(platformsFor('issue_comment', comment('/test linux')), ['linux']);
+  const scopedTest = comment('/test windows', true, 'mihailt', ['linux', 'macos', 'review']);
+  assert.deepStrictEqual(platformsFor('issue_comment', scopedTest), ['windows'], 'retained labels do not widen /test');
+  assert.strictEqual(reviewFor('issue_comment', scopedTest), false, 'retained review does not turn /test into a review');
   assert.deepStrictEqual(platformsFor('issue_comment', comment('Looks good.\r\n/test MacOS, Windows\n/test macos')), ['windows', 'macos'],
     'any line, any case, commas, each platform once');
   assert.deepStrictEqual(commandPlatforms('/test linux|windows'), ['linux', 'windows']);
@@ -135,11 +133,7 @@ export default async function run() {
   }
   console.log('✓ only the maintainers start a run, from one list');
 
-  // The AI review: the label review on a push, adding it, a /review line, or an on-demand run
-  for (const action of ['synchronize', 'reopened']) {
-    assert.strictEqual(reviewFor('pull_request', push(action, ['linux', 'review'])), true, `${action}, labelled review: reviewed`);
-    assert.strictEqual(reviewFor('pull_request', push(action, ['linux'])), false, `${action}, no review label: not reviewed`);
-  }
+  // The AI review: adding review, a /review line, or an on-demand run.
   assert.strictEqual(reviewFor('pull_request', labeled('review')), true, 'adding the label reviews at once');
   assert.strictEqual(reviewFor('pull_request', push('opened', ['linux', 'review'])), false, 'opened: tests.yml doesn\'t get it; the label\'s own event reviews');
   assert.strictEqual(reviewFor('pull_request', labeled('linux', ['linux', 'review'])), false, 'another label added: no second review');
@@ -156,17 +150,17 @@ export default async function run() {
   assert.strictEqual(reviewFor('workflow_dispatch', reviewDispatch()), true, 'an on-demand run by a maintainer');
   assert.strictEqual(reviewFor('workflow_dispatch', reviewDispatch('someone')), false, 'an on-demand run by anyone else: nothing');
   assert.strictEqual(reviewFor('push', {}), false);
-  console.log('✓ the review: its label on a push or added, a /review line, an on-demand run; maintainers only');
+  console.log('✓ the review: its label added, a /review line, an on-demand run; maintainers only');
 
-  // A review event runs the PR's labelled platforms too, so the review comes after that commit's tests
+  // A /review comment also requests labelled platforms; the review label requests only review.
   assert.deepStrictEqual(platformsFor('pull_request', labeled('review', ['windows', 'review', 'linux'])), [],
-    'adding review runs no platform: each ran on its own label\'s event, and a push runs them all');
+    'adding review requests no platform, even with retained platform labels');
   assert.deepStrictEqual(platformsFor('pull_request', labeled('review', ['review'])), [], 'no platform label: the review runs alone');
   assert.deepStrictEqual(platformsFor('issue_comment', comment('/review', true, 'mihailt', ['macos', 'review'])), ['macos'], 'a /review comment: the labelled platforms');
   assert.deepStrictEqual(platformsFor('issue_comment', comment('/test windows\n/review', true, 'mihailt', ['linux'])), ['linux', 'windows'],
     '/test and /review together: both');
   assert.deepStrictEqual(platformsFor('issue_comment', comment('/review', true, 'someone', ['linux'])), [], 'someone else\'s /review: nothing');
-  console.log('✓ a review event runs the labelled platforms, so the review comes after their tests');
+  console.log('✓ a /review comment requests labelled platforms; adding review requests review alone');
 
   assert.deepStrictEqual(osOf(['macos', 'linux']), ['ubuntu-latest', 'macos-latest'], 'runner images, in order');
   assert.deepStrictEqual(osOf([]), []);
@@ -216,10 +210,17 @@ export default async function run() {
       assert.strictEqual(result.status, 0, result.stderr);
       return fs.readFileSync(outputPath, 'utf8');
     };
-    assert.strictEqual(cli('pull_request', push('synchronize', ['macos', 'linux'])),
+    assert.strictEqual(cli('issue_comment', comment('/test macos linux')),
       'earlier=line\nplatforms=["linux","macos"]\nos=["ubuntu-latest","macos-latest"]\nmatrix={"os":["ubuntu-latest","macos-latest"]}\n',
       'appended to what GITHUB_OUTPUT had');
     assert.strictEqual(cli('issue_comment', comment('/test windows')), 'earlier=line\nplatforms=["windows"]\nos=["windows-latest"]\nmatrix={"os":["windows-latest"]}\n');
+    assert.strictEqual(cli('pull_request', labeled('macos', ['linux', 'macos', 'review'])),
+      'earlier=line\nplatforms=["macos"]\nos=["macos-latest"]\nmatrix={"os":["macos-latest"]}\n',
+      'an added label requests only its own platform');
+    for (const action of ['synchronize', 'reopened']) {
+      assert.strictEqual(cli('pull_request', push(action, ['linux', 'macos', 'review'])),
+        'earlier=line\nplatforms=[]\nos=[]\nmatrix={"os":[]}\n', `${action}: retained labels write an empty matrix`);
+    }
     assert.strictEqual(cli('pull_request', push('synchronize')), 'earlier=line\nplatforms=[]\nos=[]\nmatrix={"os":[]}\n', 'no label: an empty matrix');
     assert.strictEqual(cli('issue_comment', comment('/test windows', true, 'someone')), 'earlier=line\nplatforms=[]\nos=[]\nmatrix={"os":[]}\n',
       'a commenter who isn\'t on the list: an empty matrix');
@@ -417,7 +418,7 @@ export default async function run() {
   // A PR opened with its labels: GitHub sends opened, then a labeled event for each label. Each platform runs once:
   // opened starts nothing (the labeled events run the platforms), and the review label's event picks no platform
   const prTypes = (/^ {2}pull_request:\n {4}types: \[([^\]]*)\]/m.exec(workflow)?.[1] ?? '').split(',').map((type) => type.trim());
-  assert.ok(['synchronize', 'reopened', 'labeled'].every((type) => prTypes.includes(type)), `a push, a reopen and a label still run: ${prTypes}`);
+  assert.deepStrictEqual(prTypes, ['labeled'], 'only adding or re-adding a label starts a PR run');
   const openedWith = ['linux', 'windows', 'macos', 'review'];
   const runs = {};
   for (const event of [push('opened', openedWith), ...openedWith.map((label) => labeled(label, openedWith))]) {
@@ -463,9 +464,6 @@ export default async function run() {
 
   // The workflow's own platform labels (its gate and concurrency groups) are the helper's three
   assert.strictEqual(workflow.split('fromJSON(\'["linux","windows","macos"]\')').length - 1, 2, 'the concurrency group and the gate\'s added label');
-  for (const label of ['linux', 'windows', 'macos']) {
-    assert.ok(workflow.includes(`contains(github.event.pull_request.labels.*.name, '${label}')`), `a push to a PR labelled ${label} passes the gate`);
-  }
   assert.ok(!workflow.includes('all-platforms'), 'no all-platforms label');
   console.log('✓ the workflow knows the same three labels');
 
@@ -475,8 +473,34 @@ export default async function run() {
   // The gate starts the platforms job for a /test comment; that job's CLI checks the commenter (above)
   const gate = jobLines(workflow, 'platforms').find((line) => line.trim().startsWith('if:'));
   assert.ok(gate.includes("contains(github.event.comment.body, '/test')"), 'a /test comment passes the gate');
-  assert.ok(gate.includes("contains(github.event.comment.body, '/review')") && gate.includes("github.event.label.name == 'review'")
-    && gate.includes("contains(github.event.pull_request.labels.*.name, 'review')"), 'a review event passes the gate: a /review comment, the label added, a push with it');
+  assert.ok(gate.includes("contains(github.event.comment.body, '/review')") && gate.includes("github.event.label.name == 'review'"),
+    'a review comment or added review label passes the gate');
+  // Evaluate the workflow's actual expression as well as the routing functions: a stale job gate must fail here.
+  const gateAllows = new Function('github', 'contains', 'fromJSON', `return Boolean(${gate.trim().slice(4)});`);
+  const allows = (eventName, event) => gateAllows({ event_name: eventName, event },
+    (values, value) => values?.includes(value) ?? false, JSON.parse);
+  for (const action of ['opened', 'synchronize', 'reopened', 'unlabeled']) {
+    const event = { ...push(action, openedWith), label: { name: 'linux' } };
+    assert.strictEqual(allows('pull_request', event), false, `${action}: the workflow gate rejects retained labels`);
+  }
+  for (const name of openedWith) {
+    const event = labeled(name, openedWith);
+    assert.strictEqual(allows('pull_request', event), true, `${name}: adding the label passes the gate`);
+    const removed = { ...event, action: 'unlabeled' };
+    assert.strictEqual(allows('pull_request', removed), false, `${name}: removing the label starts no job`);
+    assert.deepStrictEqual(platformsFor('pull_request', removed), []);
+    assert.strictEqual(reviewFor('pull_request', removed), false);
+    assert.strictEqual(allows('pull_request', event), true, `${name}: re-adding the label passes the gate`);
+    assert.deepStrictEqual(platformsFor('pull_request', event), name === 'review' ? [] : [name]);
+    assert.strictEqual(reviewFor('pull_request', event), name === 'review');
+  }
+  assert.strictEqual(allows('pull_request', labeled('bug', openedWith)), false, 'an unrelated added label starts no job');
+  assert.strictEqual(allows('issues', labeled('linux')), false, 'a label on another event starts no job');
+  for (const body of ['/test windows', '/review', '/test windows\n/review']) {
+    assert.strictEqual(allows('issue_comment', comment(body)), true, `${body}: an explicit comment passes the gate`);
+  }
+  assert.strictEqual(allows('workflow_dispatch', {}), true, 'manual tests keep their own selection');
+  console.log('✓ the workflow gate accepts label additions and explicit requests, rejecting commits and reopening');
 
   // The review after the tests: tests.yml calls review.yml once its test jobs are done, whatever they did
   const reviewJob = jobLines(workflow, 'review').map((line) => line.trim());

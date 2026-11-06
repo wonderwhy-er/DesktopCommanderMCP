@@ -1,7 +1,8 @@
 # The tests with coverage for the maintainers' PRs, and for any PR a maintainer
 # comments "/test linux windows" on, on the platforms whose label the PR has:
-# linux, windows, macos. No label, no run. A push runs every labelled platform;
-# adding a label runs just its platform; a comment runs the platforms it names.
+# linux, windows, macos. Adding or re-adding a label runs just its platform;
+# retained labels request nothing on later commits or reopening. A comment runs
+# the platforms it names.
 # On demand: gh workflow run tests.yml -f commit=<sha> -f platforms=linux,windows
 # -f tests=<value>. One comment on the PR has a row per platform with its last
 # results and links to the reports. See test/README.md.
@@ -12,7 +13,7 @@ on:
   # No opened: GitHub sends a labeled event for each label a new PR has, and each runs
   # its platform, so opened would run every platform a second time
   pull_request:
-    types: [synchronize, reopened, labeled]
+    types: [labeled]
   # A maintainer's "/test <platforms>" on a PR. GitHub runs this event from the
   # default branch's workflow file, with the repository's token, so a comment's run
   # tests the PR's code the way the jobs below say: by SHA, read-only, no secret.
@@ -31,7 +32,7 @@ on:
         default: linux
         type: string
       tests:
-        description: Empty for everything a push runs; or test, integration, repro, docker (Linux only), timed, changed:A..B or files:a.js,b.js
+        description: Empty for everything a label run runs; or test, integration, repro, docker (Linux only), timed, changed:A..B or files:a.js,b.js
         default: ''
         type: string
       tests_from:
@@ -42,23 +43,22 @@ on:
 permissions:
   contents: read
 
-# A push cancels the PR's older push run, so only the newest writes its rows.
 # Each platform label has a group of its own, so adding it again cancels only its
 # own earlier run; any other label, each comment and each on-demand run gets a
 # group per run and cancels nothing.
 concurrency:
-  group: tests-${{ github.event.pull_request.number || github.event.issue.number }}-${{ github.event_name == 'pull_request' && (github.event.action != 'labeled' && 'push' || contains(fromJSON('["linux","windows","macos"]'), github.event.label.name) && github.event.label.name) || github.run_id }}
+  group: tests-${{ github.event.pull_request.number || github.event.issue.number }}-${{ github.event_name == 'pull_request' && github.event.action == 'labeled' && contains(fromJSON('["linux","windows","macos"]'), github.event.label.name) && github.event.label.name || github.run_id }}
   cancel-in-progress: true
 
 jobs:
   platforms:
     name: platforms
     # On demand: anyone GitHub lets start it (write access). Otherwise it starts for
-    # a /test comment on a PR, an added platform label, or a push to a PR with one.
+    # a /test or /review comment on a PR, or an added platform or review label.
     # Whether a maintainer opened the PR or wrote the comment is test/ci-platforms.js's:
     # MAINTAINERS in test/helpers/ci-platforms.js, the one list the review workflow
     # checks too. For anyone else it picks no platform.
-    if: github.event_name == 'workflow_dispatch' || github.event_name == 'issue_comment' && github.event.issue.pull_request && (contains(github.event.comment.body, '/test') || contains(github.event.comment.body, '/review')) || github.event.action == 'labeled' && (contains(fromJSON('["linux","windows","macos"]'), github.event.label.name) || github.event.label.name == 'review') || github.event_name == 'pull_request' && github.event.action != 'labeled' && (contains(github.event.pull_request.labels.*.name, 'linux') || contains(github.event.pull_request.labels.*.name, 'windows') || contains(github.event.pull_request.labels.*.name, 'macos') || contains(github.event.pull_request.labels.*.name, 'review'))
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'issue_comment' && github.event.issue.pull_request && (contains(github.event.comment.body, '/test') || contains(github.event.comment.body, '/review')) || github.event_name == 'pull_request' && github.event.action == 'labeled' && (contains(fromJSON('["linux","windows","macos"]'), github.event.label.name) || github.event.label.name == 'review')
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -91,7 +91,7 @@ jobs:
             /test/helpers/github-api.js
           sparse-checkout-cone-mode: false
       # The commit the run tests and reports, and its PR, read once here for every job.
-      # A push or a label: the PR's head. A comment: the PR's head, from the API (its
+      # An added label: the PR's head. A comment: the PR's head, from the API (its
       # event has none). On demand: the commit it names, as a full SHA, and the open PR
       # whose head it is, if any (another PR can have it too: a branch built on it).
       - name: The commit and its PR
@@ -153,7 +153,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: node test/ci-review.js request
-      # A push: every labelled platform. An added label: just its platform. A comment:
+      # An added label: just its platform. A comment:
       # the platforms its /test lines name. On demand: the platforms it names, and with
       # tests=timed a job per timed test on each. A PR or comment by anyone but the
       # maintainers: none.
@@ -230,7 +230,7 @@ jobs:
       - name: The npm cache for the release repro
         shell: bash
         run: echo "REPRO_NPM_CACHE=$(npm config get cache)" >> "$GITHUB_ENV"
-      # Under c8. A push, a label, a comment, or an on-demand run with no tests value:
+      # Under c8. A label, a comment, or an on-demand run with no tests value:
       # the suite, the repro scripts and the integration tests, without the timed tests
       # in test/timed.txt (a shared machine can't time them), and Docker's tests on Linux
       # (elsewhere the comment says why not). On demand: what its tests value asks for
@@ -267,8 +267,11 @@ jobs:
           retention-days: 14
           overwrite: true
 
-  # The AI review, after the test jobs, passed or failed: review.yml, given this run's
-  # results and coverage. Adding the review label, or no platform label, runs it alone, with no test results.
+  # The AI review runs when requested, after any test jobs finish, passed or failed.
+  # review.yml receives this run's results and coverage.
+  # Adding or re-adding review requests review alone.
+  # A /review comment with no platform labels also requests review alone.
+  # Having no platform labels starts nothing by itself.
   review:
     name: review
     needs: [platforms, unit]
@@ -289,7 +292,7 @@ jobs:
   comment:
     name: comment
     needs: [platforms, unit]
-    # Not for a run a newer push cancelled: that push's run writes the comment
+    # A repeated platform request cancels its older run, which must not write the comment.
     if: ${{ !cancelled() && needs.unit.result != 'skipped' }}
     # One at a time per PR: each run rewrites the comment with its own platforms'
     # rows and keeps the others', so two runs must not write at once. queue: max
