@@ -409,13 +409,15 @@ Directory access controls exist but have known bypass vulnerabilities. For secur
 
 ### What commands are blocked by default?
 
-Command blocking exists but can be bypassed through various methods. The current system blocks dangerous commands like `rm`, `sudo`, `format`, etc., but these restrictions can be circumvented.
+Desktop Commander starts with a default `blockedCommands` list, which currently includes `sudo`. Treat this as a best-effort guardrail, not a security sandbox; see [SECURITY.md](SECURITY.md) for the current limitations.
+
+To allow a command such as `sudo`, first use `get_config` to read the current `blockedCommands` array, then use `set_config_value` to replace that array with a copy that omits only the command you deliberately want to allow. `set_config_value` replaces the whole array; it is not a single-command unblock operation.
+
+Allowing `sudo` in Desktop Commander only removes Desktop Commander's command guardrail. It does **not** grant operating-system privileges or configure `sudo` itself. The command can still require a password or an interactive terminal, and Desktop Commander does not currently provide a dedicated privilege/password prompt. Configure any OS-level sudo policy separately and only if you accept the security implications.
 
 ### How do I report security vulnerabilities?
 
 Please create a [GitHub Issue](https://github.com/wonderwhy-er/DesktopCommanderMCP/issues) with detailed information about any security vulnerabilities you discover. See our [Security Policy](SECURITY.md) for full guidelines.
-
-Claude Desktop Commander doesn't have a pre-defined blocklist, but you can use the `block_command` and `unblock_command` functions to manage which commands Claude can execute. It's recommended to block commands that could potentially be destructive, such as `rm -rf` or `format`.
 
 ### Why is the fileWriteLineLimit set to 50 by default? What is the maximum value?
 
