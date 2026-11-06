@@ -211,3 +211,44 @@ test('quoted and drive-path executable variables remain runtime names', async te
       'unseen', text);
   }
 });
+
+
+for (const mode of ['unknown', 'off', 'on']) {
+  test(`a quoted static executable consumes one caret layer in ${mode} mode`, async testContext => {
+    testContext.mock.method(configManager, 'getConfig', async () => ({ blockedCommands: ['calc'] }));
+    const text = '"ca^lc" fixture';
+    const options = { cmdDelayedExpansion: mode };
+    const [found] = (await readCmdCommands(text, options)).commands;
+    assert.equal(found.name, 'calc');
+    assert.equal(found.nameAtRunTime, false);
+    assert.equal(found.words[0], 'calc');
+    assert.equal(found.written[0], '"ca^lc"');
+    assert.deepEqual(await commandManager.checkCommand(text, 'cmd', options), { verdict: 'blocked', name: 'calc' });
+  });
+}
+
+test('a doubled executable caret preserves one literal caret instead of matching the plain name', async testContext => {
+  const text = '"fi^^xture" fixture';
+  const [found] = (await readCmdCommands(text, { cmdDelayedExpansion: 'on' })).commands;
+  assert.equal(found.name, 'fi^xture');
+  assert.equal(found.nameAtRunTime, false);
+  testContext.mock.method(configManager, 'getConfig', async () => ({ blockedCommands: ['fixture'] }));
+  assert.equal((await commandManager.checkCommand(text, 'cmd', { cmdDelayedExpansion: 'on' })).verdict, 'allowed');
+  configManager.getConfig = async () => ({ blockedCommands: ['fi^xture'] });
+  assert.deepEqual(await commandManager.checkCommand(text, 'cmd', { cmdDelayedExpansion: 'on' }),
+    { verdict: 'blocked', name: 'fi^xture' });
+});
+
+test('quoted argument carets retain their separate argument spelling', async () => {
+  const [found] = (await readCmdCommands('echo "ca^lc"', { cmdDelayedExpansion: 'on' })).commands;
+  assert.equal(found.name, 'echo');
+  assert.deepEqual(found.words, ['echo', 'ca^lc']);
+  assert.deepEqual(found.wordTexts, ['echo', 'ca^lc']);
+});
+
+test('a variable within the complete executable stays uncovered without guessing its environment', async testContext => {
+  testContext.mock.method(configManager, 'getConfig', async () => ({ blockedCommands: ['calc'] }));
+  const answer = await commandManager.checkCommand('cmd /v:on /c "calc!x!"', 'cmd');
+  assert.equal(answer.verdict, 'unseen');
+  assert.deepEqual(answer.unseen, [{ what: 'calc!x!', inFile: false }]);
+});
