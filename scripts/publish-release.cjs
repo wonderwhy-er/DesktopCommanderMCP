@@ -7,7 +7,7 @@
  * pushing a version tag. This script prepares and fires that trigger:
  *
  * 1. Run tests (or just build with --skip-tests)
- * 2. Bump version (package.json, server.json, src/version.ts)
+ * 2. Bump version (package.json, server.json, src/version.ts, manifest.json)
  * 3. Commit, tag vX.Y.Z, push main + tag  ← this starts the CI release
  *
  * CI then builds the MCPB, creates the GitHub release with the .mcpb asset
@@ -496,7 +496,7 @@ async function publishRelease() {
         return;
     }
 
-    exec('git add package.json server.json src/version.ts');
+    exec('git add package.json server.json src/version.ts manifest.json');
     exec(`git commit -m "Release ${tagName}
 
 Automated release commit with version bump from ${currentVersion} to ${newVersion}"`);
