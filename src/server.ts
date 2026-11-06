@@ -887,6 +887,14 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         • start_process("node -i") → Start an interactive Node.js REPL
                         • start_process("node:local") → Run stateless Node.js code on the MCP server
                         • start_process("wc -l /path/file.csv") → Run a one-shot shell command
+                        • start_process({ command: "cat", timeout_ms: 5000, stdin: "line 1\\nline 2\\n" }) → Pass exact text to a program reading stdin
+
+                        INITIAL STDIN:
+                        - stdin (optional string): Text to write to the newly spawned process without shell quoting.
+                        - When supplied, the input stream is closed after the text (EOF), including when stdin is "".
+                        - When omitted, the stream stays open for interactive follow-up with interact_with_process.
+                        - node:local virtual sessions do not support initial stdin; use interact_with_process instead.
+                        - The receiving program can interpret stdin as commands; command policies still apply to the command being started.
 
                         Interactive process sessions support follow-up input after they are started.
                         Long-running process sessions expose newly available output while they remain active.

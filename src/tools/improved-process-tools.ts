@@ -179,6 +179,12 @@ export async function startProcess(args: unknown, maxWaitMs: number = MAX_PROCES
 
   // Handle node:local - runs Node.js code directly on MCP server
   if (commandToRun.trim() === 'node:local') {
+    if (parsed.data.stdin !== undefined) {
+      return {
+        content: [{ type: 'text', text: 'Initial stdin is not supported by node:local sessions. Use interact_with_process instead.' }],
+        isError: true,
+      };
+    }
     const virtualPid = virtualPidCounter--;
     virtualNodeSessions.set(virtualPid, { timeout_ms: parsed.data.timeout_ms || 30000 });
 
@@ -213,7 +219,8 @@ export async function startProcess(args: unknown, maxWaitMs: number = MAX_PROCES
     parsed.data.timeout_ms,
     shellUsed,
     parsed.data.verbose_timing || false,
-    maxWaitMs
+    maxWaitMs,
+    parsed.data.stdin
   );
 
   if (result.pid === -1) {

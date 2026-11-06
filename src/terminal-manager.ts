@@ -143,7 +143,14 @@ export class TerminalManager {
     }
   }
   
-  async executeCommand(command: string, timeoutMs: number = DEFAULT_COMMAND_TIMEOUT, shell?: string, collectTiming: boolean = false, maxWaitMs: number = MAX_PROCESS_WAIT_MS): Promise<ProcessStartResult> {
+  async executeCommand(
+    command: string,
+    timeoutMs: number = DEFAULT_COMMAND_TIMEOUT,
+    shell?: string,
+    collectTiming: boolean = false,
+    maxWaitMs: number = MAX_PROCESS_WAIT_MS,
+    stdin?: string
+  ): Promise<ProcessStartResult> {
     let config: ServerConfig = {};
     try {
       config = await configManager.getConfig();
@@ -242,6 +249,19 @@ export class TerminalManager {
     };
 
     this.sessions.set(childProcess.pid, session);
+
+    // Explicit initial stdin is exact data, not an interactive command. Close the
+    // pipe afterward so one-shot programs waiting for EOF can complete.
+    // With no stdin argument the pipe stays open for interact_with_process.
+    if (stdin !== undefined) {
+      childProcess.stdin.on('error', (error: NodeJS.ErrnoException) => {
+        // A short-lived child may close its pipe before the buffered write ends.
+        if (error.code !== 'EPIPE') {
+          console.error(`Failed to deliver process stdin: ${error.message}`);
+        }
+      });
+      childProcess.stdin.end(stdin);
+    }
 
     // Timing telemetry
     const startTime = Date.now();
