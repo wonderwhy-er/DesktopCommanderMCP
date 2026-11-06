@@ -315,7 +315,7 @@ export function sameShellTexts(found: FoundCommand, shellType: ShellType): Shell
  * text in a shell (su -c 'sudo ls'): nothing for any other command. Its kind
  * of shell is taken from its name as found, as checkCommand() takes the
  * reader for a text from the shell it is given.
- * Caller context normalizes the program's name; omission keeps the legacy default.
+ * Existing callers may omit context, so preserve their historical program-name readings.
  */
 export function shellRuns(found: FoundCommand, callerShellType?: ShellType): ShellRun {
   const program = programName(found.name, callerShellType);

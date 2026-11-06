@@ -59,12 +59,16 @@ for (const [name, command] of [
   }));
 }
 
-test('shellRuns supports explicit caller context without changing legacy omitted-context calls', () => {
-  const found = {
-    name: 'bash.ps1', words: ['bash.ps1', '-c', 'fixture_blocked'],
-    written: ['bash.ps1', '-c', 'fixture_blocked'], wordTexts: ['bash.ps1', '-c', 'fixture_blocked'],
-    start: 0, nameAtRunTime: false,
-  };
-  assert.deepEqual(shellRuns(found).texts, ['fixture_blocked']);
-  assert.deepEqual(shellRuns(found, 'posix').texts, []);
+const ps1NamedShell = {
+  name: 'bash.ps1', words: ['bash.ps1', '-c', 'fixture_blocked'],
+  written: ['bash.ps1', '-c', 'fixture_blocked'], wordTexts: ['bash.ps1', '-c', 'fixture_blocked'],
+  start: 0, nameAtRunTime: false,
+};
+
+test('shellRuns keeps legacy readings when caller context is omitted', () => {
+  assert.deepEqual(shellRuns(ps1NamedShell).texts, ['fixture_blocked']);
+});
+
+test('explicit POSIX caller context keeps a ps1 filename distinct from bash', () => {
+  assert.deepEqual(shellRuns(ps1NamedShell, 'posix').texts, []);
 });
