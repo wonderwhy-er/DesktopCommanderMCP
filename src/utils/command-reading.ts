@@ -5,6 +5,9 @@
  * in command-manager.ts turns it into a CommandCheck.
  */
 
+/** Explicit CMD delayed expansion; unknown retains the check's prior literal-name policy. */
+export type CmdDelayedExpansion = 'on' | 'off' | 'unknown';
+
 /** One command the shell would run */
 export interface FoundCommand {
   /**
