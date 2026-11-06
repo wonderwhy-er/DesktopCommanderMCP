@@ -1,4 +1,4 @@
-import type { CommandReading, FoundCommand } from './command-reading.js';
+import type { CmdDelayedExpansion, CommandReading, FoundCommand } from './command-reading.js';
 
 /**
  * The command check's reader for cmd. There is no parser for cmd to use, so
@@ -13,7 +13,7 @@ import type { CommandReading, FoundCommand } from './command-reading.js';
  * - a command's name ends at ; , = and / outside "…", also after ^ (net,user
  *   and sc/query run net and sc), but a name with a drive letter keeps its /
  *   (C:/Windows/System32/sc.exe);
- * - a word with %VAR% or a possible delayed !VAR! expansion is known only at run time;
+ * - a word with %VAR%, or !VAR! when delayed expansion is explicitly on, is known only at run time;
  * - if and for run the command after their condition or after "do";
  * - call runs the command after it (call :label runs a label of a batch file,
  *   which no blockedCommands entry names).
@@ -40,8 +40,8 @@ interface Token {
 }
 
 /**
- * The reader has no delayed-expansion mode, so a possible !VAR! is runtime
- * information rather than a literal program we can claim to have checked.
+ * In explicitly enabled delayed expansion, !VAR! is runtime information
+ * rather than a literal program we can claim to have checked.
  * Unquoted carets were removed while tokenizing. A remaining caret protects
  * the next character and interrupts a variable name, as in "!literal^!".
  */
@@ -59,7 +59,7 @@ function hasDelayedVariable(value: string): boolean {
   return false;
 }
 
-function tokenize(text: string): Token[] {
+function tokenize(text: string, delayedExpansion: CmdDelayedExpansion): Token[] {
   const tokens: Token[] = [];
   let i = 0;
   while (i < text.length) {
@@ -115,7 +115,7 @@ function tokenize(text: string): Token[] {
       const lead = /^[;,=@]*/.exec(written)![0].length;
       const drive = /^[A-Za-z]:/.test(value.slice(lead));
       const end = ends.find((at) => at.value >= lead && !(drive && value[at.value] === '/'));
-      const atRunTime = /%[^%\s]+%/.test(written) || hasDelayedVariable(value);
+      const atRunTime = /%[^%\s]+%/.test(written) || (delayedExpansion === 'on' && hasDelayedVariable(value));
       const ending = { nameEnd: end?.value, textEnd: end?.text };
       tokens.push({ kind: 'word', value, text: written, start, atRunTime, lead, ...ending });
     }
@@ -162,7 +162,8 @@ class CmdReader {
   private position = 0;
   readonly commands: FoundCommand[] = [];
 
-  constructor(private readonly tokens: Token[], private readonly text: string) {}
+  constructor(private readonly tokens: Token[], private readonly text: string,
+              private readonly delayedExpansion: CmdDelayedExpansion) {}
 
   /** Reads commands and the operators between them, up to the end, or up to the ) that closes a group */
   readList(inGroup: boolean): void {
@@ -266,7 +267,7 @@ class CmdReader {
         offsets.push(i);
         command += this.text[i];
       }
-      const reader = new CmdReader(tokenize(command), command);
+      const reader = new CmdReader(tokenize(command, this.delayedExpansion), command, this.delayedExpansion);
       reader.readList(false);
       this.commands.push(...reader.commands.map(found => ({ ...found, start: offsets[found.start] })));
     }
@@ -327,8 +328,10 @@ class CmdReader {
 }
 
 /** Reads a command for cmd */
-export async function readCmdCommands(command: string): Promise<CommandReading> {
-  const reader = new CmdReader(tokenize(command), command);
+export async function readCmdCommands(
+  command: string, delayedExpansion: CmdDelayedExpansion = 'unknown'
+): Promise<CommandReading> {
+  const reader = new CmdReader(tokenize(command, delayedExpansion), command, delayedExpansion);
   try {
     reader.readList(false);
   } catch (error) {

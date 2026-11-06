@@ -19,7 +19,7 @@ test('delayed variable names are runtime values, including inside double quotes'
     '"^x!DC_CMD_TOOL!" fixture',
     '"!DC_CMD_TOOL!^x" fixture',
   ]) {
-    const reading = await readCmdCommands(text);
+    const reading = await readCmdCommands(text, 'on');
     assert.equal(reading.parseError, undefined, text);
     assert.equal(reading.commands[0].nameAtRunTime, true, text);
     assert.equal(reading.commands[0].words[0], null, text);
@@ -28,7 +28,7 @@ test('delayed variable names are runtime values, including inside double quotes'
 
 test('literal exclamation marks and delayed-phase caret escapes stay literal', async () => {
   for (const text of ['fixture!tool', '"fixture!tool"', '"^!DC_CMD_TOOL^!"', '^^!DC_CMD_TOOL!', '"!DC_CMD_TOOL^!"', '"!DC_CMD^_TOOL!"', 'fixture', '!!']) {
-    const reading = await readCmdCommands(text);
+    const reading = await readCmdCommands(text, 'on');
     assert.equal(reading.parseError, undefined, text);
     assert.equal(reading.commands[0].nameAtRunTime, false, text);
     assert.notEqual(reading.commands[0].words[0], null, text);
@@ -36,7 +36,7 @@ test('literal exclamation marks and delayed-phase caret escapes stay literal', a
 });
 
 test('runtime arguments retain their written text without hiding a literal command name', async () => {
-  const [command] = (await readCmdCommands('echo "!DC_CMD_TOOL!" "^!DC_CMD_LITERAL^!"')).commands;
+  const [command] = (await readCmdCommands('echo "!DC_CMD_TOOL!" "^!DC_CMD_LITERAL^!"', 'on')).commands;
   assert.equal(command.name, 'echo');
   assert.equal(command.nameAtRunTime, false);
   assert.deepEqual(command.words, ['echo', null, '^!DC_CMD_LITERAL^!']);
@@ -54,7 +54,7 @@ test('percent variables keep their existing runtime classification', async () =>
 
 test('groups and IF bodies keep runtime command offsets', async () => {
   const text = 'if exist fixture.txt (!DC_CMD_TOOL! fixture & echo literal!)';
-  const reading = await readCmdCommands(text);
+  const reading = await readCmdCommands(text, 'on');
   assert.equal(reading.parseError, undefined);
   const dynamic = reading.commands.find(command => command.name === '!DC_CMD_TOOL!');
   assert.ok(dynamic);
@@ -67,7 +67,7 @@ test('existing check reports unseen rather than claiming a delayed name was chec
   assert.ok(isTestHome(), 'Run through the standard runner to isolate configuration');
   await configManager.setValue('blockedCommands', ['fixture_blocked', 'fixture!literal']);
   for (const text of ['!DC_CMD_TOOL! fixture', 'cmd /v:on /c "set DC_CMD_TOOL=fixture_blocked&& !DC_CMD_TOOL! fixture"']) {
-    const answer = await commandManager.checkCommand(text, 'cmd');
+    const answer = await commandManager.checkCommand(text, 'cmd', 'on');
     assert.equal(answer.verdict, 'unseen', text);
     assert.ok(answer.unseen.length > 0);
   }
@@ -86,4 +86,34 @@ test('explicitly enabled delayed expansion does not falsely block the written va
   t.mock.method(configManager, 'getConfig', async () => ({ blockedCommands: ['!tool!'] }));
   const answer = await commandManager.checkCommand('cmd /v:on /c "!tool! harmless"', 'cmd');
   assert.equal(answer.verdict, 'unseen');
+});
+
+test('reader off and unknown modes preserve literal names while on is runtime', async () => {
+  const text = '!tool! harmless';
+  for (const mode of ['off', 'unknown', undefined]) {
+    const [command] = (await readCmdCommands(text, mode)).commands;
+    assert.equal(command.nameAtRunTime, false, mode ?? 'default');
+    assert.equal(command.words[0], '!tool!');
+  }
+  assert.equal((await readCmdCommands(text, 'on')).commands[0].nameAtRunTime, true);
+  for (const mode of ['on', 'off', 'unknown']) {
+    assert.equal((await readCmdCommands('%tool% harmless', mode)).commands[0].nameAtRunTime, true);
+  }
+});
+
+test('real reader keeps identical nested text separate across CMD modes', async t => {
+  t.mock.method(configManager, 'getConfig', async () => ({ blockedCommands: ['!tool!'] }));
+  const payload = '!tool! harmless';
+  for (const modes of [['on', 'off'], ['off', 'on']]) {
+    const line = modes.map(mode => `cmd /v:${mode} /c "${payload}"`).join(' & ');
+    assert.equal((await commandManager.checkCommand(line, 'cmd')).verdict, 'blocked');
+  }
+  assert.equal((await commandManager.checkCommand(`cmd /c "${payload}"`, 'cmd', 'on')).verdict, 'blocked');
+  assert.equal((await commandManager.checkCommand(`gsudo "${payload}"`, 'cmd', 'on')).verdict, 'unseen');
+});
+
+test('FOR/F command text retains the explicitly enabled reader mode', async () => {
+  const line = "for /f %i in ('!tool! harmless') do @echo %i";
+  assert.equal((await readCmdCommands(line, 'on')).commands.find(command => command.name === '!tool!').nameAtRunTime, true);
+  assert.equal((await readCmdCommands(line, 'off')).commands.find(command => command.name === '!tool!').nameAtRunTime, false);
 });
