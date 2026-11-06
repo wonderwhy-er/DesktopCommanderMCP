@@ -1,6 +1,12 @@
 import path from 'path';
 import {configManager} from './config-manager.js';
 import {capture} from "./utils/capture.js";
+import {getShellSyntax, ShellSyntax} from './utils/shell.js';
+import {posixCommandWords} from './utils/posix-commands.js';
+
+const COMMAND_WORDS: Record<ShellSyntax, (script: string) => string[]> = {
+    posix: posixCommandWords,
+};
 
 class CommandManager {
 
@@ -12,8 +18,19 @@ class CommandManager {
      * The command name of each command in a command line (chained, piped, in $(), ...).
      * asTyped: each first word as typed instead of its base name, for telemetry,
      * which then replaces a path whole (a base name alone can't be told from one).
+     * shell: the shell that will run the line. A POSIX shell line is read with that
+     * grammar; any other shell's, or a line without one, with the shell-agnostic scan
+     * below.
      */
-    extractCommands(commandString: string, asTyped = false): string[] {
+    extractCommands(commandString: string, asTyped: boolean, shell: string | undefined): string[] {
+        const syntax = shell === undefined ? undefined : getShellSyntax(shell);
+        if (syntax !== undefined) {
+            const names = COMMAND_WORDS[syntax](commandString)
+                .filter((word) => word !== '')
+                .map((word) => (asTyped ? word : path.basename(word)).toLowerCase());
+            return [...new Set(names)];
+        }
+
         try {
             // Trim any leading/trailing whitespace
             commandString = commandString.trim();
@@ -72,7 +89,7 @@ class CommandManager {
                     }
                     if (j <= commandString.length && openParens === 0) {
                         const subContent = commandString.substring(i + 2, j - 1);
-                        const subCommands = this.extractCommands(subContent, asTyped);
+                        const subCommands = this.extractCommands(subContent, asTyped, undefined);
                         commands.push(...subCommands);
                         i = j - 1;
                         if (!inQuote) {
@@ -93,7 +110,7 @@ class CommandManager {
                     }
                     if (j < commandString.length) {
                         const subContent = commandString.substring(i + 1, j);
-                        const subCommands = this.extractCommands(subContent, asTyped);
+                        const subCommands = this.extractCommands(subContent, asTyped, undefined);
                         commands.push(...subCommands);
                         i = j;
                         if (!inQuote) {
@@ -126,7 +143,7 @@ class CommandManager {
                     if (j <= commandString.length && openParens === 0) {
                         const subshellContent = commandString.substring(i + 1, j - 1);
                         // Recursively extract commands from the subshell
-                        const subCommands = this.extractCommands(subshellContent, asTyped);
+                        const subCommands = this.extractCommands(subshellContent, asTyped, undefined);
                         commands.push(...subCommands);
 
                         // Move position past the subshell
@@ -231,14 +248,15 @@ class CommandManager {
         }
     }
 
-    async validateCommand(command: string): Promise<boolean> {
+    /** shell: the shell that will run the command, which decides how it is read (see extractCommands) */
+    async validateCommand(command: string, shell: string | undefined): Promise<boolean> {
         try {
             // Get blocked commands from config
             const config = await configManager.getConfig();
             const blockedCommands = config.blockedCommands || [];
             
             // Extract all commands from the command string
-            const allCommands = this.extractCommands(command);
+            const allCommands = this.extractCommands(command, false, shell);
             
             // If there are no commands extracted, fall back to base command
             if (allCommands.length === 0) {
