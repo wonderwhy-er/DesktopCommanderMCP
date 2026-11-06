@@ -1,9 +1,14 @@
 import { getShellType, POSIX_SHELLS } from './shell.js';
 
 type FileWord = string | null;
+interface FileWordSource {
+    written?: readonly string[];
+}
 
 const POSIX_VALUE_OPTIONS = new Set(['-o', '+o', '-O', '+O', '--rcfile', '--init-file']);
 const POSIX_SHORT_OPTIONS = /^[-+][a-zA-Z]+$/;
+// These scalar spellings prove one argument; quoted $@ and arrays do not.
+const QUOTED_SCALAR_VALUE = /^"\$(?:[A-Za-z_]\w*|\{[A-Za-z_]\w*\})"$/;
 const BASH_STARTUP_OPTIONS = new Set(['--rcfile', '--init-file']);
 // Minimum spellings and aliases follow the PowerShell host's option precedence.
 const POWERSHELL_VALUE_OPTIONS = [
@@ -24,7 +29,8 @@ function posixValueOptions(arg: string): string[] {
 }
 
 /** Command/stdin mode owns later words, so only a positional file before that boundary is a script. */
-function posixScriptFile(args: FileWord[]): FileWord | undefined {
+function posixScriptFile(args: FileWord[], source: FileWordSource): FileWord | undefined {
+    let quotedRuntimeValue = false;
     for (let i = 0; i < args.length; i++) {
         const arg = args[i];
         if (arg === null) return arg;
@@ -32,13 +38,16 @@ function posixScriptFile(args: FileWord[]): FileWord | undefined {
         const valueOptions = posixValueOptions(arg);
         if (valueOptions.length > 0) {
             const optionValues = args.slice(i + 1, i + 1 + valueOptions.length);
-            if (optionValues.includes(null)) return null;
+            const uncertainValue = optionValues.some((value, offset) => value === null
+                && !QUOTED_SCALAR_VALUE.test(source.written?.[i + 1 + offset] ?? ''));
+            if (uncertainValue) return null;
+            quotedRuntimeValue ||= optionValues.includes(null);
             i += valueOptions.length;
             continue;
         }
-        if (!arg.startsWith('-') && !arg.startsWith('+')) return arg;
+        if (!arg.startsWith('-') && !arg.startsWith('+')) return quotedRuntimeValue ? null : arg;
     }
-    return undefined;
+    return quotedRuntimeValue ? null : undefined;
 }
 
 /** A custom rcfile needs a note only when the explicit host options cause Bash to read it. */
@@ -104,11 +113,11 @@ function powershellScriptFile(program: string, args: FileWord[]): FileWord | und
 }
 
 /** File arguments are found before command/script arguments can be mistaken for more host options. */
-export function shellScriptFiles(program: string, args: FileWord[]): FileWord[] {
+export function shellScriptFiles(program: string, args: FileWord[], source: FileWordSource = {}): FileWord[] {
     if (POSIX_SHELLS.has(program)) {
         const files: FileWord[] = [];
         const startup = program === 'bash' ? bashStartupFile(args) : undefined;
-        const script = posixScriptFile(args);
+        const script = posixScriptFile(args, program === 'bash' ? source : {});
         if (startup !== undefined) files.push(startup);
         // Both unknown file roles share the same program-level inspection notice.
         if (script !== undefined && (script !== null || startup !== null)) files.push(script);

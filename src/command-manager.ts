@@ -364,7 +364,7 @@ class CommandManager {
             const file = shellRuns(cmd).file;
             return file === undefined ? [] : [hidden(file)];
         }
-        return shellScriptFiles(program, args).map(hidden);
+        return shellScriptFiles(program, args, { written: cmd.written.slice(1) }).map(hidden);
     }
 
     /**

@@ -103,6 +103,8 @@ test('quoted scalar option values leave a following command mode free of script 
     assert.deepEqual(shellScriptFiles('bash', args, { written }), [null], value);
   }
   assert.deepEqual(shellScriptFiles('bash', args), [null], 'missing source metadata remains conservative');
+  assert.deepEqual(shellScriptFiles('sh', args, { written: ['-o', '"$X"', '-c', '"echo safe"'] }),
+    [null], 'other shell readers retain their previous uncertainty');
 });
 
 test('the command consumer distinguishes quoted scalars from word-expanding option values', async () => {
