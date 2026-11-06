@@ -51,7 +51,7 @@ test('explicit rcfile interaction, login and suppression controls are preserved'
     ['startup.sh', 'deploy.sh'], 'distinct startup and main files both remain visible');
   assert.deepEqual(shellScriptFiles('bash', ['--rcfile', 'init.sh', '-i', '-c', 'echo safe']), ['init.sh']);
   for (const options of [['--norc'], ['--login'], ['-l'], ['+i']]) {
-    assert.deepEqual(shellScriptFiles('bash', ['--rcfile', 'init.sh', '-i', ...options, '-c', 'echo safe']), ['init.sh']);
+    assert.deepEqual(shellScriptFiles('bash', ['--rcfile', 'init.sh', '-i', ...options, '-c', 'echo safe']), []);
   }
   assert.deepEqual(shellScriptFiles('bash', ['--rcfile', 'init.sh', '-c', 'echo safe']), []);
   for (const options of [['--posix'], ['-o', 'posix']]) {

@@ -19,7 +19,7 @@ const POWERSHELL_VALUE_OPTIONS = [
 ];
 const POWERSHELL_VALUE_ALIASES = new Set(['-ep', '-if', '-of', '-wd', '-ea']);
 
-/** Each grouped o/O takes its own value; keep the option identity for startup-mode changes. */
+/** Skipping only one grouped value would mistake another option name for the script. */
 function posixValueOptions(arg: string): string[] {
     if (POSIX_VALUE_OPTIONS.has(arg)) return [arg];
     if (!POSIX_SHORT_OPTIONS.test(arg)) return [];
@@ -56,7 +56,6 @@ function bashStartupFile(args: FileWord[]): FileWord | undefined {
     let interactive = false;
     let login = false;
     let noRc = false;
-    let posix = false;
     for (let i = 0; i < args.length; i++) {
         const arg = args[i];
         if (arg === null || arg === '--') break;
@@ -66,21 +65,19 @@ function bashStartupFile(args: FileWord[]): FileWord | undefined {
         }
         if (arg === '--norc') noRc = true;
         if (arg === '--login') login = true;
-        if (arg === '--posix') posix = true;
         if (POSIX_SHORT_OPTIONS.test(arg)) {
             if (arg.includes('i')) interactive = arg[0] === '-';
             if (arg.includes('l')) login = arg[0] === '-';
         }
         const valueOptions = posixValueOptions(arg);
-        for (const option of valueOptions) {
-            const value = args[++i];
-            if (option.endsWith('o') && value === 'posix') posix = option[0] === '-';
+        if (valueOptions.length > 0) {
+            i += valueOptions.length;
+            continue;
         }
-        if (valueOptions.length > 0) continue;
         if (!arg.startsWith('-') && !arg.startsWith('+')) break;
     }
-    // Bash reads the custom rcfile only in interactive, non-login Bash mode.
-    if (!interactive || login || noRc || posix || file === '') return undefined;
+    // POSIX-mode rcfile handling differs by Bash version; it cannot prove this file is unused.
+    if (!interactive || login || noRc || file === '') return undefined;
     return file;
 }
 
@@ -119,8 +116,9 @@ export function shellScriptFiles(program: string, args: FileWord[], source: File
         const startup = program === 'bash' ? bashStartupFile(args) : undefined;
         const script = posixScriptFile(args, program === 'bash' ? source : {});
         if (startup !== undefined) files.push(startup);
-        // Both unknown file roles share the same program-level inspection notice.
-        if (script !== undefined && (script !== null || startup !== null)) files.push(script);
+        // Known file roles stay visible; only two null roles repeat the same program-level notice.
+        const repeatsRuntimeNotice = script === null && startup === null;
+        if (script !== undefined && !repeatsRuntimeNotice) files.push(script);
         return files;
     }
     if (getShellType(program) === 'powershell') {
