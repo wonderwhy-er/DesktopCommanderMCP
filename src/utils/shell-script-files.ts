@@ -3,6 +3,7 @@ import { getShellType, POSIX_SHELLS } from './shell.js';
 type FileWord = string | null;
 
 const POSIX_VALUE_OPTIONS = new Set(['-o', '+o', '-O', '+O', '--rcfile', '--init-file']);
+const POSIX_SHORT_OPTIONS = /^[-+][a-zA-Z]+$/;
 const BASH_STARTUP_OPTIONS = new Set(['--rcfile', '--init-file']);
 // Minimum spellings and aliases follow the PowerShell host's option precedence.
 const POWERSHELL_VALUE_OPTIONS = [
@@ -16,7 +17,7 @@ const POWERSHELL_VALUE_ALIASES = new Set(['-ep', '-if', '-of', '-wd', '-ea']);
 /** Each grouped o/O takes its own value; keep the option identity for startup-mode changes. */
 function posixValueOptions(arg: string): string[] {
     if (POSIX_VALUE_OPTIONS.has(arg)) return [arg];
-    if (!/^[-+][a-zA-Z]+$/.test(arg)) return [];
+    if (!POSIX_SHORT_OPTIONS.test(arg)) return [];
     return [...arg.slice(1)]
         .filter((letter) => letter === 'o' || letter === 'O')
         .map((letter) => arg[0] + letter);
@@ -55,18 +56,16 @@ function bashStartupFile(args: FileWord[]): FileWord | undefined {
         if (arg === '--norc') noRc = true;
         if (arg === '--login') login = true;
         if (arg === '--posix') posix = true;
-        if (/^[-+][a-zA-Z]+$/.test(arg)) {
+        if (POSIX_SHORT_OPTIONS.test(arg)) {
             if (arg.includes('i')) interactive = arg[0] === '-';
             if (arg.includes('l')) login = arg[0] === '-';
         }
         const valueOptions = posixValueOptions(arg);
-        if (valueOptions.length > 0) {
-            for (const option of valueOptions) {
-                const value = args[++i];
-                if (option.endsWith('o') && value === 'posix') posix = option[0] === '-';
-            }
-            continue;
+        for (const option of valueOptions) {
+            const value = args[++i];
+            if (option.endsWith('o') && value === 'posix') posix = option[0] === '-';
         }
+        if (valueOptions.length > 0) continue;
         if (!arg.startsWith('-') && !arg.startsWith('+')) break;
     }
     // Bash reads the custom rcfile only in interactive, non-login Bash mode.
