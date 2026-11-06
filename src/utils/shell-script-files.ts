@@ -45,7 +45,7 @@ function posixScriptFile(args: FileWord[], source: FileWordSource): FileWord | u
             i += valueOptions.length;
             continue;
         }
-        if (!arg.startsWith('-') && !arg.startsWith('+')) return quotedRuntimeValue ? null : arg;
+        if (!arg.startsWith('-') && !arg.startsWith('+')) return arg;
     }
     return quotedRuntimeValue ? null : undefined;
 }
