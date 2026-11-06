@@ -420,7 +420,7 @@ interface ChromeProfile {
  * caller's ignoreDefaultArgs: true drops those, after which Puppeteer creates
  * a profile of its own again.
  */
-async function createChromeProfile(): Promise<ChromeProfile> {
+export async function createChromeProfile(): Promise<ChromeProfile> {
     const dir = await fs.mkdtemp(join(tmpdir(), CHROME_PROFILE_PREFIX));
     const userDataDirArg = `--user-data-dir=${resolve(dir)}`;
     let chrome: ChildProcess | undefined;
