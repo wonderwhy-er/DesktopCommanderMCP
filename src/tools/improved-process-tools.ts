@@ -480,6 +480,14 @@ export async function interactWithProcess(args: unknown, maxWaitMs: number = MAX
     verbose_timing = false
   } = parsed.data;
 
+  const isAllowed = await commandManager.validateCommand(input);
+  if (!isAllowed) {
+    return {
+      content: [{ type: "text", text: "Input rejected: contains blocked command." }],
+      isError: true,
+    };
+  }
+
   // Get config for output line limit
   const config = await configManager.getConfig();
   const maxOutputLines = config.fileReadLineLimit ?? 1000;
