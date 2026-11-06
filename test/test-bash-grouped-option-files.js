@@ -87,7 +87,6 @@ test('the command consumer notes runtime option values instead of claiming compl
   for (const command of [
     'bash -oo $OPTIONS deploy.sh',
     'bash -oo "$OPTIONS" deploy.sh',
-    'bash -oo pipefail "$OPTION" deploy.sh',
     'bash --rcfile "$RC" -ic "echo ready"',
   ]) {
     assert.deepEqual(await commandManager.checkCommand(command, 'bash'), {
@@ -121,6 +120,38 @@ test('the command consumer distinguishes quoted scalars from word-expanding opti
       verdict: 'unseen', unseen: [{ what: 'bash', inFile: false }],
     }, value);
   }
+});
+
+test('a proved scalar option value preserves a following known script filename', () => {
+  for (const flag of ['-o', '+o', '-O', '+O']) {
+    for (const value of ['"$X"', '"${X}"']) {
+      const args = [flag, null, 'deploy.sh'];
+      assert.deepEqual(shellScriptFiles('bash', args, { written: [flag, value, 'deploy.sh'] }),
+        ['deploy.sh'], `${flag} ${value}`);
+    }
+  }
+  assert.deepEqual(shellScriptFiles('bash', ['-oo', 'pipefail', null, 'deploy.sh'],
+    { written: ['-oo', 'pipefail', '"$OPTION"', 'deploy.sh'] }), ['deploy.sh']);
+  assert.deepEqual(shellScriptFiles('bash', ['--rcfile', null, '-i', '-o', null, 'deploy.sh'],
+    { written: ['--rcfile', '"$RC"', '-i', '-o', '"$X"', 'deploy.sh'] }), [null, 'deploy.sh']);
+  assert.deepEqual(shellScriptFiles('bash', ['-o', null], { written: ['-o', '"$X"'] }), [null],
+    'a value without a following known filename retains the end fallback');
+  for (const value of ['$X', '"$@"', '"${values[@]}"']) {
+    assert.deepEqual(shellScriptFiles('bash', ['-o', null, 'deploy.sh'],
+      { written: ['-o', value, 'deploy.sh'] }), [null], value);
+  }
+});
+
+test('the command consumer names a known file after proved scalar option values', async () => {
+  for (const command of ['bash -o "$X" deploy.sh', 'bash +o "${X}" deploy.sh',
+    'bash -O "$X" deploy.sh', 'bash +O "$X" deploy.sh', 'bash -oo pipefail "$OPTION" deploy.sh']) {
+    assert.deepEqual(await commandManager.checkCommand(command, 'bash'), {
+      verdict: 'unseen', unseen: [{ what: 'deploy.sh', inFile: true }],
+    }, command);
+  }
+  assert.deepEqual(await commandManager.checkCommand('bash --rcfile "$RC" -i -o "$X" deploy.sh', 'bash'), {
+    verdict: 'unseen', unseen: [{ what: 'bash', inFile: false }, { what: 'deploy.sh', inFile: true }],
+  });
 });
 
 test('runtime POSIX option values cannot hide an explicit interactive startup file', () => {
