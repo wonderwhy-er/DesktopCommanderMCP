@@ -78,7 +78,10 @@ test('literal POSIX backslash filenames do not become program wrappers', posixOn
 test('a literal POSIX backslash shell name does not enable fish wrappers', posixOnly, async () => {
   const reading = await readPosixCommands('or fixture_blocked');
   assert.deepEqual(withStartedPrograms(reading.commands, String.raw`bin\fish`).map(command => command.name), ['or']);
-  assert.deepEqual(withStartedPrograms(reading.commands, 'fish').map(command => command.name), ['or', 'fixture_blocked']);
+  assert.deepEqual(
+    withStartedPrograms(reading.commands, 'fish').map(command => command.name),
+    ['or', 'fixture_blocked']
+  );
 });
 
 test('POSIX ps1 filenames neither alias a blocked name nor unwrap arguments', async () => {
@@ -96,7 +99,12 @@ test('POSIX ps1 filenames neither alias a blocked name nor unwrap arguments', as
 
 test('real wrappers and exact blocked ps1 entries remain checked', async () => {
   await withEnv(ordinaryEnvironment, async () => {
-    for (const text of ['env fixture_blocked', 'sudo fixture_blocked', 'timeout 1 fixture_blocked', 'env sudo fixture_blocked']) {
+    for (const text of [
+      'env fixture_blocked',
+      'sudo fixture_blocked',
+      'timeout 1 fixture_blocked',
+      'env sudo fixture_blocked'
+    ]) {
       assert.equal((await commandManager.checkCommand(text, 'bash')).verdict, 'blocked', text);
     }
     await configManager.setValue('blockedCommands', ['fixture_blocked.ps1']);
