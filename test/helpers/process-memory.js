@@ -37,7 +37,7 @@ function observeWindowsSampler(sampler, record, fail) {
       if (line === 'DC_MEMORY_QUERY_STARTED') { observed.queriesStarted++; continue; }
       if (line === 'DC_MEMORY_QUERY_FAILED') {
         observed.queriesFailed++;
-        fail('the PowerShell sampler could not query process memory');
+        // A transient CIM error can recover on the next poll.
         continue;
       }
       const completed = /^DC_MEMORY_QUERY_DONE (\d+)$/.exec(line);
@@ -63,8 +63,9 @@ function observeWindowsSampler(sampler, record, fail) {
 /**
  * Starts sampling. Returns `peakOf(pid)` and `peakOfName(prefix)` (bytes),
  * `failure()` and `stop()`, which the caller must call. `failure()` says why
- * sampling failed (the sampler couldn't run or exited, or a sample failed),
- * else is undefined: peaks read without samples are 0, which measures nothing.
+ * sampling failed (the sampler couldn't run or exited, or a ps sample failed).
+ * Windows query errors are counted and may recover; they do not set failure().
+ * Otherwise failure() is undefined; peaks without samples are 0, which measures nothing.
  */
 export function watchPeakMemory(rootPid, intervalMs = 100) {
   const peaks = new Map(); // pid -> { name, bytes }
