@@ -45,14 +45,16 @@ interface Token {
  * Unquoted carets were removed while tokenizing. A remaining caret protects
  * the next character and interrupts a variable name, as in "!literal^!".
  */
-function hasDelayedVariable(value: string): boolean {
+function hasDelayedVariable(
+  value: string, { startsBefore = value.length }: { startsBefore?: number } = {}
+): boolean {
   let opening = -1;
   for (let i = 0; i < value.length; i++) {
     if (value[i] === '^') {
       opening = -1;
       i++;
     } else if (value[i] === '!') {
-      if (opening >= 0 && i > opening + 1) return true;
+      if (opening >= 0 && opening < startsBefore && i > opening + 1) return true;
       opening = i;
     }
   }
@@ -322,12 +324,16 @@ class CmdReader {
     const firstWords = rest ? [name, rest] : [name];
     // Executable words and arguments have different caret phases. Keep the
     // argument reading intact and classify the executable's spelling separately.
-    const nameAtRunTime = first.atRunTime || (this.options.cmdDelayedExpansion === 'on'
-      && hasDelayedVariable(commandWordValue(first.text.slice(0, first.textEnd))));
+    // !tool:old=new! starts in the executable even though its substitution spans a name delimiter.
+    const nameLength = commandWordValue(first.text.slice(0, first.textEnd)).length;
+    const nameAtRunTime = /%[^%\s]+%/.test(first.text) || (this.options.cmdDelayedExpansion === 'on'
+      && hasDelayedVariable(commandWordValue(first.text), { startsBefore: nameLength }));
+    const firstWordValues = firstWords.map((word) => (first.atRunTime ? null : word));
+    firstWordValues[0] = nameAtRunTime ? null : name;
     this.commands.push({
       name,
       words: [
-        ...firstWords.map((word) => (nameAtRunTime ? null : word)),
+        ...firstWordValues,
         ...words.slice(1).map((word) => (word.atRunTime ? null : word.value)),
       ],
       written: [
