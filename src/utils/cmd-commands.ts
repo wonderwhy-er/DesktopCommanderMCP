@@ -59,6 +59,16 @@ function hasDelayedVariable(value: string): boolean {
   return false;
 }
 
+/** CMD consumes a caret layer in the executable word even within double quotes. */
+function commandWordValue(text: string): string {
+  let value = '';
+  for (let i = 0; i < text.length; i++) {
+    if (text[i] === '^' && i + 1 < text.length) value += text[++i];
+    else if (text[i] !== '"') value += text[i];
+  }
+  return value;
+}
+
 function tokenize(text: string, delayedExpansion: CmdDelayedExpansion): Token[] {
   const tokens: Token[] = [];
   let i = 0;
@@ -310,10 +320,14 @@ class CmdReader {
     if (!name && words.length === 1) return; // "" alone runs nothing
     const rest = afterName(first);
     const firstWords = rest ? [name, rest] : [name];
+    // Executable words and arguments have different caret phases. Keep the
+    // argument reading intact and classify the executable's spelling separately.
+    const nameAtRunTime = first.atRunTime || (this.delayedExpansion === 'on'
+      && hasDelayedVariable(commandWordValue(first.text)));
     this.commands.push({
       name,
       words: [
-        ...firstWords.map((word) => (first.atRunTime ? null : word)),
+        ...firstWords.map((word) => (nameAtRunTime ? null : word)),
         ...words.slice(1).map((word) => (word.atRunTime ? null : word.value)),
       ],
       written: [
@@ -322,7 +336,7 @@ class CmdReader {
       ],
       wordTexts: [...firstWords, ...words.slice(1).map((word) => word.value)],
       start: first.start,
-      nameAtRunTime: first.atRunTime,
+      nameAtRunTime,
     });
   }
 }
