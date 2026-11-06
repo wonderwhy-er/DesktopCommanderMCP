@@ -148,7 +148,20 @@ test('runtime CMD options retain an inspection note and cannot erase literal blo
 
 test('quoted caret command names are inspected as runtime names when CMD expansion is on', async t => {
   t.mock.method(configManager, 'getConfig', async () => ({ blockedCommands: ['EXPANDED_TOOL'] }));
+  const direct = await commandManager.checkCommand('"!DC_CMD^_TOOL!" fixture', 'cmd', 'on');
+  assert.equal(direct.verdict, 'unseen', 'a real quoted executable retains runtime classification');
   const answer = await commandManager.checkCommand('cmd /v:on /c "!DC_CMD^_TOOL! fixture"', 'cmd');
   assert.equal(answer.verdict, 'unseen', 'the command-position caret does not prevent variable expansion');
   assert.ok(answer.unseen.some(item => item.what.includes('DC_CMD')));
 });
+
+for (const text of ['calc/"!DC_CMD^_TOOL!"', 'calc,"!DC_CMD^_TOOL!"']) {
+  test(`literal executable stays blocked before a runtime-looking suffix: ${text}`, async t => {
+    t.mock.method(configManager, 'getConfig', async () => ({ blockedCommands: ['calc'] }));
+    const [found] = (await readCmdCommands(text, 'on')).commands;
+    assert.equal(found.name, 'calc');
+    assert.equal(found.nameAtRunTime, false, 'an argument suffix is not part of the executable');
+    assert.equal(found.words[0], 'calc');
+    assert.deepEqual(await commandManager.checkCommand(text, 'cmd', 'on'), { verdict: 'blocked', name: 'calc' });
+  });
+}
