@@ -5,7 +5,7 @@ import { EventEmitter, errorMonitor } from 'node:events';
 import fs from 'node:fs/promises';
 import { PassThrough } from 'node:stream';
 import { createChromeProfile } from '../dist/tools/pdf/markdown.js';
-import { runIfMain } from './helpers/run-if-main.js';
+import { afterEach, beforeEach, describe, test } from 'node:test';
 
 const children = channel('child_process');
 const SENTINEL = 'PRIVATE_PDF_INPUT_MUST_NOT_APPEAR';
@@ -76,168 +76,168 @@ function readDiagnostic(captured) {
   return snapshot;
 }
 
-async function timeoutKeepsOriginalFailure(captured) {
-  const profile = await createChromeProfile();
-  const child = fakeChrome(profile);
-  child.emit('spawn'); // Node may announce spawn before the profile-matching microtask runs.
-  try {
-    await Promise.resolve();
-    child.stdout.write(SENTINEL);
-    child.stderr.write(SENTINEL.slice(0, 8));
-    child.stderr.write(SENTINEL.slice(8));
-    await assert.rejects(launch(profile, async () => { throw originalFailure; }), (error) => error === originalFailure);
-    const snapshot = readDiagnostic(captured);
-    assert.equal(snapshot.failure, 'timeout');
-    assert.equal(snapshot.phase, 'before-owner-cleanup');
-    assert.equal(snapshot.child, 'observed');
-    assert.equal(snapshot.spawn, 'observed');
-    assert.equal(snapshot.exit, 'unobserved');
-    assert.equal(snapshot.stderrBytes, Buffer.byteLength(SENTINEL));
-    assert.equal(snapshot.stdoutBytes, Buffer.byteLength(SENTINEL));
-  } finally {
-    await release(profile, child);
-    assertDetached(child);
-  }
-}
+describe('PDF launch diagnostics', { concurrency: false }, () => {
+  let captured;
+  let previousConsoleError;
+  let subscribedBefore;
 
-async function errorsRemainErrors(captured) {
-  const profile = await createChromeProfile();
-  const child = fakeChrome(profile);
-  const spawnFailure = Object.assign(new Error(SENTINEL), { code: 'EACCES' });
-  try {
-    // An errorMonitor listener may observe this error, but must not suppress EventEmitter's throw.
-    assert.throws(() => child.emit('error', spawnFailure), (error) => error === spawnFailure);
-    await Promise.resolve();
-    await assert.rejects(launch(profile, async () => { throw spawnFailure; }), (error) => error === spawnFailure);
-    const snapshot = readDiagnostic(captured);
-    assert.equal(snapshot.error, 'EACCES');
-    assert.equal(snapshot.spawn, 'unobserved');
-    assert.equal(snapshot.failure, 'launch-error');
-  } finally {
-    await release(profile, child);
-    assertDetached(child);
-  }
-}
+  beforeEach(() => {
+    captured = [];
+    previousConsoleError = console.error;
+    subscribedBefore = children.hasSubscribers;
+    console.error = (...arguments_) => captured.push(arguments_);
+  });
 
-async function concurrentProfilesStaySeparate(captured) {
-  const left = await createChromeProfile();
-  const right = await createChromeProfile();
-  const leftChild = fakeChrome(left);
-  const rightChild = fakeChrome(right);
-  const unrelated = fakeChrome({ arg: `--user-data-dir=${SENTINEL}` });
-  try {
-    await Promise.resolve();
-    assertDetached(unrelated);
-    leftChild.emit('exit', 7, null);
-    rightChild.emit('exit', 9, 'SIGTERM');
-    await assert.rejects(launch(left, async () => { throw originalFailure; }), (error) => error === originalFailure);
-    assert.equal(readDiagnostic(captured).exitCode, 7);
-    captured.length = 0;
-    await assert.rejects(launch(right, async () => { throw originalFailure; }), (error) => error === originalFailure);
-    const snapshot = readDiagnostic(captured);
-    assert.equal(snapshot.exitCode, 9);
-    assert.equal(snapshot.signal, 'SIGTERM');
-  } finally {
-    await release(left, leftChild);
-    await release(right, rightChild);
-    assertDetached(leftChild);
-    assertDetached(rightChild);
-  }
-}
+  afterEach(() => {
+    console.error = previousConsoleError;
+    assert.equal(children.hasSubscribers, subscribedBefore, 'All profile channel subscriptions must be released');
+  });
 
-async function successIsSilent(captured) {
-  const profile = await createChromeProfile();
-  const child = fakeChrome(profile);
-  try {
-    await Promise.resolve();
-    child.emit('spawn');
-    child.stderr.write(SENTINEL);
-    const browser = {};
-    assert.equal(await launch(profile, async () => browser), browser);
-    assert.deepEqual(captured, [], 'A successful launch must not emit diagnostics');
-  } finally {
-    await release(profile, child);
-    assertDetached(child);
-  }
-}
-
-async function absentChildIsExplicit(captured) {
-  const profile = await createChromeProfile();
-  try {
-    await assert.rejects(launch(profile, async () => { throw originalFailure; }), (error) => error === originalFailure);
-    const snapshot = readDiagnostic(captured);
-    assert.equal(snapshot.child, 'unobserved');
-    assert.equal(snapshot.error, 'none');
-  } finally {
-    await release(profile);
-  }
-}
-
-async function diagnosticSinkCannotReplaceFailure() {
-  const profile = await createChromeProfile();
-  const previous = console.error;
-  console.error = () => { throw new Error(SENTINEL); };
-  try {
-    await assert.rejects(launch(profile, async () => { throw originalFailure; }), (error) => error === originalFailure);
-  } finally {
-    console.error = previous;
-    await release(profile);
-  }
-}
-
-async function unsafeValuesStayPrivate(captured) {
-  const profile = await createChromeProfile();
-  const child = fakeChrome(profile);
-  const spawnFailure = new Error(SENTINEL);
-  Object.defineProperty(spawnFailure, 'code', { get() { throw new Error(SENTINEL); } });
-  try {
-    await Promise.resolve();
-    assert.throws(() => child.emit('error', spawnFailure), (error) => error === spawnFailure);
-    child.emit('exit', NaN, SENTINEL);
-    await assert.rejects(launch(profile, async () => { throw spawnFailure; }), (error) => error === spawnFailure);
-    const snapshot = readDiagnostic(captured);
-    assert.equal(snapshot.error, 'other');
-    assert.equal(snapshot.signal, 'other');
-    assert.equal(snapshot.exitCode, -1);
-    assert(!JSON.stringify(captured).includes(profile.arg));
-  } finally {
-    await release(profile, child);
-    assertDetached(child);
-  }
-}
-
-async function releaseBeforeMatchingRemovesListeners(captured) {
-  const profile = await createChromeProfile();
-  const child = fakeChrome(profile);
-  await release(profile, child);
-  await Promise.resolve();
-  assertDetached(child);
-  const late = fakeChrome(profile);
-  await Promise.resolve();
-  assertDetached(late);
-  assert.deepEqual(captured, [], 'Cleanup must not emit diagnostics or observe later children');
-}
-
-export default async function runTests() {
-  const captured = [];
-  const previous = console.error;
-  const failures = [];
-  const subscribedBefore = children.hasSubscribers;
-  console.error = (...arguments_) => captured.push(arguments_);
-  try {
-    for (const check of [timeoutKeepsOriginalFailure, errorsRemainErrors, concurrentProfilesStaySeparate,
-      successIsSilent, absentChildIsExplicit, diagnosticSinkCannotReplaceFailure,
-      unsafeValuesStayPrivate, releaseBeforeMatchingRemovesListeners]) {
-      captured.length = 0;
-      try { await check(captured); console.log(`PASS ${check.name}`); }
-      catch (error) { failures.push(check.name); console.log(`FAIL ${check.name}: ${error.message}`); }
+  test('a timed-out launch reports bounded observations and rethrows the original error', async () => {
+    const profile = await createChromeProfile();
+    const child = fakeChrome(profile);
+    child.emit('spawn'); // Node may announce spawn before the profile-matching microtask runs.
+    try {
+      await Promise.resolve();
+      child.stdout.write(SENTINEL);
+      child.stderr.write(SENTINEL.slice(0, 8));
+      child.stderr.write(SENTINEL.slice(8));
+      await assert.rejects(
+        launch(profile, async () => { throw originalFailure; }), (error) => error === originalFailure,
+      );
+      const snapshot = readDiagnostic(captured);
+      assert.equal(snapshot.failure, 'timeout');
+      assert.equal(snapshot.phase, 'before-owner-cleanup');
+      assert.equal(snapshot.child, 'observed');
+      assert.equal(snapshot.spawn, 'observed');
+      assert.equal(snapshot.exit, 'unobserved');
+      assert.equal(snapshot.stderrBytes, Buffer.byteLength(SENTINEL));
+      assert.equal(snapshot.stdoutBytes, Buffer.byteLength(SENTINEL));
+    } finally {
+      await release(profile, child);
+      assertDetached(child);
     }
-  } finally {
-    console.error = previous;
-  }
-  assert.equal(children.hasSubscribers, subscribedBefore, 'All profile channel subscriptions must be released');
-  assert.deepEqual(failures, [], 'Controlled launch diagnostics must preserve failures, privacy and cleanup');
-  return true;
-}
+  });
 
-runIfMain(import.meta.url, runTests);
+  test('a child error remains unhandled while the launch reports its safe code', async () => {
+    const profile = await createChromeProfile();
+    const child = fakeChrome(profile);
+    const spawnFailure = Object.assign(new Error(SENTINEL), { code: 'EACCES' });
+    try {
+      // An errorMonitor listener may observe this error, but must not suppress EventEmitter's throw.
+      assert.throws(() => child.emit('error', spawnFailure), (error) => error === spawnFailure);
+      await Promise.resolve();
+      await assert.rejects(launch(profile, async () => { throw spawnFailure; }), (error) => error === spawnFailure);
+      const snapshot = readDiagnostic(captured);
+      assert.equal(snapshot.error, 'EACCES');
+      assert.equal(snapshot.spawn, 'unobserved');
+      assert.equal(snapshot.failure, 'launch-error');
+    } finally {
+      await release(profile, child);
+      assertDetached(child);
+    }
+  });
+
+  test('concurrent profiles report only their own child and ignore unrelated children', async () => {
+    const left = await createChromeProfile();
+    const right = await createChromeProfile();
+    const leftChild = fakeChrome(left);
+    const rightChild = fakeChrome(right);
+    const unrelated = fakeChrome({ arg: `--user-data-dir=${SENTINEL}` });
+    try {
+      await Promise.resolve();
+      assertDetached(unrelated);
+      leftChild.emit('exit', 7, null);
+      rightChild.emit('exit', 9, 'SIGTERM');
+      await assert.rejects(launch(left, async () => { throw originalFailure; }), (error) => error === originalFailure);
+      assert.equal(readDiagnostic(captured).exitCode, 7);
+      captured.length = 0;
+      await assert.rejects(launch(right, async () => { throw originalFailure; }), (error) => error === originalFailure);
+      const snapshot = readDiagnostic(captured);
+      assert.equal(snapshot.exitCode, 9);
+      assert.equal(snapshot.signal, 'SIGTERM');
+    } finally {
+      await release(left, leftChild);
+      await release(right, rightChild);
+      assertDetached(leftChild);
+      assertDetached(rightChild);
+    }
+  });
+
+  test('a successful launch returns its browser without emitting diagnostics', async () => {
+    const profile = await createChromeProfile();
+    const child = fakeChrome(profile);
+    try {
+      await Promise.resolve();
+      child.emit('spawn');
+      child.stderr.write(SENTINEL);
+      const browser = {};
+      assert.equal(await launch(profile, async () => browser), browser);
+      assert.deepEqual(captured, [], 'A successful launch must not emit diagnostics');
+    } finally {
+      await release(profile, child);
+      assertDetached(child);
+    }
+  });
+
+  test('a launch without an observed child reports that absence', async () => {
+    const profile = await createChromeProfile();
+    try {
+      await assert.rejects(
+        launch(profile, async () => { throw originalFailure; }), (error) => error === originalFailure,
+      );
+      const snapshot = readDiagnostic(captured);
+      assert.equal(snapshot.child, 'unobserved');
+      assert.equal(snapshot.error, 'none');
+    } finally {
+      await release(profile);
+    }
+  });
+
+  test('a throwing diagnostic sink cannot replace the original launch failure', async () => {
+    const profile = await createChromeProfile();
+    const previous = console.error;
+    console.error = () => { throw new Error(SENTINEL); };
+    try {
+      await assert.rejects(
+        launch(profile, async () => { throw originalFailure; }), (error) => error === originalFailure,
+      );
+    } finally {
+      console.error = previous;
+      await release(profile);
+    }
+  });
+
+  test('unsafe child values become safe enums without exposing private inputs', async () => {
+    const profile = await createChromeProfile();
+    const child = fakeChrome(profile);
+    const spawnFailure = new Error(SENTINEL);
+    Object.defineProperty(spawnFailure, 'code', { get() { throw new Error(SENTINEL); } });
+    try {
+      await Promise.resolve();
+      assert.throws(() => child.emit('error', spawnFailure), (error) => error === spawnFailure);
+      child.emit('exit', NaN, SENTINEL);
+      await assert.rejects(launch(profile, async () => { throw spawnFailure; }), (error) => error === spawnFailure);
+      const snapshot = readDiagnostic(captured);
+      assert.equal(snapshot.error, 'other');
+      assert.equal(snapshot.signal, 'other');
+      assert.equal(snapshot.exitCode, -1);
+      assert(!JSON.stringify(captured).includes(profile.arg));
+    } finally {
+      await release(profile, child);
+      assertDetached(child);
+    }
+  });
+
+  test('release removes early and late child observers without emitting diagnostics', async () => {
+    const profile = await createChromeProfile();
+    const child = fakeChrome(profile);
+    await release(profile, child);
+    await Promise.resolve();
+    assertDetached(child);
+    const late = fakeChrome(profile);
+    await Promise.resolve();
+    assertDetached(late);
+    assert.deepEqual(captured, [], 'Cleanup must not emit diagnostics or observe later children');
+  });
+});
