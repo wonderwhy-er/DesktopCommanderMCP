@@ -49,4 +49,16 @@ writeFileSync('server.json', JSON.stringify(serverJson, null, 2) + '\n');
 const versionFileContent = `export const VERSION = '${version}';\n`;
 writeFileSync('src/version.ts', versionFileContent);
 
-console.log(`Version ${version} synchronized${shouldBump ? ' and bumped' : ''} across package.json, server.json, and version.ts`);
+// The repository-root manifest is a discoverable snapshot of the latest STABLE MCPB.
+// Never advertise an alpha/beta package to directory crawlers. The real bundle
+// manifest is generated from the same template in scripts/build-mcpb.cjs.
+const stableRelease = /^\d+\.\d+\.\d+$/.test(version);
+if (stableRelease) {
+    const template = readFileSync('manifest.template.json', 'utf8');
+    const manifest = JSON.parse(template.replace('"{{VERSION}}"', JSON.stringify(version)));
+    // This schema path is meaningful only inside the bundle build directory.
+    delete manifest.$schema;
+    writeFileSync('manifest.json', JSON.stringify(manifest, null, 2) + '\n');
+}
+
+console.log(`Version ${version} synchronized${shouldBump ? ' and bumped' : ''} across package.json, server.json, version.ts${stableRelease ? ', and manifest.json' : ' (stable root manifest unchanged)'}`);
