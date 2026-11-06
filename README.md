@@ -574,8 +574,8 @@ The server provides a comprehensive set of tools organized into several categori
 
 | Category | Tool | Description |
 |----------|------|-------------|
-| **Configuration** | `get_config` | Get the complete server configuration as JSON (includes blockedCommands, defaultShell, allowedDirectories, fileReadLineLimit, fileWriteLineLimit, telemetryEnabled) |
-| | `set_config_value` | Set a specific configuration value by key. Available settings: <br>• `blockedCommands`: Array of shell commands that cannot be executed<br>• `defaultShell`: Shell to use for commands (e.g., bash, zsh, powershell)<br>• `allowedDirectories`: Array of filesystem paths the server can access for file operations (⚠️ terminal commands can still access files outside these directories)<br>• `fileReadLineLimit`: Maximum lines to read at once (default: 1000)<br>• `fileWriteLineLimit`: Maximum lines to write at once (default: 50)<br>• `telemetryEnabled`: Enable/disable telemetry (boolean) |
+| **Configuration** | `get_config` | Get the complete server configuration as JSON (includes blockedCommands, defaultShell, allowedDirectories, fileReadLineLimit, fileWriteLineLimit, telemetryEnabled, toolCallAuditLogEnabled) |
+| | `set_config_value` | Set a specific configuration value by key. Available settings: <br>• `blockedCommands`: Array of shell commands that cannot be executed<br>• `defaultShell`: Shell to use for commands (e.g., bash, zsh, powershell)<br>• `allowedDirectories`: Array of filesystem paths the server can access for file operations (⚠️ terminal commands can still access files outside these directories)<br>• `fileReadLineLimit`: Maximum lines to read at once (default: 1000)<br>• `fileWriteLineLimit`: Maximum lines to write at once (default: 50)<br>• `telemetryEnabled`: Enable/disable telemetry (boolean)<br>• `toolCallAuditLogEnabled`: Enable/disable writing tool calls to `claude_tool_call.log` and `tool-history.jsonl` (boolean, default: true) |
 | **Terminal** | `start_process` | Start programs with smart detection of when they're ready for input |
 | | `interact_with_process` | Send commands to running programs and get responses |
 | | `read_process_output` | Read output from running processes |
@@ -787,6 +787,8 @@ The fuzzy search logs help you understand:
 ## Local Tool History and Audit Logs
 
 Desktop Commander keeps tool-call records **locally on the machine running the MCP server**. These local files are separate from optional telemetry and are not a server-side historical audit log.
+
+Both files below are written while the `toolCallAuditLogEnabled` setting is on, which is the default. To stop writing them, set it to `false`: ask the AI to call `set_config_value({ "key": "toolCallAuditLogEnabled", "value": false })`, or set `"toolCallAuditLogEnabled": false` in `config.json` in the same folder (`~/.claude-server-commander`, on Windows `%USERPROFILE%\.claude-server-commander`). From then on neither file gets new calls, and `get_recent_tool_calls` lists what `tool-history.jsonl` held when Desktop Commander started plus the calls made since. Files already written aren't deleted, and `tool-history.jsonl` is still kept bounded as described [below](#tool-historyjsonl--recent-tool-call-history); delete them if you don't want to keep them. The setting doesn't stop the [fuzzy search log](#fuzzy-search-logs) that `edit_block` writes, or the per-tool call counts that Desktop Commander keeps in `config.json`.
 
 ### `claude_tool_call.log` — local argument log
 

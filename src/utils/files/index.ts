@@ -7,7 +7,7 @@
 export * from './base.js';
 
 // Factory function
-export { getFileHandler, isExcelFile, isImageFile, preloadFileSupport, stillLoadingError } from './factory.js';
+export { getFileHandler, isExcelFile, preloadFileSupport, stillLoadingError } from './factory.js';
 export type { FileAction } from './factory.js';
 
 // File handlers

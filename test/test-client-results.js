@@ -1,7 +1,9 @@
 /**
  * What a client receives from the tools the stack's fixes touched: exactly
  * what it received before, but for the search answers #768 made say how a
- * search ended (here: stopped at maxResults). Facts those fixes added for
+ * search ended (here: stopped at maxResults), and start_process's refusals,
+ * which name the blocked entry or say why the check failed, and its note on a
+ * program the check can't see (#870, #873). Facts those fixes added for
  * Desktop Commander's own code and tests (structuredContent) are dropped before
  * the reply (src/utils/internal-facts.ts), so no other new information reaches the client.
  * Runs the real server over stdio, as a client does.
@@ -71,7 +73,6 @@ async function processToolsSendOnlyText(client) {
   assertNothingInternal('start_process', finished);
 
   const blocked = await client.callTool({ name: 'start_process', arguments: { command: 'mkfs', timeout_ms: 1000 } });
-  assert.strictEqual(textOf(blocked), 'Error: Command not allowed: mkfs', 'a blocked command should answer as before');
   assertNothingInternal('start_process (blocked command)', blocked);
 
   const repl = await client.callTool({ name: 'start_process', arguments: { command: 'node -i', timeout_ms: 5000 } });
@@ -93,6 +94,29 @@ async function processToolsSendOnlyText(client) {
     await client.callTool({ name: 'force_terminate', arguments: { pid } });
   }
   console.log('✓ start_process, interact_with_process, list_sessions: nothing internal is sent');
+}
+
+/**
+ * start_process's refusal names the blocked entry or says why the check failed,
+ * and a program the check can't see is noted (#870, #873; it said "Error:
+ * Command not allowed: <command>")
+ */
+async function startProcessSaysWhatTheCheckSaw(client, dir) {
+  const blocked = await client.callTool({ name: 'start_process', arguments: { command: 'mkfs', timeout_ms: 1000 } });
+  assert.strictEqual(textOf(blocked), 'Error: Command not allowed: "mkfs" is in the blockedCommands setting.',
+    'a blocked command should name the blockedCommands entry');
+
+  const failed = await client.callTool({ name: 'start_process', arguments: { command: 'echo "unclosed', shell: 'sh', timeout_ms: 1000 } });
+  assert.strictEqual(textOf(failed),
+    'Error: Command not allowed: the check for blocked commands failed (unterminated double quote), so nothing was run.',
+    "a command the check can't read should be refused, saying why");
+
+  // A file that isn't there, so the shell runs nothing
+  const script = path.join(dir, 'missing.sh');
+  const unseen = await client.callTool({ name: 'start_process', arguments: { command: `sh "${script}"`, timeout_ms: 10000 } });
+  assert(textOf(unseen).endsWith(`\n\nNote: the blocklist could not check the commands in ${script}, because they are in that file, not in this command.`),
+    `a script file given to a shell should be noted at the end of the answer, got: ${textOf(unseen)}`);
+  console.log("✓ start_process: the refusal names the blocked entry or why the check failed, and a program the check can't see is noted");
 }
 
 /** start_search and get_more_search_results send only their text */
@@ -154,8 +178,8 @@ export default async function runTests() {
   try {
     client = await connectToServer('client-results-test');
     for (const check of [
-      writePdfIgnoringAnOption, processToolsSendOnlyText, searchToolsSendOnlyText, toolDescriptionsAsBefore,
-      searchStoppedAtMaxResultsSaysSo,
+      writePdfIgnoringAnOption, processToolsSendOnlyText, startProcessSaysWhatTheCheckSaw, searchToolsSendOnlyText,
+      toolDescriptionsAsBefore, searchStoppedAtMaxResultsSaysSo,
     ]) {
       try {
         await check(client, dir);

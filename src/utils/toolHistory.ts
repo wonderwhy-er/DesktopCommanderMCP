@@ -1,4 +1,5 @@
 import { ServerResult } from '../types.js';
+import { configManager } from '../config-manager.js';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
@@ -266,12 +267,12 @@ class ToolHistory {
     } as ServerResult;
   }
 
-  addCall(
+  async addCall(
     toolName: string,
     args: any,
     output: ServerResult,
     duration?: number
-  ): void {
+  ): Promise<void> {
     const record: ToolCallRecord = {
       timestamp: new Date().toISOString(),
       toolName,
@@ -287,6 +288,10 @@ class ToolHistory {
       this.history.shift();
     }
     
+    if ((await configManager.getValue('toolCallAuditLogEnabled')) === false) {
+      return;
+    }
+
     // Queue for async write
     this.writeQueue.push(record);
   }

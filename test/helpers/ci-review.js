@@ -381,6 +381,9 @@ function testsPart(tests, context, { coverage = true } = {}) {
   } else if (tests.uncovered.length > 0) {
     uncovered = ['The changed lines no test ran (the coverage report, every platform together):',
       ...tests.uncovered.map(({ file, ranges }) => `- ${file}: ${rangesText(ranges)}`)];
+  } else if (tests.provenance?.origin === 'native') {
+    uncovered = ['No uncovered changed lines were found in the supplied partial coverage records. '
+      + 'Changed-line coverage outside those records remains UNKNOWN.'];
   } else {
     uncovered = ['Every changed line the coverage report counts was run by a test.'];
   }

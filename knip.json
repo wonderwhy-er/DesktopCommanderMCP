@@ -1,0 +1,25 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  "entry": [
+    "{setup,uninstall}-claude-server.js!",
+    "track-installation.js!",
+    "src/npm-scripts/verify-ripgrep.ts!",
+    "src/remote-device/scripts/blocking-offline-update.js!",
+    "src/ui/*/src/main.ts!",
+    "scripts/download-all-ripgrep.cjs",
+    "scripts/ripgrep-wrapper.js",
+    "test/test*.js",
+    "test/*.test.js",
+    "test/repro/*.js",
+    "test/integration/*.js",
+    "test/docker/*.js",
+    "test/fixtures/*.{js,mjs}",
+    "test/helpers/test-home.js",
+    "test/ci-review-budget.js",
+    "test/cross-test.js",
+    "vendor/telemetry-contract/*.test.js"
+  ],
+  "project": ["src/**/*.{js,ts}!", "*.js!", "scripts/**/*.{js,cjs,mjs}", "test/**/*.{js,mjs}", "vendor/**/*.js"],
+  "ignoreDependencies": ["c8"],
+  "ignoreBinaries": ["xdg-open", "mkfifo", "subst", "icacls", "hdiutil", "diskutil", "attrib"]
+}

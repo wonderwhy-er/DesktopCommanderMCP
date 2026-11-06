@@ -21,7 +21,10 @@ import { isTestHome } from './helpers/test-env.js';
 
 // Every telemetry payload this process would send
 const sent = [];
-https.request = (options, callback) => {
+// Requests whose callback the https.request fake did not get: the code calls https.request(url, options, onResponse)
+const unanswered = [];
+https.request = (url, options, callback) => {
+  if (typeof callback !== 'function') unanswered.push(typeof options);
   const chunks = [];
   const req = new EventEmitter();
   req.write = (data) => { chunks.push(String(data)); return true; };
@@ -39,6 +42,8 @@ https.request = (options, callback) => {
 };
 syncBuiltinESMExports();
 delete process.env.DESKTOP_COMMANDER_DISABLE_TELEMETRY;
+// The device sets this from the Remote MCP server; transport events go only there
+process.env.DC_TELEMETRY_URL = 'https://telemetry.desktopcommander.app/mp/collect';
 
 const { captureTransport } = await import('../dist/utils/capture.js');
 const { configManager } = await import('../dist/config-manager.js');
@@ -71,6 +76,7 @@ async function testKnownPathsRedacted() {
   await captureTransport('operation_start', fields, 'user-1');
   const [params] = await sentEvents('operation_start');
   assert.ok(params, `the transport event should be sent, sent: ${JSON.stringify(sent)}`);
+  assert.deepStrictEqual(unanswered, [], 'every request should reach the fake with its callback');
   const everything = JSON.stringify(sent).toLowerCase();
   for (const folder of [ALLOWED, os.homedir()]) {
     assert.ok(!everything.includes(JSON.stringify(folder).slice(1, -1).toLowerCase()), `a transport event sent the folder ${folder} unredacted: ${JSON.stringify(params)}`);

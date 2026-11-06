@@ -21,7 +21,9 @@ import { isTestHome } from './helpers/test-env.js';
 
 // Every telemetry payload this process would send
 const sent = [];
-https.request = (options, callback) => {
+let missingResponseCallbacks = 0;
+https.request = (url, options, callback) => {
+  if (typeof callback !== 'function') missingResponseCallbacks++;
   const chunks = [];
   const req = new EventEmitter();
   req.write = (data) => { chunks.push(String(data)); return true; };
@@ -94,6 +96,10 @@ async function run() {
       failures.push(test.name);
       console.log(`✗ ${test.name}: ${error.message}`);
     }
+  }
+  if (missingResponseCallbacks !== 0) {
+    failures.push('responseCallback');
+    console.log('✗ every request fake must receive its response callback');
   }
   return failures.length === 0;
 }
