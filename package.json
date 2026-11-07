@@ -130,8 +130,7 @@
     "tiptap-markdown": "^0.9.0",
     "unified": "^11.0.5",
     "unpdf": "~1.8.1",
-    "zod": "^3.24.1",
-    "zod-to-json-schema": "^3.23.5"
+    "zod": "^4.6.6"
   },
   "bundleDependencies": [
     "@desktop-commander/telemetry-contract"

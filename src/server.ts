@@ -13,7 +13,6 @@ import {
     type CallToolRequest,
     type InitializeRequest,
 } from "@modelcontextprotocol/sdk/types.js";
-import { zodToJsonSchema } from "zod-to-json-schema";
 import { getSystemInfo, getOSSpecificGuidance, getPathGuidance, getDevelopmentToolGuidance } from './utils/system-info.js';
 
 // Get system information once at startup
@@ -48,7 +47,9 @@ import {
     GetConfigArgsSchema,
     SetConfigValueArgsSchema,
     ListProcessesArgsSchema,
+    KillProcessInputArgsSchema,
     EditBlockArgsSchema,
+    EditBlockInputArgsSchema,
     GetUsageStatsArgsSchema,
     GiveFeedbackArgsSchema,
     StartSearchArgsSchema,
@@ -57,6 +58,8 @@ import {
     ListSearchesArgsSchema,
     GetRecentToolCallsArgsSchema,
     WritePdfArgsSchema,
+    WritePdfInputArgsSchema,
+    toMcpInputSchema,
     toolArgSchemas,
 } from './tools/schemas.js';
 import {
@@ -326,7 +329,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         - version (version of the DesktopCommander)
                         - systemInfo (operating system and environment details)
                         ${CMD_PREFIX_DESCRIPTION}`,
-                inputSchema: zodToJsonSchema(GetConfigArgsSchema),
+                inputSchema: toMcpInputSchema(GetConfigArgsSchema),
                 _meta: buildUiToolMeta(CONFIG_EDITOR_RESOURCE_URI, true, showMcpUiPreviews),
                 annotations: {
                     title: "Get Configuration",
@@ -355,7 +358,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         to the entire file system, regardless of the operating system.
                         
                         ${CMD_PREFIX_DESCRIPTION}`,
-                inputSchema: zodToJsonSchema(SetConfigValueArgsSchema),
+                inputSchema: toMcpInputSchema(SetConfigValueArgsSchema),
                 annotations: {
                     title: "Set Configuration Value",
                     readOnlyHint: false,
@@ -421,7 +424,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
 
                         ${PATH_GUIDANCE}
                         ${CMD_PREFIX_DESCRIPTION}`,
-                inputSchema: zodToJsonSchema(ReadFileArgsSchema),
+                inputSchema: toMcpInputSchema(ReadFileArgsSchema),
                 _meta: buildUiToolMeta(FILE_PREVIEW_RESOURCE_URI, true, showMcpUiPreviews),
                 annotations: {
                     title: "Read File or URL",
@@ -444,7 +447,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         
                         ${PATH_GUIDANCE}
                         ${CMD_PREFIX_DESCRIPTION}`,
-                inputSchema: zodToJsonSchema(ReadMultipleFilesArgsSchema),
+                inputSchema: toMcpInputSchema(ReadMultipleFilesArgsSchema),
                 annotations: {
                     title: "Read Multiple Files",
                     readOnlyHint: true,
@@ -475,7 +478,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
 
                         ${PATH_GUIDANCE}
                         ${CMD_PREFIX_DESCRIPTION}`,
-                inputSchema: zodToJsonSchema(WriteFileArgsSchema),
+                inputSchema: toMcpInputSchema(WriteFileArgsSchema),
                 _meta: buildUiToolMeta(FILE_PREVIEW_RESOURCE_URI, true, showMcpUiPreviews),
                 annotations: {
                     title: "Write File",
@@ -537,7 +540,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
 
                         ${PATH_GUIDANCE}
                         ${CMD_PREFIX_DESCRIPTION}`,
-                inputSchema: zodToJsonSchema(WritePdfArgsSchema),
+                inputSchema: toMcpInputSchema(WritePdfInputArgsSchema),
                 annotations: {
                     title: "Write/Modify PDF",
                     readOnlyHint: false,
@@ -555,7 +558,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         
                         ${PATH_GUIDANCE}
                         ${CMD_PREFIX_DESCRIPTION}`,
-                inputSchema: zodToJsonSchema(CreateDirectoryArgsSchema),
+                inputSchema: toMcpInputSchema(CreateDirectoryArgsSchema),
                 annotations: {
                     title: "Create Directory",
                     readOnlyHint: false,
@@ -596,7 +599,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         
                         ${PATH_GUIDANCE}
                         ${CMD_PREFIX_DESCRIPTION}`,
-                inputSchema: zodToJsonSchema(ListDirectoryArgsSchema),
+                inputSchema: toMcpInputSchema(ListDirectoryArgsSchema),
                 _meta: buildUiToolMeta(FILE_PREVIEW_RESOURCE_URI, true, showMcpUiPreviews),
                 annotations: {
                     title: "List Directory Contents",
@@ -615,7 +618,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         
                         ${PATH_GUIDANCE}
                         ${CMD_PREFIX_DESCRIPTION}`,
-                inputSchema: zodToJsonSchema(MoveFileArgsSchema),
+                inputSchema: toMcpInputSchema(MoveFileArgsSchema),
                 annotations: {
                     title: "Move/Rename File",
                     readOnlyHint: false,
@@ -699,7 +702,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         
                         ${PATH_GUIDANCE}
                         ${CMD_PREFIX_DESCRIPTION}`,
-                inputSchema: zodToJsonSchema(StartSearchArgsSchema),
+                inputSchema: toMcpInputSchema(StartSearchArgsSchema),
                 annotations: {
                     title: "Start Search",
                     readOnlyHint: true,
@@ -731,7 +734,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         results from a search started with start_search.
                         
                         ${CMD_PREFIX_DESCRIPTION}`,
-                inputSchema: zodToJsonSchema(GetMoreSearchResultsArgsSchema),
+                inputSchema: toMcpInputSchema(GetMoreSearchResultsArgsSchema),
                 annotations: {
                     title: "Get Search Results",
                     readOnlyHint: true,
@@ -752,7 +755,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         automatically cleaned up after 5 minutes.
                         
                         ${CMD_PREFIX_DESCRIPTION}`,
-                inputSchema: zodToJsonSchema(StopSearchArgsSchema),
+                inputSchema: toMcpInputSchema(StopSearchArgsSchema),
                 annotations: {
                     title: "Stop Search",
                     readOnlyHint: false,
@@ -770,7 +773,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         multiple concurrent searches.
                         
                         ${CMD_PREFIX_DESCRIPTION}`,
-                inputSchema: zodToJsonSchema(ListSearchesArgsSchema),
+                inputSchema: toMcpInputSchema(ListSearchesArgsSchema),
                 annotations: {
                     title: "List Active Searches",
                     readOnlyHint: true,
@@ -796,7 +799,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         
                         ${PATH_GUIDANCE}
                         ${CMD_PREFIX_DESCRIPTION}`,
-                inputSchema: zodToJsonSchema(GetFileInfoArgsSchema),
+                inputSchema: toMcpInputSchema(GetFileInfoArgsSchema),
                 annotations: {
                     title: "Get File Information",
                     readOnlyHint: true,
@@ -861,7 +864,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
 
                         ${PATH_GUIDANCE}
                         ${CMD_PREFIX_DESCRIPTION}`,
-                inputSchema: zodToJsonSchema(EditBlockArgsSchema),
+                inputSchema: toMcpInputSchema(EditBlockInputArgsSchema),
                 _meta: buildUiToolMeta(FILE_PREVIEW_RESOURCE_URI, true, showMcpUiPreviews),
                 annotations: {
                     title: "Edit Block",
@@ -913,7 +916,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
 
                         ${PATH_GUIDANCE}
                         ${CMD_PREFIX_DESCRIPTION}`,
-                inputSchema: zodToJsonSchema(StartProcessArgsSchema),
+                inputSchema: toMcpInputSchema(StartProcessArgsSchema),
                 annotations: {
                     title: "Start Terminal Process",
                     readOnlyHint: false,
@@ -956,7 +959,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         Timeout reached (may still be running)
 
                         ${CMD_PREFIX_DESCRIPTION}`,
-                inputSchema: zodToJsonSchema(ReadProcessOutputArgsSchema),
+                inputSchema: toMcpInputSchema(ReadProcessOutputArgsSchema),
                 annotations: {
                     title: "Read Process Output",
                     readOnlyHint: true,
@@ -999,7 +1002,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         - Timeline of output events
 
                         ${CMD_PREFIX_DESCRIPTION}`,
-                inputSchema: zodToJsonSchema(InteractWithProcessArgsSchema),
+                inputSchema: toMcpInputSchema(InteractWithProcessArgsSchema),
                 annotations: {
                     title: "Send Input to Process",
                     readOnlyHint: false,
@@ -1013,7 +1016,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         Force terminate a running terminal session.
                         
                         ${CMD_PREFIX_DESCRIPTION}`,
-                inputSchema: zodToJsonSchema(ForceTerminateArgsSchema),
+                inputSchema: toMcpInputSchema(ForceTerminateArgsSchema),
                 annotations: {
                     title: "Force Terminate Process",
                     readOnlyHint: false,
@@ -1037,7 +1040,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         - Long runtime with blocked status may indicate stuck process
                         
                         ${CMD_PREFIX_DESCRIPTION}`,
-                inputSchema: zodToJsonSchema(ListSessionsArgsSchema),
+                inputSchema: toMcpInputSchema(ListSessionsArgsSchema),
                 annotations: {
                     title: "List Terminal Sessions",
                     readOnlyHint: true,
@@ -1053,7 +1056,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         Returns process information including PID, command name, CPU usage, and memory usage.
                         
                         ${CMD_PREFIX_DESCRIPTION}`,
-                inputSchema: zodToJsonSchema(ListProcessesArgsSchema),
+                inputSchema: toMcpInputSchema(ListProcessesArgsSchema),
                 annotations: {
                     title: "List Running Processes",
                     readOnlyHint: true,
@@ -1071,7 +1074,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         Use with caution as this will forcefully terminate the specified process.
 
                         ${CMD_PREFIX_DESCRIPTION}`,
-                inputSchema: zodToJsonSchema(KillProcessArgsSchema),
+                inputSchema: toMcpInputSchema(KillProcessInputArgsSchema),
                 annotations: {
                     title: "Kill Process",
                     readOnlyHint: false,
@@ -1087,7 +1090,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         Returns summary of tool usage, success/failure rates, and performance metrics.
                         
                         ${CMD_PREFIX_DESCRIPTION}`,
-                inputSchema: zodToJsonSchema(GetUsageStatsArgsSchema),
+                inputSchema: toMcpInputSchema(GetUsageStatsArgsSchema),
                 annotations: {
                     title: "Get Usage Statistics",
                     readOnlyHint: true,
@@ -1112,7 +1115,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         are replaced with an omission marker.
                         
                         ${CMD_PREFIX_DESCRIPTION}`,
-                inputSchema: zodToJsonSchema(GetRecentToolCallsArgsSchema),
+                inputSchema: toMcpInputSchema(GetRecentToolCallsArgsSchema),
                 annotations: {
                     title: "Get Recent Tool Calls",
                     readOnlyHint: true,
@@ -1135,7 +1138,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         No input parameters are required.
                         
                         ${CMD_PREFIX_DESCRIPTION}`,
-                inputSchema: zodToJsonSchema(GiveFeedbackArgsSchema),
+                inputSchema: toMcpInputSchema(GiveFeedbackArgsSchema),
                 annotations: {
                     title: "Give Feedback",
                     readOnlyHint: false,
