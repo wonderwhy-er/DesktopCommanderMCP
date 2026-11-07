@@ -57,8 +57,13 @@ test('ordinary, quoted and runtime brace arguments keep their existing meaning',
 
 test('argument expansion retains the existing word and work limit', async () => {
   const reading = await readPosixCommands('env {1..1001}');
-  assert.match(reading.parseError, /brace expansion/);
-  assert.deepEqual(reading.commands, []);
+  assert.equal(reading.parseError, undefined);
+  assert.match(reading.commands[0].argumentError, /brace expansion/);
+  assert.deepEqual(reading.commands[0].words, ['env'], 'the over-budget argument is not presented as inspected');
+  const check = await commandManager.checkCommand('env {1..1001}', 'bash');
+  assert.equal(check.verdict, 'failed');
+  assert.match(check.reason, /brace expansion/);
+  assert.equal(commandManager.isRefused(check), true, 'the wrapper must still refuse incomplete inspection');
 });
 
 test('a retained runtime alternative stops later arguments becoming command names', async () => {
