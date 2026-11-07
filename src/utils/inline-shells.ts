@@ -1,5 +1,5 @@
 import { getShellType, POSIX_SHELLS, programName, type ShellType } from './shell.js';
-import type { FoundCommand } from './command-reading.js';
+import { requireCompleteArguments, type CmdDelayedExpansion, type FoundCommand } from './command-reading.js';
 import { sameShellProgramReadings, shellOptionReadings, textProgramReadings, type OptionReadings } from './command-wrappers.js';
 
 /**
@@ -39,6 +39,8 @@ export interface ShellRun {
   file?: string | null;
   /** The shell that reads its texts, when it isn't the program itself: sh for su -c's, cmd for runas's command line */
   shell?: string;
+  /** A new CMD invocation's explicit mode; absent/unknown never inherits the outer CMD mode. */
+  cmdDelayedExpansion?: CmdDelayedExpansion;
 }
 
 /**
@@ -89,6 +91,7 @@ function isPowerShellParameter(word: string | null): boolean {
  * counts. bash's --rcfile or --init-file names a file it runs too.
  */
 function posixShellRuns(found: FoundCommand, program: string): ShellRun {
+  requireCompleteArguments(found);
   return readingsRun(shellOptionReadings(program, found.words), found, { script: true });
 }
 
@@ -99,7 +102,7 @@ function posixShellRuns(found: FoundCommand, program: string): ShellRun {
  * user, a file or a group.
  */
 function textProgramRuns(found: FoundCommand, program: string): ShellRun {
-  const text = textProgramReadings(program, found.words);
+  const text = textProgramReadings(program, found.words, found);
   if (!text) return { texts: [] };
   const run = { ...readingsRun(text.readings, found, { script: false }), shell: text.shell };
   // An explicit command text consumes the shell's later words as arguments, not another script.
@@ -112,9 +115,10 @@ function textProgramRuns(found: FoundCommand, program: string): ShellRun {
     wordTexts: [text.shell, ...at.map(i => found.wordTexts[i])],
   };
   const inner = posixShellRuns(shellWords, text.shell);
+  const file = run.file === null ? null : inner.file;
   return {
     ...run, texts: [...new Set([...run.texts, ...inner.texts])],
-    ...(run.file === null || inner.file !== undefined ? { file: null } : {}),
+    ...(file === undefined ? {} : { file }),
   };
 }
 
@@ -158,7 +162,9 @@ function readingsRun(
  * -Command or -File. Where the check can't tell which word is a value,
  * every reading counts.
  */
-function powerShellRuns({ words, wordTexts }: FoundCommand, program: string): ShellRun {
+function powerShellRuns(found: FoundCommand, program: string): ShellRun {
+  requireCompleteArguments(found);
+  const { words, wordTexts } = found;
   const texts: string[] = [];
   // The script files the readings name, and null for a part known only at run time, which may hold any command
   const files = new Set<string | null>();
@@ -241,23 +247,34 @@ function cmdQuoteReadings(line: string, alwaysDropsQuotes: boolean): string[] {
  * where a word with whitespace in it is in quotes, as PowerShell and Git Bash
  * pass it.
  */
-function cmdRuns({ words, wordTexts }: FoundCommand): ShellRun {
+function cmdRuns(found: FoundCommand): ShellRun {
+  requireCompleteArguments(found);
+  const { words, wordTexts } = found;
   // Each word is a switch or a part of the command, so one known only at run time may hold any command (cmd $opts)
   const noted = words.slice(1).includes(null) ? { file: null } : {};
   let alwaysDropsQuotes = false;
+  let cmdDelayedExpansion: CmdDelayedExpansion = 'unknown';
   for (let i = 1; i < wordTexts.length; i++) {
     const word = wordTexts[i];
     if (!word.startsWith('/')) break;
     const run = /^((?:\/(?![ckr])[^/]*)*)\/[ckr](.*)$/is.exec(word);
+    const switches = run ? run[1] : word;
+    if (words[i] === null) {
+      cmdDelayedExpansion = 'unknown';
+    } else {
+      for (const match of switches.matchAll(/\/v:(on|off)(?=\/|$)/gi)) {
+        cmdDelayedExpansion = match[1].toLowerCase() as 'on' | 'off';
+      }
+    }
     // /s: cmd drops the quotes around the command in every case
     if (/\/s(?:\/|$)/i.test(run ? run[1] : word)) alwaysDropsQuotes = true;
     if (!run) continue;
     const lineWords = run[2] ? [run[2], ...wordTexts.slice(i + 1)] : wordTexts.slice(i + 1);
     if (lineWords.length === 0) break;
     const line = lineWords.map((lineWord) => (lineWord === '' || /\s/.test(lineWord) ? `"${lineWord}"` : lineWord)).join(' ');
-    return { texts: cmdQuoteReadings(line, alwaysDropsQuotes), ...noted };
+    return { texts: cmdQuoteReadings(line, alwaysDropsQuotes), cmdDelayedExpansion, ...noted };
   }
-  return { texts: [], ...noted };
+  return { texts: [], cmdDelayedExpansion, ...noted };
 }
 
 /**
@@ -279,13 +296,14 @@ function cmdRuns({ words, wordTexts }: FoundCommand): ShellRun {
  */
 export function sameShellTexts(found: FoundCommand, shellType: ShellType): ShellRun {
   const { name, words, wordTexts } = found;
-  const program = programName(name);
-  const sameShell = sameShellProgramReadings(program, words);
+  const program = programName(name, shellType);
+  const sameShell = sameShellProgramReadings(program, words, found);
   if (sameShell) {
     const run = readingsRun(sameShell, found, { script: false });
     return run.texts.includes('!!') ? { texts: [], file: null } : run;
   }
   if (shellType === 'posix' && program === 'eval') {
+    requireCompleteArguments(found);
     const from = words[1] === '--' ? 2 : 1;
     return {
       texts: from < words.length ? [wordTexts.slice(from).join(' ')] : [],
@@ -293,6 +311,7 @@ export function sameShellTexts(found: FoundCommand, shellType: ShellType): Shell
     };
   }
   if (shellType === 'powershell' && program === 'invoke-expression') {
+    requireCompleteArguments(found);
     // Where the words that aren't parameter names are; with none, the text comes from the pipeline
     const at = words.flatMap((word, i) => (i > 0 && (word === null || !/^[-\u2013\u2014\u2015]/.test(word)) ? [i] : []));
     // -Command:'net user' (-c: 'net user'): the command without the parameter's name runs the same, and is shorter
@@ -315,9 +334,10 @@ export function sameShellTexts(found: FoundCommand, shellType: ShellType): Shell
  * text in a shell (su -c 'sudo ls'): nothing for any other command. Its kind
  * of shell is taken from its name as found, as checkCommand() takes the
  * reader for a text from the shell it is given.
+ * Existing callers may omit context, so preserve their historical program-name readings.
  */
-export function shellRuns(found: FoundCommand): ShellRun {
-  const program = programName(found.name);
+export function shellRuns(found: FoundCommand, callerShellType?: ShellType): ShellRun {
+  const program = programName(found.name, callerShellType);
   switch (getShellType(found.name)) {
     case 'powershell':
       return powerShellRuns(found, program);

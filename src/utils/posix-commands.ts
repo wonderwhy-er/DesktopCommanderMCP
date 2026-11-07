@@ -1,5 +1,7 @@
 import { parse, forEachChild, type SyntaxNode, type Word, type WordPart } from 'unbash';
 import { braceWords, quotedChars, unquotedChars, MAX_BRACE_WORDS, type WordChar } from './brace-expansion.js';
+import { posixBraceSemantics } from './posix-shell-capabilities.js';
+import type { BraceOptions } from './brace-expansion.js';
 import type { CommandReading, DefinedFunction, FoundCommand } from './command-reading.js';
 
 /**
@@ -19,8 +21,8 @@ import type { CommandReading, DefinedFunction, FoundCommand } from './command-re
  * check never decides on a command it read only in part.
  */
 
-/** Word parts whose text is taken as written (a glob as its own text, not the files it matches) */
-const STATIC_PARTS = new Set(['Literal', 'SingleQuoted', 'AnsiCQuoted', 'Glob']);
+/** Quoted and literal text is known before execution; globs depend on the matching files */
+const STATIC_PARTS = new Set(['Literal', 'SingleQuoted', 'AnsiCQuoted']);
 
 /** Word parts that bash drops when they are empty and unquoted ($X, ${X}, $(cmd)) */
 const VANISHING_PARTS = new Set(['SimpleExpansion', 'ParameterExpansion', 'CommandExpansion']);
@@ -111,12 +113,45 @@ function partChars(part: WordPart): WordChar[] {
  * A brace expansion makes several and bash drops the empty ones: {,sudo} ls
  * runs sudo, {,} sudo runs sudo, and {$X,sudo} id runs sudo when $X is empty.
  */
-function wordsMade(word: Word): { value: string | null; mayVanish: boolean }[] | null {
+function wordsMade(word: Word, options: BraceOptions): { value: string | null; mayVanish: boolean }[] | null {
   if (!word.parts?.some((part) => part.type === 'BraceExpansion')) {
     return [{ value: wordValue(word), mayVanish: mayVanish(word) }];
   }
-  const made = braceWords(braceChars(word));
+  const made = braceWords(braceChars(word), options);
   return made && made.map((text) => ({ value: text.includes('\0') ? null : text, mayVanish: MAY_VANISH.test(text) }));
+}
+
+type ExpandedWord = { value: string | null; mayVanish: boolean; source: Word };
+type ExpandedArguments = { words: ExpandedWord[]; argumentError?: string };
+const BRACE_LIMIT_ERROR = `brace expansion makes more than ${MAX_BRACE_WORDS} words, or takes too long to read`;
+
+/** Keep inspected words aligned; only a tail after a retained command name may defer a bounded failure. */
+function commandWords(words: Word[], options: BraceOptions): ExpandedArguments | null {
+  const expanded: ExpandedWord[] = [];
+  for (const source of words) {
+    const made = wordsMade(source, options);
+    if (made === null) {
+      if (!expanded.some((word) => !word.mayVanish)) return null;
+      return { words: expanded, argumentError: BRACE_LIMIT_ERROR };
+    }
+    expanded.push(...made.map((word) => ({ ...word, source })));
+  }
+  return { words: expanded };
+}
+
+/** A retained runtime word still ends name selection even when its source was already listed. */
+function commandNames(expanded: ExpandedWord[]): { index: number; name: ExpandedWord }[] {
+  const names: { index: number; name: ExpandedWord }[] = [];
+  const runtimeSources = new Set<Word>();
+  for (let index = 0; index < expanded.length; index++) {
+    const name = expanded[index];
+    if (name.value !== null || !runtimeSources.has(name.source)) {
+      names.push({ index, name });
+      if (name.value === null) runtimeSources.add(name.source);
+    }
+    if (!name.mayVanish) break;
+  }
+  return names;
 }
 
 /** Whether bash may drop the word entirely, so that the next word is the command's name */
@@ -151,8 +186,13 @@ function mayRunUnreadCode(command: FoundCommand): boolean {
   return name === null || (name !== undefined && CODE_RUNNERS.has(name));
 }
 
-/** Reads a command for a POSIX shell */
-export async function readPosixCommands(command: string): Promise<CommandReading> {
+/**
+ * The caller supplies its actual selected native endpoint; no endpoint or unsupported capability
+ * retains the legacy reading exactly. Capability capture happens on import, not after caller changes.
+ */
+export async function readPosixCommands(command: string, selectedShell?: string): Promise<CommandReading> {
+  const semantics = selectedShell === undefined ? 'legacy' : await posixBraceSemantics(selectedShell) ?? 'legacy';
+  const options = { semantics };
   const script = parse(command);
   let parseError: string | undefined;
   const commands: FoundCommand[] = [];
@@ -163,31 +203,29 @@ export async function readPosixCommands(command: string): Promise<CommandReading
     if (node.type === 'Script') parseError ??= node.errors?.[0]?.message;
     if (node.type === 'Command' && node.name) {
       const words = [node.name, ...node.args.filter((arg): arg is Word => arg.type === 'Word')];
-      const values = words.map(wordValue);
-      // The name, and the next word too while the words before it may vanish ($EMPTY sudo ls runs sudo)
-      for (let i = 0; i < words.length; i++) {
-        const made = wordsMade(words[i]);
-        if (made === null) {
-          parseError ??= `brace expansion makes more than ${MAX_BRACE_WORDS} words, or takes too long to read`;
-          break;
-        }
-        // Each word made is the name while the ones before it may vanish; those known only at run time all
-        // give the word's text as the name, so it is given once
-        const kept = made.findIndex((word) => !word.mayVanish);
-        const names = kept < 0 ? made : made.slice(0, kept + 1);
-        names.forEach((name, k) => {
-          if (name.value === null && names.findIndex((other) => other.value === null) < k) return;
-          commands.push({
-            name: name.value ?? words[i].text,
-            words: [...made.slice(k).map((word) => word.value), ...values.slice(i + 1)],
-            written: [...made.slice(k).map(() => words[i].text), ...words.slice(i + 1).map((word) => word.text)],
-            // unbash's value of a word keeps the parts known only at run time as written
-            wordTexts: [...made.slice(k).map((word) => word.value ?? words[i].value), ...words.slice(i + 1).map((word) => word.value)],
-            start: backticksStart ?? (i === 0 ? node.pos : words[i].pos),
+      const expanded = commandWords(words, options);
+      if (expanded === null) {
+        parseError ??= BRACE_LIMIT_ERROR;
+      } else {
+        const candidates: FoundCommand[] = commandNames(expanded.words).map(({ index, name }) => {
+          const remaining = expanded.words.slice(index);
+          return {
+            name: name.value ?? name.source.text,
+            words: remaining.map((word) => word.value),
+            written: remaining.map((word) => word.source.text),
+            wordTexts: remaining.map((word) => word.value ?? word.source.value),
+            start: backticksStart ?? (name.source === words[0] ? node.pos : name.source.pos),
             nameAtRunTime: name.value === null,
-          });
+            ...(expanded.argumentError === undefined ? {} : { argumentError: expanded.argumentError }),
+          };
         });
-        if (kept >= 0) break;
+        const unsafePrefix = candidates.some((candidate) => candidate.nameAtRunTime
+          || COMMAND_PREFIXES.has(candidate.words[0] ?? '') || mayRunUnreadCode(candidate));
+        if (expanded.argumentError !== undefined && unsafePrefix) {
+          parseError ??= expanded.argumentError;
+        } else {
+          commands.push(...candidates);
+        }
       }
     }
     const inBackticks = node.type === 'CommandExpansion' && node.text.startsWith('`');
@@ -202,7 +240,8 @@ export async function readPosixCommands(command: string): Promise<CommandReading
   // text may remove: wherever the removal is written, it may run before a call,
   // from a function's body. Code the reader doesn't read may remove any of them.
   const functions: DefinedFunction[] = [];
-  const statements = commands.some(mayRunUnreadCode) ? [] : script.commands;
+  const statements = commands.some((command) => command.argumentError !== undefined || mayRunUnreadCode(command))
+    ? [] : script.commands;
   for (const statement of statements) {
     if (statement.command.type !== 'Function' || statement.background) continue;
     const name = statement.command.name.value;
