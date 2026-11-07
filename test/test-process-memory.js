@@ -1,4 +1,8 @@
-/** Sampler controls and real process measurement; no missing sample counts as a measurement. */
+/**
+ * The #716 repro (test/repro/test-search-memory.js) samples the server and ripgrep with this helper.
+ * A child can exit between samples: zero without a sample is unmeasured, not proof of bounded memory.
+ * These controls distinguish missing measurements from sampler failures.
+ */
 import assert from 'node:assert/strict';
 import childProcess from 'node:child_process';
 import { EventEmitter } from 'node:events';

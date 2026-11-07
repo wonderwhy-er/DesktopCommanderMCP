@@ -127,7 +127,10 @@ export function watchPeakMemory(rootPid, intervalMs = 100) {
     peakOfName: (prefix) => Math.max(0, ...[...peaks.values()].filter((p) => p.name.startsWith(prefix)).map((p) => p.bytes)),
     /** Why sampling failed, or undefined */
     failure: () => failure,
-    /** Safe phase/counter snapshot; no process arguments, environment or error text. */
+    /**
+     * Windows: safe sampler phases, query/sample counters and exit status; POSIX: only { platform }.
+     * Neither snapshot includes process arguments, environment or raw error text.
+     */
     diagnostics: () => diagnostics(),
     stop: () => stop(),
   };
