@@ -6,7 +6,14 @@ import { isTestHome } from './helpers/test-env.js';
 assert.ok(isTestHome(), 'run through the isolated test runner');
 const { readPosixCommands } = await import('../dist/utils/posix-commands.js');
 const { commandManager } = await import('../dist/command-manager.js');
+const { withStartedPrograms } = await import('../dist/utils/command-wrappers.js');
 const shell = '/not-installed/partial-posix-shell';
+const complete = { name: 'echo', words: ['echo'], written: ['echo'], wordTexts: ['echo'],
+  start: 0, nameAtRunTime: false };
+const inspection = { argumentError: 'bounded argument inspection required' };
+const forName = (name, words = [name]) => ({ ...complete, name, words,
+  written: [...words], wordTexts: [...words], ...inspection });
+const deferred = { ...complete, ...inspection };
 
 test('ordinary oversized argument does not make a known executable unreadable', async () => {
   const reading = await readPosixCommands('echo {1..1001}');
@@ -34,8 +41,11 @@ test('required wrapper, command-name and unknown inspections still refuse over-b
   }
 });
 
-test('syntax errors remain refused and complete small readings remain complete', async () => {
+test('syntax errors remain refused beside oversized ordinary arguments', async () => {
   assert.equal((await commandManager.checkCommand('echo {1..1001} "unterminated', shell)).verdict, 'failed');
+});
+
+test('complete 1000-word readings keep full metadata without a deferred property', async () => {
   const reading = await readPosixCommands('echo {1..1000}');
   assert.equal(reading.parseError, undefined);
   assert.equal(reading.commands[0].words.length, 1001, 'the bound is per expansion, not total argv');
@@ -60,22 +70,18 @@ test('partial wrapper, text and script inspection cannot silently become complet
   }
 });
 
-test('deferred metadata is kept in dedup and required by existing consumer role lookups', async () => {
-  const { withStartedPrograms, textProgramReadings, sameShellProgramReadings } =
-    await import('../dist/utils/command-wrappers.js');
-  const { shellRuns, sameShellTexts } = await import('../dist/utils/inline-shells.js');
-  const { shellScriptFiles } = await import('../dist/utils/shell-script-files.js');
-  const { IncompleteArgumentsError } = await import('../dist/utils/command-reading.js');
-  const complete = { name: 'echo', words: ['echo'], written: ['echo'], wordTexts: ['echo'],
-    start: 0, nameAtRunTime: false };
-  const inspection = { argumentError: 'bounded argument inspection required' };
-  const forName = (name, words = [name]) => ({ ...complete, name, words,
-    written: [...words], wordTexts: [...words], ...inspection });
-  const deferred = { ...complete, ...inspection };
+test('dedup keeps complete and deferred records distinct', () => {
   const separate = withStartedPrograms([complete, deferred], shell);
   assert.equal(separate.length, 2, 'dedup cannot merge complete and incomplete records');
   assert.equal(Object.hasOwn(separate[0], 'argumentError'), false);
   assert.equal(separate[1].argumentError, inspection.argumentError);
+});
+
+test('existing consumer roles require complete arguments', async () => {
+  const { textProgramReadings, sameShellProgramReadings } = await import('../dist/utils/command-wrappers.js');
+  const { shellRuns, sameShellTexts } = await import('../dist/utils/inline-shells.js');
+  const { shellScriptFiles } = await import('../dist/utils/shell-script-files.js');
+  const { IncompleteArgumentsError } = await import('../dist/utils/command-reading.js');
   assert.throws(() => withStartedPrograms([{ ...deferred, nameAtRunTime: true }], shell), IncompleteArgumentsError);
   assert.throws(() => withStartedPrograms([forName('env', ['env', '-S'])], shell),
     IncompleteArgumentsError);
