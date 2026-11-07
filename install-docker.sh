@@ -253,11 +253,15 @@ update_system_volume() {
     containers=$(docker ps -q --filter "volume=dc-system") ||
         stop_before_volume_update "Docker didn't answer which containers use the volume dc-system"
     if [ -n "$containers" ]; then
-        docker stop $containers >/dev/null 2>&1 || true
+        local stop_error stop_status=0
+        stop_error=$(docker stop $containers 2>&1 >/dev/null) || stop_status=$?
+        stop_error=${stop_error:0:512}
         containers=$(docker ps -q --filter "volume=dc-system") ||
             stop_before_volume_update "Docker didn't answer which containers use the volume dc-system"
-        [ -z "$containers" ] ||
+        [ -z "$containers" ] || {
+            print_warning "Docker stop exited $stop_status; stderr (first 512 characters): $stop_error"
             stop_before_volume_update "Desktop Commander's container is still running and uses the volume dc-system"
+        }
     fi
 
     # Copies the new image's /usr into the volume, mounted at /target, so an update reaches users

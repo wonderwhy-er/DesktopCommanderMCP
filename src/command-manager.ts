@@ -1,14 +1,17 @@
 import path from 'path';
+import fs from 'fs';
 import {configManager} from './config-manager.js';
 import {capture} from "./utils/capture.js";
-import {getShellType, isShellAvailable, programName, type ShellType} from './utils/shell.js';
+import {getShellType, isShellAvailable, programName, resolveShellPath, type ShellType} from './utils/shell.js';
 import {sameShellTexts, shellRuns} from './utils/inline-shells.js';
 import {shellScriptFiles} from './utils/shell-script-files.js';
 import {readPosixCommands} from './utils/posix-commands.js';
 import {readPowerShellCommands} from './utils/powershell-commands.js';
 import {readCmdCommands} from './utils/cmd-commands.js';
 import {withStartedPrograms} from './utils/command-wrappers.js';
-import type {CommandReading, FoundCommand} from './utils/command-reading.js';
+import {IncompleteArgumentsError, requireCompleteArguments,
+    type CmdDelayedExpansion, type CommandReadOptions, type CommandReading, type FoundCommand
+} from './utils/command-reading.js';
 
 /**
  * The check's answer for one command.
@@ -269,14 +272,23 @@ class CommandManager {
      * bash reader, and where that can't parse fish's own syntax (for … end,
      * echo (date)), as main reads it: by the names extractCommands() finds.
      */
-    async readCommands(command: string, shell: string): Promise<CommandReading> {
+    async readCommands(
+        command: string, shell: string, options: CommandReadOptions = {}
+    ): Promise<CommandReading> {
         switch (getShellType(shell)) {
             case 'powershell':
                 return readPowerShellCommands(command, shell);
             case 'cmd':
-                return readCmdCommands(command);
+                return readCmdCommands(command, options);
         }
-        const reading = await readPosixCommands(command);
+        // Resolve the actual caller selection, not the adapter's anchored launch alias.
+        // Only filesystem identity is read here; unknown endpoints keep the legacy reading.
+        let selectedEndpoint: string | undefined;
+        const selected = resolveShellPath(shell);
+        if (selected !== null) {
+            try { selectedEndpoint = fs.realpathSync(selected); } catch { /* Missing identity stays unsupported. */ }
+        }
+        const reading = await readPosixCommands(command, selectedEndpoint);
         // fish's name, as getShellSpawnArgs() finds it
         if (reading.parseError === undefined || !path.basename(shell).toLowerCase().includes('fish')) return reading;
         const { parseError, ...read } = reading;
@@ -318,7 +330,7 @@ class CommandManager {
      * - a program chosen only when the command runs: a name that is a variable
      *   or another command's output (& $tool), or eval and Invoke-Expression,
      *   which run text the command builds (eval "$CMD");
-     * - a script file given to a shell (bash deploy.sh): the commands in it
+     * - a script file given to a shell (bash deploy.sh, or forwarded by runuser): the commands in it
      *   aren't in the text. A file named only when the command runs ("$SCRIPT")
      *   counts as a program chosen at run time, named by the shell.
      */
@@ -329,8 +341,14 @@ class CommandManager {
                 unseen.push({ what: cmd.name, inFile: false });
                 continue;
             }
-            unseen.push(...this.scriptFiles(cmd, shellType));
-            const unknown = sameShellTexts(cmd, shellType).file === null || shellRuns(cmd).file === null;
+            const files = this.scriptFiles(cmd, shellType);
+            unseen.push(...files);
+            const run = shellRuns(cmd, shellType);
+            // A text-program shell can identify a script that the ordinary file reader does not handle.
+            if (files.length === 0 && run.shell !== undefined && typeof run.file === 'string') {
+                unseen.push({ what: run.file, inFile: true });
+            }
+            const unknown = sameShellTexts(cmd, shellType).file === null || run.file === null;
             if (unknown && !unseen.some((item) => item.what === cmd.name && !item.inFile)) {
                 unseen.push({ what: cmd.name, inFile: false });
             }
@@ -353,18 +371,23 @@ class CommandManager {
             return file === null ? { what: cmd.name, inFile: false } : { what: file, inFile: true };
         };
         if (shellType === 'posix' && (program === 'source' || program === '.')) {
+            requireCompleteArguments(cmd);
             return args[0] === undefined ? [] : [hidden(args[0])];
         }
         // PowerShell runs a .ps1 named as the command (./deploy.ps1, & ./deploy.ps1) as a script file
         if (shellType === 'powershell' && /\.ps1$/i.test(cmd.name)) {
+            requireCompleteArguments(cmd);
             return [hidden(cmd.name)];
         }
         // PowerShell text and file modes use the same host-option readings.
         if (getShellType(cmd.name) === 'powershell') {
-            const file = shellRuns(cmd).file;
+            const file = shellRuns(cmd, shellType).file;
             return file === undefined ? [] : [hidden(file)];
         }
-        return shellScriptFiles(program, args).map(hidden);
+        return shellScriptFiles(program, args, {
+            written: cmd.written.slice(1),
+            ...(cmd.argumentError === undefined ? {} : { argumentError: cmd.argumentError }),
+        }).map(hidden);
     }
 
     /**
@@ -380,8 +403,10 @@ class CommandManager {
      *   error or a missing PowerShell is allowed instead: nothing runs, and
      *   PowerShell or start_process answers.
      */
-    checkCommand(command: string, shell: string): Promise<CommandCheck> {
-        return this.checkText(command, shell, new Map());
+    checkCommand(
+        command: string, shell: string, options: CommandReadOptions = {}
+    ): Promise<CommandCheck> {
+        return this.checkText(command, shell, new Map(), options);
     }
 
     /**
@@ -390,17 +415,22 @@ class CommandManager {
      * In pwsh $a pwsh $a … each text gives every later one again, so without
      * this the work doubled with each pair.
      */
-    private checkText(command: string, shell: string, checked: Map<string, Promise<CommandCheck>>): Promise<CommandCheck> {
-        const key = `${shell}\0${command}`;
+    private checkText(command: string, shell: string, checked: Map<string, Promise<CommandCheck>>,
+                      options: CommandReadOptions): Promise<CommandCheck> {
+        const optionsForShell: Required<CommandReadOptions> = {
+            cmdDelayedExpansion: getShellType(shell) === 'cmd' ? options.cmdDelayedExpansion ?? 'unknown' : 'unknown',
+        };
+        const key = `${shell}\0${optionsForShell.cmdDelayedExpansion}\0${command}`;
         let check = checked.get(key);
         if (check === undefined) {
-            check = this.checkOnce(command, shell, checked);
+            check = this.checkOnce(command, shell, checked, optionsForShell);
             checked.set(key, check);
         }
         return check;
     }
 
-    private async checkOnce(command: string, shell: string, checked: Map<string, Promise<CommandCheck>>): Promise<CommandCheck> {
+    private async checkOnce(command: string, shell: string, checked: Map<string, Promise<CommandCheck>>,
+                            options: Required<CommandReadOptions>): Promise<CommandCheck> {
         try {
             const config = await configManager.getConfig();
             const blockedCommands = config.blockedCommands || [];
@@ -408,7 +438,8 @@ class CommandManager {
             const shellType = getShellType(shell);
             // PowerShell runs nothing when it isn't there or can't parse the command: it, or start_process, answers
             if (shellType === 'powershell' && !isShellAvailable(shell)) return { verdict: 'allowed' };
-            const reading = await this.readCommands(command, shell);
+            const { cmdDelayedExpansion } = options;
+            const reading = await this.readCommands(command, shell, options);
             // A parse error is the command's fault, not the server's, so it isn't logged or sent
             if (reading.parseError !== undefined) {
                 return shellType === 'powershell'
@@ -430,20 +461,28 @@ class CommandManager {
             let unreadable: CommandCheck | undefined;
             for (const found of running) {
                 unseen.push(...this.findUnseen([found], shellType));
-                const run = shellRuns(found);
-                const texts = [
-                    ...sameShellTexts(found, shellType).texts.map((text) => ({ text, runs: shell })),
+                const run = shellRuns(found, shellType);
+                const texts: { text: string; runs: string; cmdDelayedExpansion: CmdDelayedExpansion }[] = [
+                    ...sameShellTexts(found, shellType).texts.map((text) => ({
+                        text,
+                        runs: shell,
+                        cmdDelayedExpansion,
+                    })),
                     // su -c's text runs in sh, runas's command line as cmd reads it
-                    ...run.texts.map((text) => ({ text, runs: run.shell ?? found.name })),
+                    ...run.texts.map((text) => ({
+                        text,
+                        runs: run.shell ?? found.name,
+                        cmdDelayedExpansion: run.cmdDelayedExpansion ?? 'unknown',
+                    })),
                 ];
-                for (const { text, runs } of texts) {
+                for (const { text, runs, cmdDelayedExpansion: innerMode } of texts) {
                     // The shell that runs the command looks a PowerShell's name up itself, in its working folder
                     // too: one the check can't find is read by the PowerShell running the command, when that is one
                     const reader = getShellType(runs) !== 'powershell' ? runs
                         : [runs, shell].find((candidate) => getShellType(candidate) === 'powershell' && isShellAvailable(candidate));
                     const inner: CommandCheck = reader === undefined
                         ? { verdict: 'failed', reason: `${runs} isn't installed here, so the command given to it can't be read` }
-                        : await this.checkText(text, reader, checked);
+                        : await this.checkText(text, reader, checked, { cmdDelayedExpansion: innerMode });
                     if (inner.verdict === 'blocked') return inner;
                     if (inner.verdict === 'failed') unreadable ??= inner;
                     if (inner.verdict === 'unseen') unseen.push(...inner.unseen);
@@ -452,6 +491,7 @@ class CommandManager {
             if (unreadable) return unreadable;
             return unseen.length > 0 ? { verdict: 'unseen', unseen } : { verdict: 'allowed' };
         } catch (error) {
+            if (error instanceof IncompleteArgumentsError) return { verdict: 'failed', reason: error.message };
             const reason = error instanceof Error ? error.message : String(error);
             console.error('Error validating command:', error);
             capture('server_validate_command_error', {

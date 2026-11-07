@@ -1,4 +1,4 @@
-import type { CommandReading, FoundCommand } from './command-reading.js';
+import type { CommandReadOptions, CommandReading, FoundCommand } from './command-reading.js';
 
 /**
  * The command check's reader for cmd. There is no parser for cmd to use, so
@@ -13,7 +13,7 @@ import type { CommandReading, FoundCommand } from './command-reading.js';
  * - a command's name ends at ; , = and / outside "…", also after ^ (net,user
  *   and sc/query run net and sc), but a name with a drive letter keeps its /
  *   (C:/Windows/System32/sc.exe);
- * - a word with %VAR% in it is known only at run time;
+ * - a word with %VAR%, or !VAR! when delayed expansion is explicitly on, is known only at run time;
  * - if and for run the command after their condition or after "do";
  * - call runs the command after it (call :label runs a label of a batch file,
  *   which no blockedCommands entry names).
@@ -29,7 +29,7 @@ interface Token {
   /** The word as written, quotes and ^ included */
   text: string;
   start: number;
-  /** True when the word has %VAR% in it, so its value is known only at run time */
+  /** True when the word can contain a percent or delayed variable expansion */
   atRunTime: boolean;
   /** How many of a word's first characters are ; , = or @ as written: cmd skips them where a command starts */
   lead?: number;
@@ -39,7 +39,47 @@ interface Token {
   textEnd?: number;
 }
 
-function tokenize(text: string): Token[] {
+/** Percent expansion can span a substitution delimiter, but must start in the executable to change its name. */
+function hasPercentVariable(
+  text: string, { startsBefore = text.length }: { startsBefore?: number } = {}
+): boolean {
+  const variable = /%[^%\s]+%/.exec(text);
+  return variable !== null && variable.index < startsBefore;
+}
+
+/**
+ * In explicitly enabled delayed expansion, !VAR! is runtime information
+ * rather than a literal program we can claim to have checked.
+ * Unquoted carets were removed while tokenizing. A remaining caret protects
+ * the next character and interrupts a variable name, as in "!literal^!".
+ */
+function hasDelayedVariable(
+  value: string, { startsBefore = value.length }: { startsBefore?: number } = {}
+): boolean {
+  let opening = -1;
+  for (let i = 0; i < value.length; i++) {
+    if (value[i] === '^') {
+      opening = -1;
+      i++;
+    } else if (value[i] === '!') {
+      if (opening >= 0 && opening < startsBefore && i > opening + 1) return true;
+      opening = i;
+    }
+  }
+  return false;
+}
+
+/** CMD consumes a caret layer in the executable word even within double quotes. */
+function commandWordValue(text: string): string {
+  let value = '';
+  for (let i = 0; i < text.length; i++) {
+    if (text[i] === '^' && i + 1 < text.length) value += text[++i];
+    else if (text[i] !== '"') value += text[i];
+  }
+  return value;
+}
+
+function tokenize(text: string, { cmdDelayedExpansion = 'unknown' }: CommandReadOptions): Token[] {
   const tokens: Token[] = [];
   let i = 0;
   while (i < text.length) {
@@ -95,7 +135,7 @@ function tokenize(text: string): Token[] {
       const lead = /^[;,=@]*/.exec(written)![0].length;
       const drive = /^[A-Za-z]:/.test(value.slice(lead));
       const end = ends.find((at) => at.value >= lead && !(drive && value[at.value] === '/'));
-      const atRunTime = /%[^%\s]+%/.test(written);
+      const atRunTime = hasPercentVariable(written) || (cmdDelayedExpansion === 'on' && hasDelayedVariable(value));
       const ending = { nameEnd: end?.value, textEnd: end?.text };
       tokens.push({ kind: 'word', value, text: written, start, atRunTime, lead, ...ending });
     }
@@ -142,7 +182,8 @@ class CmdReader {
   private position = 0;
   readonly commands: FoundCommand[] = [];
 
-  constructor(private readonly tokens: Token[], private readonly text: string) {}
+  constructor(private readonly tokens: Token[], private readonly text: string,
+              private readonly options: CommandReadOptions) {}
 
   /** Reads commands and the operators between them, up to the end, or up to the ) that closes a group */
   readList(inGroup: boolean): void {
@@ -246,7 +287,7 @@ class CmdReader {
         offsets.push(i);
         command += this.text[i];
       }
-      const reader = new CmdReader(tokenize(command), command);
+      const reader = new CmdReader(tokenize(command, this.options), command, this.options);
       reader.readList(false);
       this.commands.push(...reader.commands.map(found => ({ ...found, start: offsets[found.start] })));
     }
@@ -285,14 +326,23 @@ class CmdReader {
 
   private addCommand(words: Token[]): void {
     const first = words[0];
-    const name = commandName(first);
+    const name = commandWordValue(first.text.slice(first.lead ?? 0, first.textEnd));
     if (!name && words.length === 1) return; // "" alone runs nothing
     const rest = afterName(first);
     const firstWords = rest ? [name, rest] : [name];
+    // Executable words and arguments have different caret phases. Keep the
+    // argument reading intact and classify the executable's spelling separately.
+    // !tool:old=new! starts in the executable even though its substitution spans a name delimiter.
+    const nameLength = commandWordValue(first.text.slice(0, first.textEnd)).length;
+    const nameAtRunTime = hasPercentVariable(first.text, { startsBefore: first.textEnd })
+      || (this.options.cmdDelayedExpansion === 'on'
+      && hasDelayedVariable(commandWordValue(first.text), { startsBefore: nameLength }));
+    const firstWordValues = firstWords.map((word) => (first.atRunTime ? null : word));
+    firstWordValues[0] = nameAtRunTime ? null : name;
     this.commands.push({
       name,
       words: [
-        ...firstWords.map((word) => (first.atRunTime ? null : word)),
+        ...firstWordValues,
         ...words.slice(1).map((word) => (word.atRunTime ? null : word.value)),
       ],
       written: [
@@ -301,14 +351,17 @@ class CmdReader {
       ],
       wordTexts: [...firstWords, ...words.slice(1).map((word) => word.value)],
       start: first.start,
-      nameAtRunTime: first.atRunTime,
+      nameAtRunTime,
     });
   }
 }
 
 /** Reads a command for cmd */
-export async function readCmdCommands(command: string): Promise<CommandReading> {
-  const reader = new CmdReader(tokenize(command), command);
+export async function readCmdCommands(
+  command: string, { cmdDelayedExpansion = 'unknown' }: CommandReadOptions = {}
+): Promise<CommandReading> {
+  const options = { cmdDelayedExpansion };
+  const reader = new CmdReader(tokenize(command, options), command, options);
   try {
     reader.readList(false);
   } catch (error) {
