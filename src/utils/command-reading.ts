@@ -5,8 +5,21 @@
  * in command-manager.ts turns it into a CommandCheck.
  */
 
+/** Private inspection state: the arrays hold only the prefix before a bounded expansion failure. */
+export interface ArgumentInspection {
+  argumentError?: string;
+}
+
+/** An input budget failure, handled like unreadable input rather than a server failure. */
+export class IncompleteArgumentsError extends Error {}
+
+/** Consumers call this only after their existing rules say they need the argument vector. */
+export function requireCompleteArguments(inspection: ArgumentInspection): void {
+  if (inspection.argumentError !== undefined) throw new IncompleteArgumentsError(inspection.argumentError);
+}
+
 /** One command the shell would run */
-export interface FoundCommand {
+export interface FoundCommand extends ArgumentInspection {
   /**
    * The command's name as the shell reads it, with quotes and escapes removed.
    * In PowerShell it is what the name means there: an alias gives its target
@@ -18,7 +31,7 @@ export interface FoundCommand {
   /**
    * The command's words as the shell reads them, starting with the name as
    * written (before PowerShell gives its meaning). A word known only at run
-   * time, such as "$CMD" or "$(date)", is null.
+   * time, such as "$CMD" or "$(date)", is null. With argumentError these arrays are only an inspected prefix.
    */
   words: (string | null)[];
   /**
@@ -73,6 +86,6 @@ export interface CommandReading {
    * method call), which may remove any of them.
    */
   functions: DefinedFunction[];
-  /** The parser's message when the text can't be parsed. The two lists are then empty. */
+  /** A syntax/name-inspection error, with empty lists. Deferred argument budgets are explicit on their commands. */
   parseError?: string;
 }

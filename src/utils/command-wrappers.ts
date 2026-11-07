@@ -1,5 +1,5 @@
 import { getShellType, programName } from './shell.js';
-import type { FoundCommand } from './command-reading.js';
+import { requireCompleteArguments, type ArgumentInspection, type FoundCommand } from './command-reading.js';
 
 /**
  * The command check's rules for wrappers: commands that start another
@@ -518,7 +518,7 @@ const SAME_SHELL_PROGRAMS = new Map<string, PosixWrapper>([
 const CMD_START_VALUE_SWITCHES = ['/d', '/node', '/affinity', '/machine'];
 
 /** A program a wrapper starts: its words as the shell reads them, as written and as texts, the name first */
-type Started = Pick<FoundCommand, 'words' | 'written' | 'wordTexts'>;
+type Started = Pick<FoundCommand, 'words' | 'written' | 'wordTexts' | 'argumentError'>;
 
 /**
  * The commands that run in `shell`: each of `commands`, followed by the
@@ -531,13 +531,15 @@ export function withStartedPrograms(commands: FoundCommand[], shell: string): Fo
   // finds each level's program from every level before it), and another copy adds no answer
   const seen = new Set<string>();
   const add = (command: FoundCommand): void => {
-    const key = JSON.stringify([command.start, command.words, command.written]);
+    if (command.nameAtRunTime) requireCompleteArguments(command);
+    const key = JSON.stringify([command.start, command.words, command.written, command.argumentError]);
     if (seen.has(key)) return;
     seen.add(key);
     running.push(command);
     if (command.nameAtRunTime) return;
-    for (const { words, written, wordTexts } of startedPrograms(command, shell)) {
-      add({ name: words[0] ?? written[0], words, written, wordTexts, start: command.start, nameAtRunTime: words[0] === null });
+    for (const { words, written, wordTexts, argumentError } of startedPrograms(command, shell)) {
+      add({ name: words[0] ?? written[0], words, written, wordTexts, start: command.start,
+        nameAtRunTime: words[0] === null, ...(argumentError === undefined ? {} : { argumentError }) });
     }
   };
   commands.forEach(add);
@@ -549,24 +551,38 @@ function startedPrograms(command: FoundCommand, shell: string): Started[] {
   const shellType = getShellType(shell);
   const name = programName(command.name);
   const { words, written, wordTexts } = command;
-  const from = (at: number): Started => ({ words: words.slice(at), written: written.slice(at), wordTexts: wordTexts.slice(at) });
+  const from = (at: number): Started => ({ words: words.slice(at), written: written.slice(at),
+    wordTexts: wordTexts.slice(at),
+    ...(command.argumentError === undefined ? {} : { argumentError: command.argumentError }) });
   // runuser -u starts the program and its arguments directly, without a shell's text parsing.
   if (name === 'runuser') {
+    requireCompleteArguments(command);
     const readings = readOptions(words, TEXT_PROGRAMS.get(name)!.rules);
     return readings.programs.flatMap(({ at }) => at === undefined ? [] : [from(at)]);
   }
   const posix = PROGRAMS.get(name)
     ?? (shellType === 'posix' ? POSIX_SHELL_COMMANDS.get(name) : undefined)
     ?? (programName(shell) === 'fish' ? FISH_COMMANDS.get(name) : undefined);
-  if (posix) return posixPrograms(command, posix);
+  if (posix) {
+    requireCompleteArguments(command);
+    return posixPrograms(command, posix);
+  }
   // Its own arguments are in -ArgumentList, a text the check doesn't read, so a program Start-Process starts has only its name
   if (shellType === 'powershell' && name === 'start-process') {
+    requireCompleteArguments(command);
     return (command.filePaths ?? []).map(({ word, written }) => ({
       words: [word], written: [written], wordTexts: [word ?? written],
+      ...(command.argumentError === undefined ? {} : { argumentError: command.argumentError }),
     }));
   }
-  if (shellType === 'cmd' && name === 'start') return cmdStartProgramsAt(command).map(from);
-  if (shellType === 'cmd' && name === 'call') return words.length > 1 ? [from(1)] : [];
+  if (shellType === 'cmd' && name === 'start') {
+    requireCompleteArguments(command);
+    return cmdStartProgramsAt(command).map(from);
+  }
+  if (shellType === 'cmd' && name === 'call') {
+    requireCompleteArguments(command);
+    return words.length > 1 ? [from(1)] : [];
+  }
   return [];
 }
 
@@ -575,11 +591,13 @@ function startedPrograms(command: FoundCommand, shell: string): Started[] {
  * can be. env -S puts the words of its text in its own place and reads them as
  * env's words, followed by the words after the text (env -S ls sudo runs ls).
  */
-function posixPrograms({ words, written, wordTexts }: Started, rules: PosixWrapper): Started[] {
+function posixPrograms({ words, written, wordTexts, argumentError }: Started, rules: PosixWrapper): Started[] {
   // Windows' timeout /t 5 only waits, and GNU's timeout stops with an error at /t, which is no duration
   const first = words[1];
   if (first && rules.noProgramWords?.includes(first.toLowerCase())) return [];
-  const from = (i: number, end = words.length): Started => ({ words: words.slice(i, end), written: written.slice(i, end), wordTexts: wordTexts.slice(i, end) });
+  const from = (i: number, end = words.length): Started => ({ words: words.slice(i, end),
+    written: written.slice(i, end), wordTexts: wordTexts.slice(i, end),
+    ...(argumentError === undefined ? {} : { argumentError }) });
   const after = rules.programAfter;
   if (after) {
     // find -exec sudo rm {} ;: each program runs from the word after -exec up to ;. A word known only at run time
@@ -613,6 +631,7 @@ function posixPrograms({ words, written, wordTexts }: Started, rules: PosixWrapp
       words: [program, ...words.slice(args)],
       written: [at === undefined ? program ?? '' : written[at], ...written.slice(args)],
       wordTexts: [at === undefined ? program ?? '' : wordTexts[at], ...wordTexts.slice(args)],
+      ...(argumentError === undefined ? {} : { argumentError }),
     }));
   }
   // psexec \\server sudo ls runs sudo on another computer
@@ -643,6 +662,7 @@ function posixPrograms({ words, written, wordTexts }: Started, rules: PosixWrapp
       words: [words[0], ...split.words, ...words.slice(after)],
       written: [written[0], ...split.written, ...written.slice(after)],
       wordTexts: [wordTexts[0], ...split.wordTexts, ...wordTexts.slice(after)],
+      ...(argumentError === undefined ? {} : { argumentError }),
     }, rules);
   })];
 }
@@ -708,10 +728,11 @@ export function shellOptionReadings(program: string, words: (string | null)[]): 
  * any other program.
  */
 export function textProgramReadings(
-  program: string, words: (string | null)[]
+  program: string, words: (string | null)[], inspection: ArgumentInspection = {}
 ): { readings: OptionReadings; shell: string; arguments?: number[] } | undefined {
   const found = TEXT_PROGRAMS.get(program);
   if (!found) return undefined;
+  requireCompleteArguments(inspection);
   const readings = readOptions(words, found.rules);
   // A command of the program's own reads its words by its own rules (tmux new 'sudo ls'), and so does each one
   // after a separator (tmux new -d \; new-window 'sudo ls')
@@ -734,9 +755,13 @@ export function textProgramReadings(
 }
 
 /** For a program that runs one command text in the shell it was started from (see SAME_SHELL_PROGRAMS): its options read in every way */
-export function sameShellProgramReadings(program: string, words: (string | null)[]): OptionReadings | undefined {
+export function sameShellProgramReadings(
+  program: string, words: (string | null)[], inspection: ArgumentInspection = {}
+): OptionReadings | undefined {
   const rules = SAME_SHELL_PROGRAMS.get(program);
-  return rules && readOptions(words, rules);
+  if (!rules) return undefined;
+  requireCompleteArguments(inspection);
+  return readOptions(words, rules);
 }
 
 /**

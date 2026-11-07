@@ -1,4 +1,5 @@
 import { getShellType, POSIX_SHELLS } from './shell.js';
+import { requireCompleteArguments, type ArgumentInspection } from './command-reading.js';
 
 type FileWord = string | null;
 
@@ -94,8 +95,11 @@ function powershellScriptFile(program: string, args: FileWord[]): FileWord | und
 }
 
 /** File arguments are found before command/script arguments can be mistaken for more host options. */
-export function shellScriptFiles(program: string, args: FileWord[]): FileWord[] {
+export function shellScriptFiles(
+    program: string, args: FileWord[], inspection: ArgumentInspection = {}
+): FileWord[] {
     if (POSIX_SHELLS.has(program)) {
+        requireCompleteArguments(inspection);
         const files: FileWord[] = [];
         const startup = program === 'bash' ? bashStartupFile(args) : undefined;
         const script = posixScriptFile(args);
@@ -104,6 +108,7 @@ export function shellScriptFiles(program: string, args: FileWord[]): FileWord[] 
         return files;
     }
     if (getShellType(program) === 'powershell') {
+        requireCompleteArguments(inspection);
         const script = powershellScriptFile(program, args);
         if (script !== undefined) return [script];
     }

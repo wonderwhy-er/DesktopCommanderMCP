@@ -1,5 +1,5 @@
 import { getShellType, POSIX_SHELLS, programName, type ShellType } from './shell.js';
-import type { FoundCommand } from './command-reading.js';
+import { requireCompleteArguments, type FoundCommand } from './command-reading.js';
 import { sameShellProgramReadings, shellOptionReadings, textProgramReadings, type OptionReadings } from './command-wrappers.js';
 
 /**
@@ -89,6 +89,7 @@ function isPowerShellParameter(word: string | null): boolean {
  * counts. bash's --rcfile or --init-file names a file it runs too.
  */
 function posixShellRuns(found: FoundCommand, program: string): ShellRun {
+  requireCompleteArguments(found);
   return readingsRun(shellOptionReadings(program, found.words), found, { script: true });
 }
 
@@ -99,7 +100,7 @@ function posixShellRuns(found: FoundCommand, program: string): ShellRun {
  * user, a file or a group.
  */
 function textProgramRuns(found: FoundCommand, program: string): ShellRun {
-  const text = textProgramReadings(program, found.words);
+  const text = textProgramReadings(program, found.words, found);
   if (!text) return { texts: [] };
   const run = { ...readingsRun(text.readings, found, { script: false }), shell: text.shell };
   // An explicit command text consumes the shell's later words as arguments, not another script.
@@ -158,7 +159,9 @@ function readingsRun(
  * -Command or -File. Where the check can't tell which word is a value,
  * every reading counts.
  */
-function powerShellRuns({ words, wordTexts }: FoundCommand, program: string): ShellRun {
+function powerShellRuns(found: FoundCommand, program: string): ShellRun {
+  requireCompleteArguments(found);
+  const { words, wordTexts } = found;
   const texts: string[] = [];
   // The script files the readings name, and null for a part known only at run time, which may hold any command
   const files = new Set<string | null>();
@@ -241,7 +244,9 @@ function cmdQuoteReadings(line: string, alwaysDropsQuotes: boolean): string[] {
  * where a word with whitespace in it is in quotes, as PowerShell and Git Bash
  * pass it.
  */
-function cmdRuns({ words, wordTexts }: FoundCommand): ShellRun {
+function cmdRuns(found: FoundCommand): ShellRun {
+  requireCompleteArguments(found);
+  const { words, wordTexts } = found;
   // Each word is a switch or a part of the command, so one known only at run time may hold any command (cmd $opts)
   const noted = words.slice(1).includes(null) ? { file: null } : {};
   let alwaysDropsQuotes = false;
@@ -280,12 +285,13 @@ function cmdRuns({ words, wordTexts }: FoundCommand): ShellRun {
 export function sameShellTexts(found: FoundCommand, shellType: ShellType): ShellRun {
   const { name, words, wordTexts } = found;
   const program = programName(name);
-  const sameShell = sameShellProgramReadings(program, words);
+  const sameShell = sameShellProgramReadings(program, words, found);
   if (sameShell) {
     const run = readingsRun(sameShell, found, { script: false });
     return run.texts.includes('!!') ? { texts: [], file: null } : run;
   }
   if (shellType === 'posix' && program === 'eval') {
+    requireCompleteArguments(found);
     const from = words[1] === '--' ? 2 : 1;
     return {
       texts: from < words.length ? [wordTexts.slice(from).join(' ')] : [],
@@ -293,6 +299,7 @@ export function sameShellTexts(found: FoundCommand, shellType: ShellType): Shell
     };
   }
   if (shellType === 'powershell' && program === 'invoke-expression') {
+    requireCompleteArguments(found);
     // Where the words that aren't parameter names are; with none, the text comes from the pipeline
     const at = words.flatMap((word, i) => (i > 0 && (word === null || !/^[-\u2013\u2014\u2015]/.test(word)) ? [i] : []));
     // -Command:'net user' (-c: 'net user'): the command without the parameter's name runs the same, and is shorter

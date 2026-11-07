@@ -9,7 +9,8 @@ import {readPosixCommands} from './utils/posix-commands.js';
 import {readPowerShellCommands} from './utils/powershell-commands.js';
 import {readCmdCommands} from './utils/cmd-commands.js';
 import {withStartedPrograms} from './utils/command-wrappers.js';
-import type {CommandReading, FoundCommand} from './utils/command-reading.js';
+import {IncompleteArgumentsError, requireCompleteArguments,
+    type CommandReading, type FoundCommand} from './utils/command-reading.js';
 
 /**
  * The check's answer for one command.
@@ -361,10 +362,12 @@ class CommandManager {
             return file === null ? { what: cmd.name, inFile: false } : { what: file, inFile: true };
         };
         if (shellType === 'posix' && (program === 'source' || program === '.')) {
+            requireCompleteArguments(cmd);
             return args[0] === undefined ? [] : [hidden(args[0])];
         }
         // PowerShell runs a .ps1 named as the command (./deploy.ps1, & ./deploy.ps1) as a script file
         if (shellType === 'powershell' && /\.ps1$/i.test(cmd.name)) {
+            requireCompleteArguments(cmd);
             return [hidden(cmd.name)];
         }
         // PowerShell text and file modes use the same host-option readings.
@@ -372,7 +375,7 @@ class CommandManager {
             const file = shellRuns(cmd).file;
             return file === undefined ? [] : [hidden(file)];
         }
-        return shellScriptFiles(program, args).map(hidden);
+        return shellScriptFiles(program, args, cmd).map(hidden);
     }
 
     /**
@@ -460,6 +463,7 @@ class CommandManager {
             if (unreadable) return unreadable;
             return unseen.length > 0 ? { verdict: 'unseen', unseen } : { verdict: 'allowed' };
         } catch (error) {
+            if (error instanceof IncompleteArgumentsError) return { verdict: 'failed', reason: error.message };
             const reason = error instanceof Error ? error.message : String(error);
             console.error('Error validating command:', error);
             capture('server_validate_command_error', {

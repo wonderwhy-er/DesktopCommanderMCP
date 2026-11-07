@@ -122,16 +122,21 @@ function wordsMade(word: Word, options: BraceOptions): { value: string | null; m
 }
 
 type ExpandedWord = { value: string | null; mayVanish: boolean; source: Word };
+type ExpandedArguments = { words: ExpandedWord[]; argumentError?: string };
+const BRACE_LIMIT_ERROR = `brace expansion makes more than ${MAX_BRACE_WORDS} words, or takes too long to read`;
 
-/** Keep every argument expansion aligned with its source, so wrappers see the words the shell passes */
-function commandWords(words: Word[], options: BraceOptions): ExpandedWord[] | null {
+/** Keep inspected words aligned; only a tail after a retained command name may defer a bounded failure. */
+function commandWords(words: Word[], options: BraceOptions): ExpandedArguments | null {
   const expanded: ExpandedWord[] = [];
   for (const source of words) {
     const made = wordsMade(source, options);
-    if (made === null) return null;
+    if (made === null) {
+      if (!expanded.some((word) => !word.mayVanish)) return null;
+      return { words: expanded, argumentError: BRACE_LIMIT_ERROR };
+    }
     expanded.push(...made.map((word) => ({ ...word, source })));
   }
-  return expanded;
+  return { words: expanded };
 }
 
 /** A retained runtime word still ends name selection even when its source was already listed. */
@@ -200,18 +205,26 @@ export async function readPosixCommands(command: string, selectedShell?: string)
       const words = [node.name, ...node.args.filter((arg): arg is Word => arg.type === 'Word')];
       const expanded = commandWords(words, options);
       if (expanded === null) {
-        parseError ??= `brace expansion makes more than ${MAX_BRACE_WORDS} words, or takes too long to read`;
+        parseError ??= BRACE_LIMIT_ERROR;
       } else {
-        for (const { index, name } of commandNames(expanded)) {
-          const remaining = expanded.slice(index);
-          commands.push({
+        const candidates: FoundCommand[] = commandNames(expanded.words).map(({ index, name }) => {
+          const remaining = expanded.words.slice(index);
+          return {
             name: name.value ?? name.source.text,
             words: remaining.map((word) => word.value),
             written: remaining.map((word) => word.source.text),
             wordTexts: remaining.map((word) => word.value ?? word.source.value),
             start: backticksStart ?? (name.source === words[0] ? node.pos : name.source.pos),
             nameAtRunTime: name.value === null,
-          });
+            ...(expanded.argumentError === undefined ? {} : { argumentError: expanded.argumentError }),
+          };
+        });
+        const unsafePrefix = candidates.some((candidate) => candidate.nameAtRunTime
+          || COMMAND_PREFIXES.has(candidate.words[0] ?? '') || mayRunUnreadCode(candidate));
+        if (expanded.argumentError !== undefined && unsafePrefix) {
+          parseError ??= expanded.argumentError;
+        } else {
+          commands.push(...candidates);
         }
       }
     }
@@ -227,7 +240,8 @@ export async function readPosixCommands(command: string, selectedShell?: string)
   // text may remove: wherever the removal is written, it may run before a call,
   // from a function's body. Code the reader doesn't read may remove any of them.
   const functions: DefinedFunction[] = [];
-  const statements = commands.some(mayRunUnreadCode) ? [] : script.commands;
+  const statements = commands.some((command) => command.argumentError !== undefined || mayRunUnreadCode(command))
+    ? [] : script.commands;
   for (const statement of statements) {
     if (statement.command.type !== 'Function' || statement.background) continue;
     const name = statement.command.name.value;
