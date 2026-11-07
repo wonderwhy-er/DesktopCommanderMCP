@@ -72,6 +72,10 @@
       "description": "Move or rename files and directories between locations."
     },
     {
+      "name": "copy_file",
+      "description": "Copy a regular file without removing the source. Never overwrite an existing destination."
+    },
+    {
       "name": "start_search",
       "description": "Start streaming search for files by name or content patterns. Searches text files, Excel, and DOCX content."
     },
