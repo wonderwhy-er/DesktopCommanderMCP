@@ -16,7 +16,7 @@ export interface DockerMount {
 export interface ContainerInfo {
     // New enhanced detection
     isContainer: boolean;
-    containerType: 'docker' | 'podman' | 'kubernetes' | 'lxc' | 'systemd-nspawn' | 'other' | null;
+    containerType: 'docker' | 'podman' | 'kubernetes' | 'lxc' | 'systemd-nspawn' | 'bubblewrap' | 'other' | null;
     orchestrator: 'kubernetes' | 'docker-compose' | 'docker-swarm' | 'podman-compose' | null;
     // Backward compatibility 
     isDocker: boolean;
@@ -71,6 +71,14 @@ export function isDockerImage(): boolean {
 }
 
 /**
+ * Bubblewrap can use a PID namespace where its own init appears as PID 1.
+ * That describes the tool execution context, not the host's service state.
+ */
+export function isBubblewrapInitProcess(comm: string): boolean {
+    return comm.trim() === 'bwrap';
+}
+
+/**
  * Detect container environment and type
  */
 function detectContainerEnvironment(): { isContainer: boolean; containerType: ContainerInfo['containerType']; orchestrator: ContainerInfo['orchestrator'] } {
@@ -94,6 +102,17 @@ function detectContainerEnvironment(): { isContainer: boolean; containerType: Co
     // Method 2: Check for container indicator files
     if (fs.existsSync('/.dockerenv')) {
         return { isContainer: true, containerType: 'docker', orchestrator: null };
+    }
+
+    // Bubblewrap may inherit host cgroups despite creating a PID namespace.
+    if (os.platform() === 'linux') {
+        try {
+            if (isBubblewrapInitProcess(fs.readFileSync('/proc/1/comm', 'utf8'))) {
+                return { isContainer: true, containerType: 'bubblewrap', orchestrator: null };
+            }
+        } catch {
+            // A restricted /proc must not break system information reporting.
+        }
     }
 
     // Method 3: Check /proc/1/cgroup for container indicators (Linux only)
@@ -583,6 +602,8 @@ export function getSystemInfo(): SystemInfo {
             containerLabel = 'LXC';
         } else if (containerDetection.containerType === 'systemd-nspawn') {
             containerLabel = 'systemd-nspawn';
+        } else if (containerDetection.containerType === 'bubblewrap') {
+            containerLabel = 'Bubblewrap sandbox';
         } else {
             containerLabel = 'Container';
         }
@@ -650,11 +671,12 @@ export function getOSSpecificGuidance(systemInfo: SystemInfo): string {
                                    docker.containerType === 'podman' ? 'PODMAN CONTAINER' :
                                    docker.containerType === 'lxc' ? 'LXC CONTAINER' :
                                    docker.containerType === 'systemd-nspawn' ? 'SYSTEMD-NSPAWN CONTAINER' :
+                                   docker.containerType === 'bubblewrap' ? 'BUBBLEWRAP SANDBOX' :
                                    'CONTAINER';
         
         guidance += `
 
-🐳 ${containerTypeLabel} ENVIRONMENT DETECTED:`;
+${docker.containerType === 'bubblewrap' ? '🔒' : '🐳'} ${containerTypeLabel} ENVIRONMENT DETECTED:`;
 
         if (docker.containerType === 'kubernetes') {
             guidance += `
@@ -673,6 +695,12 @@ Pod: ${docker.containerEnvironment.kubernetesPod}`;
                 guidance += `
 Node: ${docker.containerEnvironment.kubernetesNode}`;
             }
+        } else if (docker.containerType === 'bubblewrap') {
+            guidance += `
+This process sees a bubblewrap sandbox as its execution environment, not the host's init namespace.
+A failed systemctl command here does not mean host systemd services are stopped.
+Host service status must be checked through a separately authorized host-level interface.
+Do not expose host D-Bus/systemd sockets or disable sandbox restrictions to make systemctl work.`;
         } else if (docker.containerType === 'docker') {
             guidance += `
 This Desktop Commander instance is running inside a Docker container.`;
@@ -687,7 +715,11 @@ This Desktop Commander instance is running inside a Docker container.`;
 This Desktop Commander instance is running inside a ${docker.containerType || 'container'} environment.`;
         }
 
-        if (docker.mountPoints.length > 0) {
+        if (docker.containerType === 'bubblewrap') {
+            guidance += `
+Sandbox path access and persistence depend on the configured bind mounts.
+Do not infer Docker-style path translation or host filesystem authority.`;
+        } else if (docker.mountPoints.length > 0) {
             guidance += `
 
 AVAILABLE MOUNT LOCATIONS:`;
@@ -828,6 +860,7 @@ export function getPathGuidance(systemInfo: SystemInfo): string {
         const containerLabel = systemInfo.docker.containerType === 'kubernetes' ? 'KUBERNETES' :
                               systemInfo.docker.containerType === 'docker' ? 'DOCKER' :
                               systemInfo.docker.containerType === 'podman' ? 'PODMAN' :
+                              docker.containerType === 'bubblewrap' ? 'BUBBLEWRAP' :
                               'CONTAINER';
         const verifiedMounts = systemInfo.docker.mountPoints.filter(m => m.verifiedMount).map(m => m.containerPath);
         const unverifiedCandidates = systemInfo.docker.mountPoints.filter(m => !m.verifiedMount).map(m => m.containerPath);
