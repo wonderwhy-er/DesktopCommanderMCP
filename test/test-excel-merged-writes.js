@@ -31,25 +31,29 @@ export default async function runTests() {
     }
   }
   try {
-    for (const [name, merge, range, content] of [
-      ['rejects conflicting horizontal merged-cell values', 'A1:B1', 'Data!A1:B1', [['first', 'second']]],
-      ['rejects conflicting vertical merged-cell values', 'A1:A2', 'Data!A1:A2', [['first'], ['second']]],
-      ['rejects writing a merged alias outside its master', 'A1:B2', 'Data!B2', [['outside-master']]],
-      ['rejects clearing a merged alias', 'A1:B1', 'Data!B1', [[null]]],
-      ['rejects conflicting whole-sheet merged-cell values', 'A1:B1', 'Data', [['first', 'second']]],
+    for (const [name, merge, range, content, alias] of [
+      ['rejects conflicting horizontal merged-cell values', 'A1:B1', 'Data!A1:B1', [['first', 'second']], 'B1'],
+      ['rejects conflicting vertical merged-cell values', 'A1:A2', 'Data!A1:A2', [['first'], ['second']], 'A2'],
+      ['rejects writing a merged alias outside its master', 'A1:B2', 'Data!B2', [['outside-master']], 'B2'],
+      ['rejects clearing a merged alias', 'A1:B1', 'Data!B1', [[null]], 'B1'],
+      ['rejects conflicting whole-sheet merged-cell values', 'A1:B1', 'Data', [['first', 'second']], 'B1'],
     ]) {
       await test(name, async () => {
         const file = path.join(dir, 'range.xlsx');
         await fixture(file, merge);
         const before = await fs.readFile(file);
-        await assert.rejects(handler.editRange(file, range, content), /merged.*A1/i);
+        await assert.rejects(handler.editRange(file, range, content), (error) => {
+          assert.match(error.message, new RegExp(`\\bmerged cell ${alias}\\b`, 'i'));
+          assert.match(error.message, /\bmaster A1\b/i);
+          return true;
+        });
         assert.deepEqual(await fs.readFile(file), before, 'a rejected edit must leave the file unchanged');
       });
     }
 
-    const file = path.join(dir, 'valid.xlsx');
-    await fixture(file, 'A1:B1');
     await test('allows writing the merged master while preserving its merge', async () => {
+      const file = path.join(dir, 'valid.xlsx');
+      await fixture(file, 'A1:B1');
       await handler.editRange(file, 'Data!A1', [['new master']]);
       const preserved = new ExcelJS.Workbook();
       await preserved.xlsx.readFile(file);
@@ -58,6 +62,8 @@ export default async function runTests() {
     });
 
     await test('whole-sheet replacement preserves merges and unrelated sheets', async () => {
+      const file = path.join(dir, 'replacement.xlsx');
+      await fixture(file, 'A1:B1');
       await handler.editRange(file, 'Data', [['replacement title']]);
       const replaced = new ExcelJS.Workbook();
       await replaced.xlsx.readFile(file);
