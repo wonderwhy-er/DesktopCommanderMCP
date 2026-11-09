@@ -383,11 +383,20 @@ async function testQuotedSheetNameWithExclamationMark() {
   const before = await readFile(FILE, { range });
   assert.deepStrictEqual(sheetRows(before.content.toString()), [['Name', 'Value'], ['Acme', 10]]);
 
+  const example = before.content.toString().match(/range: (".*?"), content:/);
+  assert.ok(example, 'read_file should include an edit_block example range');
+  const exampleRange = JSON.parse(example[1]);
+  const exampleEdit = await handleEditBlock({ file_path: FILE, range: exampleRange, content: [[30]] });
+  assert.ok(!exampleEdit.isError, `Generated range ${exampleRange} should be editable: ${exampleEdit.content[0].text}`);
+  const exampleCell = await readFile(FILE, { range: "'Sales! O''Brien'!E5" });
+  assert.deepStrictEqual(sheetRows(exampleCell.content.toString()), [[30]]);
+
   await handleEditBlock({ file_path: FILE, range: "'Sales! O''Brien'!B2", content: [[20]] });
   const after = await readFile(FILE, { range });
   assert.deepStrictEqual(sheetRows(after.content.toString()), [['Name', 'Value'], ['Acme', 20]]);
   const other = await readFile(FILE, { sheet: 'Other' });
   assert.deepStrictEqual(sheetRows(other.content.toString()), [['untouched']]);
+  assert.ok(other.content.toString().includes('range: "Sheet1!E5"'), 'Plain sheet example should stay unchanged');
   console.log('✓ Quoted sheet names containing ! and escaped apostrophes read and edit correctly');
 }
 

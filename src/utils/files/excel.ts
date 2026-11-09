@@ -71,12 +71,12 @@ export class ExcelFileHandler implements FileHandler {
             ? `\n[Showing rows ${firstRow}-${firstRow + returnedRows - 1} of ${totalRows} total. Use offset/length to paginate.]`
             : `\n[No rows returned: row ${firstRow} is past the end (${totalRows} rows total). Use offset/length to paginate.]`;
 
-        const sheetHasSpace = /\s/.test(sheetName);
-        const exampleSheet = sheetHasSpace ? sheetName : 'Sheet1';
-        const content = `[Sheet: '${sheetName}' from ${path}]${paginationInfo}
-[To MODIFY cells: use edit_block with range param, e.g., edit_block(path, {range: "${exampleSheet}!E5", content: [[newValue]]}). read_file accepts the same range form, or pass sheet + range separately.]
-
-${JSON.stringify(data)}`;
+        const exampleSheet = /[\s!']/.test(sheetName) ? `'${sheetName.replace(/'/g, "''")}'` : 'Sheet1';
+        const exampleRange = JSON.stringify(`${exampleSheet}!E5`);
+        const content = `[Sheet: '${sheetName}' from ${path}]${paginationInfo}\n` +
+            `[To MODIFY cells: use edit_block with range param, e.g., edit_block(path, ` +
+            `{range: ${exampleRange}, content: [[newValue]]}). ` +
+            `read_file accepts the same range form, or pass sheet + range separately.]\n\n${JSON.stringify(data)}`;
 
         return {
             content,
