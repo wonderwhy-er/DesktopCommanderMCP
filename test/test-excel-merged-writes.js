@@ -58,6 +58,7 @@ export default async function runTests() {
       const preserved = new ExcelJS.Workbook();
       await preserved.xlsx.readFile(file);
       assert.equal(preserved.getWorksheet('Data').getCell('A1').value, 'new master');
+      assert.equal(preserved.getWorksheet('Data').getCell('D1').value, 'keep');
       assert.equal(preserved.getWorksheet('Data').getCell('B1').master.address, 'A1');
     });
 
