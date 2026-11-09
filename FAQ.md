@@ -115,7 +115,7 @@ No. Claude Desktop Commander works with the Claude Desktop application's standar
 ### What are the prerequisites for using Claude Desktop Commander?
 
 You'll need:
-- Node.js version 18 or higher installed on your system
+- Node.js version 22.12 or higher installed on your system
 - Claude Desktop installed and running
 - A Claude Pro subscription ($20/month)
 
@@ -162,7 +162,7 @@ After installation, restart Claude Desktop to see the new tools.
 
 In most cases, simply restarting Claude should be enough, as it uses npx which checks for and installs new versions automatically. If you're having issues, you can run the installation command again, which will update to the latest version.
 
-Make sure you have Node.js version 18 or higher installed, as older versions may cause issues with the update process.
+Make sure you have Node.js version 22.12 or higher installed, as older versions may cause issues with the update process.
 
 ### Which operating systems does it support?
 
@@ -499,7 +499,7 @@ Claude Desktop has certain limits on message size. When working with large codeb
 
 If you're having trouble installing Claude Desktop Commander:
 
-1. Check Node.js version: `node -v` (should be v18 or higher)
+1. Check Node.js version: `node -v` (should be v22.12 or higher)
 2. Ensure you have proper permissions to install npm packages
 3. On Windows, try running your terminal as Administrator
 4. Check if there are any specific errors in the installation output
