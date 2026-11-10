@@ -90,6 +90,7 @@ class RolloutManager {
         if (!token) throw new Error('No session token');
         const response = await fetch(`${this.serverUrl}/device/rollouts`, {
             headers: { Authorization: `Bearer ${token}` },
+            redirect: 'error',
         });
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const { rollouts } = await response.json();

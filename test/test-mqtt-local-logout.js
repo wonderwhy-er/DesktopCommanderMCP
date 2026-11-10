@@ -70,7 +70,7 @@ async function runTests() {
 
   try {
     await test('logout waits for enrollment and removes its private key and certificate', async ({ env, home, standIn }) => {
-      writeDeviceConfig(home, { deviceId: standIn.deviceId, session: standIn.login() });
+      writeDeviceConfig(home, { deviceId: standIn.deviceId, session: standIn.login(), authContext: { serverOrigin: standIn.url, supabaseUrl: standIn.supabaseUrl ?? standIn.url } });
       const reached = deferred();
       const resume = deferred();
       mock.method(globalThis, 'fetch', async (url, request) => {

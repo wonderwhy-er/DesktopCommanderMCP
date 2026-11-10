@@ -35,13 +35,15 @@ On first run, Desktop Commander starts an OAuth device-authorization flow:
 
 If the browser does not open, use the verification URL and code printed in the terminal.
 
-By default, the authenticated device session is saved to:
+The authenticated device session is saved to:
 
 ```text
-~/.desktop-commander-device/device.json          # default, including DC_ENV unset
-~/.desktop-commander-device-staging/device.json  # DC_ENV=staging
-~/.desktop-commander-device-dev/device.json      # DC_ENV=development
+~/.desktop-commander-device/device.json
 ```
+
+In this release, `DC_ENV=staging` and `DC_ENV=development` do **not** yet select
+separate session folders. The file records the trusted MCP server and Supabase
+endpoint so credentials cannot silently be reused when switching backends.
 
 On POSIX systems, the file is created with mode `0600` (read/write for the owning user only). On Windows, this code does not set a custom owner-only ACL; access is governed by the Windows filesystem permissions for the user profile. Restarting the Remote Device normally reuses this saved session, so browser authorization is not required on every start.
 
@@ -69,7 +71,21 @@ The Remote MCP service forwards tool calls to the connected device. The local De
 
 ## Session persistence
 
-Session persistence is enabled by default. To require browser authorization on every start, run:
+Session persistence is enabled by default. The Remote Device validates the MCP
+server URL (HTTPS or explicitly supported local HTTP) and refuses HTTP redirects
+on authentication requests. The hosted `mcp.desktopcommander.app` endpoint only
+accepts the production Supabase project; explicitly configured custom MCP
+servers can use their own secure Supabase backend.
+
+A saved session is bound to its original MCP and Supabase endpoints. Switching
+to another backend requires browser authorization; a rejected saved session is
+kept until the new pairing succeeds. Legacy sessions saved before endpoint
+binding continue to work with the verified hosted production backend. Legacy
+sessions from custom/staging backends must be paired once again. For an unbound
+custom session, the CLI also refuses `remote --logout` rather than sending
+credentials to an unverified backend; revoke it from the original dashboard.
+
+To require browser authorization on every start, run:
 
 ```bash
 npx @wonderwhy-er/desktop-commander@latest remote --no-persist-session

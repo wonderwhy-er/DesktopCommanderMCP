@@ -141,7 +141,7 @@ async function withDevice({ standInOptions, prepare }, check) {
   const testEnv = createTestEnv();
   let device;
   try {
-    writeDeviceConfig(testEnv.home, { deviceId: standIn.deviceId, session: prepare(standIn) });
+    writeDeviceConfig(testEnv.home, { deviceId: standIn.deviceId, session: prepare(standIn), authContext: { serverOrigin: standIn.url, supabaseUrl: standIn.supabaseUrl ?? standIn.url } });
     device = startDevice({ ...testEnv.env, MCP_SERVER_URL: standIn.url });
     await waitFor(device, () => STARTED.test(device.output), START_DEADLINE_MS);
     assert.ok(STARTED.test(device.output),

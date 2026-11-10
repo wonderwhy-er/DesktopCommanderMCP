@@ -36,6 +36,11 @@ import { createTestEnv, isTestHome } from './helpers/test-env.js';
 import { runIfMain, skip } from './helpers/run-if-main.js';
 
 /** A start (local MCP child, session, device lookup) takes seconds; this is far above */
+const withBackend = (standIn, config) => ({
+  ...config,
+  authContext: { serverOrigin: standIn.url, supabaseUrl: standIn.supabaseUrl ?? standIn.url },
+});
+
 const START_DEADLINE_MS = 60_000;
 /** How long the test holds the lock a device's save holds for milliseconds */
 const LOCK_HELD_MS = 1500;
@@ -87,7 +92,7 @@ async function runTests() {
   }
 
   await test('a logout while the device starts sticks: its first save does not write device.json back', async ({ standIn, env, home, start }) => {
-    writeDeviceConfig(home, { deviceId: standIn.deviceId, session: standIn.login() });
+    writeDeviceConfig(home, withBackend(standIn, { deviceId: standIn.deviceId, session: standIn.login() }));
     const hold = standIn.holdDeviceLookups();
     const device = start();
     assert.ok(await within(hold.reached.then(() => true), START_DEADLINE_MS, false),
@@ -106,7 +111,7 @@ async function runTests() {
   });
 
   await test('remote --logout waits for a save in progress instead of removing device.json in the middle of it', async ({ standIn, env, home }) => {
-    writeDeviceConfig(home, { deviceId: standIn.deviceId, session: standIn.login() });
+    writeDeviceConfig(home, withBackend(standIn, { deviceId: standIn.deviceId, session: standIn.login() }));
     // What a device's save holds while it checks that device.json is still there and writes it
     const release = await lockfile.lock(deviceConfigPath(home), { realpath: false });
     let logout;
@@ -126,9 +131,10 @@ async function runTests() {
 
   await test('a logout that lands while the device reads the session to save is not undone', async ({ standIn, env, home }) => {
     const configPath = deviceConfigPath(home);
-    writeDeviceConfig(home, { deviceId: standIn.deviceId, session: standIn.login() });
+    writeDeviceConfig(home, withBackend(standIn, { deviceId: standIn.deviceId, session: standIn.login() }));
     const device = new MCPDevice();
     device.configPath = configPath;
+    device.trustedAuthContext = withBackend(standIn, {}).authContext;
     await device.loadPersistedConfig();
     const rc = device.remoteChannel;
     rc.getSession = async () => ({ data: { session: standIn.login() } });
@@ -153,7 +159,7 @@ async function runTests() {
     const configPath = deviceConfigPath(home);
     const folder = path.join(path.dirname(configPath), '.mqtt');
     {
-      writeDeviceConfig(home, { deviceId: standIn.deviceId, session: standIn.login() });
+      writeDeviceConfig(home, withBackend(standIn, { deviceId: standIn.deviceId, session: standIn.login() }));
       fs.mkdirSync(folder, { recursive: true });
       fs.writeFileSync(path.join(folder, 'identity.json'), JSON.stringify({ private_key: 'synthetic-secret' }));
       fs.writeFileSync(path.join(folder, 'certificate.json'), '{}');
@@ -174,7 +180,7 @@ async function runTests() {
   });
 
   await test('a credential deletion failure is reported and releases the locks for a retry', async ({ standIn, env, home }) => {
-    writeDeviceConfig(home, { deviceId: standIn.deviceId, session: standIn.login() });
+    writeDeviceConfig(home, withBackend(standIn, { deviceId: standIn.deviceId, session: standIn.login() }));
     const identity = path.join(path.dirname(deviceConfigPath(home)), '.mqtt', 'identity.json');
     fs.mkdirSync(identity, { recursive: true }); // A malformed cache path that rm(file) cannot delete
     const failed = await runLogout(env);
@@ -189,7 +195,7 @@ async function runTests() {
   await test('failed or unconfirmed revocation keeps every credential for retry', async ({ standIn, env, home }) => {
     const configPath = deviceConfigPath(home);
     const folder = path.join(path.dirname(configPath), '.mqtt');
-    writeDeviceConfig(home, { deviceId: standIn.deviceId, session: standIn.login() });
+    writeDeviceConfig(home, withBackend(standIn, { deviceId: standIn.deviceId, session: standIn.login() }));
     fs.mkdirSync(folder, { recursive: true });
     fs.writeFileSync(path.join(folder, 'identity.json'), 'private-key-fixture');
     fs.writeFileSync(path.join(folder, 'certificate.json'), 'certificate-fixture');
@@ -210,7 +216,7 @@ async function runTests() {
 
   await test('logout refreshes an expired session and keeps the rotated token if revocation fails', async ({ standIn, env, home }) => {
     const session = standIn.login({ accessExpiresInSec: -60 });
-    writeDeviceConfig(home, { deviceId: standIn.deviceId, session });
+    writeDeviceConfig(home, withBackend(standIn, { deviceId: standIn.deviceId, session }));
     standIn.revokeStatus = 502;
     const failed = await runLogout(env);
     assert.equal(failed.code, 1, failed.output);
@@ -225,9 +231,10 @@ async function runTests() {
 
   await test('a login after the logout is not written over by the device that was logged out', async ({ standIn, env, home }) => {
     const configPath = deviceConfigPath(home);
-    writeDeviceConfig(home, { deviceId: standIn.deviceId, session: standIn.login() });
+    writeDeviceConfig(home, withBackend(standIn, { deviceId: standIn.deviceId, session: standIn.login() }));
     const device = new MCPDevice();
     device.configPath = configPath;
+    device.trustedAuthContext = withBackend(standIn, {}).authContext;
     await device.loadPersistedConfig();
     const rc = device.remoteChannel;
     rc.getSession = async () => ({ data: { session: standIn.login() } });

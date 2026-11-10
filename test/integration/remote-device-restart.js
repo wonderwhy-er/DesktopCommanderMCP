@@ -71,7 +71,7 @@ const readPersistedSession = (home) => JSON.parse(fs.readFileSync(deviceConfigPa
 
 /** What a completed device authorization leaves in the home */
 function writeLoggedInHome(home, standIn, session) {
-  writeDeviceConfig(home, { deviceId: standIn.deviceId, session });
+  writeDeviceConfig(home, { deviceId: standIn.deviceId, session, authContext: { serverOrigin: standIn.url, supabaseUrl: standIn.supabaseUrl ?? standIn.url } });
 }
 
 async function expectStarted(device, standIn, what) {

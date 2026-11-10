@@ -16,7 +16,7 @@ import { observeTransport } from './transport-telemetry.js';
 import { startTerminalTimestamps } from '../utils/terminal-timestamps.js';
 import { VERSION } from '../version.js';
 import { rolloutManager } from './rollouts.js';
-import { getRemoteDeviceConfigPath, isBackendLocal } from './remote-utils.js';
+import { DEFAULT_REMOTE_SERVER_URL, type RemoteAuthContext, getRemoteDeviceConfigPath, savedSessionMatchesContext, validateRemoteAuthContext, validateRemoteServerUrl } from './remote-utils.js';
 
 export { getRemoteDeviceConfigPath };
 
@@ -92,20 +92,16 @@ export async function logoutRemoteDevice(
 						"No usable saved device session. Revoke this device in the dashboard; local credentials were kept",
 					);
 				}
-				const backend = new URL(
-					process.env.MCP_SERVER_URL || "https://mcp.desktopcommander.app",
+				const backend = validateRemoteServerUrl(
+					process.env.MCP_SERVER_URL || DEFAULT_REMOTE_SERVER_URL,
 				);
-				if (
-					(backend.protocol !== "https:" && !isBackendLocal(backend)) ||
-					backend.username ||
-					backend.password ||
-					backend.search ||
-					backend.hash ||
-					(backend.pathname && backend.pathname !== "/")
-				) {
-					throw new Error(
-						"Logout requires an HTTPS MCP_SERVER_URL or local HTTP, without credentials, paths, or query parameters",
-					);
+				// Logout sends a bearer token too: refuse to send a saved session to
+				// a different MCP backend. Only the pinned hosted origin may use an
+				// old, unbound device.json from before this security fix.
+				if (config.authContext === undefined
+					? backend.origin !== DEFAULT_REMOTE_SERVER_URL
+					: config.authContext?.serverOrigin !== backend.origin) {
+					throw new Error("Saved session belongs to another or unknown backend; credentials were kept");
 				}
 				const revoke = () =>
 					fetch(new URL("/device/revoke", backend), {
@@ -130,18 +126,12 @@ export async function logoutRemoteDevice(
 							"Could not refresh the saved session; credentials were kept",
 						);
 					const info = await infoResponse.json();
-					const authUrl = new URL(info.supabaseUrl);
-					if (
-						(authUrl.protocol !== "https:" && !isBackendLocal(authUrl)) ||
-						authUrl.username ||
-						authUrl.password
-					) {
-						throw new Error(
-							"Session refresh requires HTTPS or local HTTP; credentials were kept",
-						);
+					const authContext = validateRemoteAuthContext(backend.origin, info?.supabaseUrl);
+					if (!savedSessionMatchesContext(config.authContext, authContext)) {
+						throw new Error("Refusing to refresh credentials with a different Supabase backend");
 					}
 					const client = createClient(
-						info.supabaseUrl,
+						authContext.supabaseUrl,
 						info.supabasePublishableKey,
 						{
 							auth: {
@@ -203,6 +193,7 @@ export class MCPDevice {
     private deviceId?: string;
     private isShuttingDown: boolean;
     private configPath: string;
+    private trustedAuthContext: RemoteAuthContext | null = null;
     private persistSession: boolean;
     private desktop: DesktopCommanderIntegration;
     /**
@@ -224,7 +215,7 @@ export class MCPDevice {
     private seenCallIds: Set<string> = new Set();
 
     constructor(options: MCPDeviceOptions = {}) {
-        this.baseServerUrl = process.env.MCP_SERVER_URL || 'https://mcp.desktopcommander.app';
+        this.baseServerUrl = validateRemoteServerUrl(process.env.MCP_SERVER_URL || DEFAULT_REMOTE_SERVER_URL).origin;
         this.deviceId = undefined;
         this.isShuttingDown = false;
         this.configPath = getRemoteDeviceConfigPath();
@@ -509,6 +500,14 @@ export class MCPDevice {
             }
 
             if (config.session && this.persistSession) {
+                if (!this.trustedAuthContext ||
+                    !savedSessionMatchesContext(config.authContext, this.trustedAuthContext)) {
+                    // Preserve the old file until new authorization succeeds, but
+                    // never send its tokens or reuse its device id on this backend.
+                    console.warn('⚠️ Saved Remote MCP session belongs to another or unknown backend; re-authorization required');
+                    this.deviceId = undefined;
+                    return null;
+                }
                 console.log('💾 Found persisted session for device ' + this.deviceId);
                 console.debug('[DEBUG] Session found in config, returning session');
                 return config.session;
@@ -523,6 +522,7 @@ export class MCPDevice {
             } else {
                 console.debug('[DEBUG] No session in config');
             }
+            this.deviceId = undefined;
             return null;
         } catch (error: any) {
 
@@ -565,6 +565,10 @@ export class MCPDevice {
      * outlive it - shutdown() - can await it.
      */
     async savePersistedConfig(rotated?: AuthSession): Promise<void> {
+        if (!this.trustedAuthContext) {
+            console.error('Refusing to persist a session before validating the remote backend');
+            return;
+        }
         this.configWriteChain = this.configWriteChain.then(() => this.writePersistedConfig(rotated));
         return this.configWriteChain;
     }
@@ -588,6 +592,7 @@ export class MCPDevice {
 
             const config = {
                 deviceId: this.deviceId,
+                authContext: this.trustedAuthContext,
                 // Only save session if --persist-session flag is set
                 session: (session && this.persistSession) ? {
                     access_token: session.access_token,
@@ -635,26 +640,29 @@ export class MCPDevice {
     }
 
     async fetchSupabaseConfig() {
-        // No auth header needed for this public endpoint
-        console.debug('[DEBUG] Fetching Supabase config from:', `${this.baseServerUrl}/api/mcp-info`);
-        const response = await fetch(`${this.baseServerUrl}/api/mcp-info`);
-        // First request of the run, and it already states the server's time.
-        // auth-js judges the session handed to setSession() against this
-        // device's Date.now() with no skew tolerance, so the clock has to be
-        // right BEFORE that call - clockAwareFetch only corrects it afterwards.
+        const backend = validateRemoteServerUrl(this.baseServerUrl);
+        this.trustedAuthContext = null;
+        // Reject redirects before any saved credentials are passed to Supabase.
+        console.debug('[DEBUG] Fetching Supabase config from:', new URL('/api/mcp-info', backend).href);
+        const response = await fetch(new URL('/api/mcp-info', backend), {
+            redirect: 'error',
+            signal: AbortSignal.timeout(30_000),
+        });
+        // auth-js checks token expiry against Date.now(), which may be skewed.
+        // Observe the trusted server's Date header before restoring a session.
         observeServerDate(response.headers.get('date'));
 
         if (!response.ok) {
-            console.debug('[DEBUG] Supabase config fetch failed, status:', response.status, response.statusText);
             throw new Error(`Failed to fetch Supabase config: ${response.statusText}`);
         }
-
         const config = await response.json();
-        console.debug('[DEBUG] Supabase config received, URL:', config.supabaseUrl?.substring(0, 30) + '...');
-        return {
-            supabaseUrl: config.supabaseUrl,
-            anonKey: config.supabasePublishableKey
-        };
+        const trusted = validateRemoteAuthContext(backend.origin, config?.supabaseUrl);
+        if (typeof config?.supabasePublishableKey !== 'string' || !config.supabasePublishableKey.trim()) {
+            throw new Error('Missing Supabase publishable key from Remote MCP configuration');
+        }
+        this.trustedAuthContext = trusted;
+        console.debug('[DEBUG] Validated Supabase backend:', trusted.supabaseUrl);
+        return { supabaseUrl: trusted.supabaseUrl, anonKey: config.supabasePublishableKey };
     }
 
     // Methods moved to RemoteChannel
