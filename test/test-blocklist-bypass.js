@@ -12,6 +12,7 @@ import { configManager } from '../dist/config-manager.js';
 import { commandManager } from '../dist/command-manager.js';
 import { forceTerminate, interactWithProcess, startProcess } from '../dist/tools/improved-process-tools.js';
 import { exitProcess } from '../dist/utils/exit-process.js';
+import { getInputShell } from '../dist/utils/shell.js';
 import { pythonCommand } from './helpers/python.js';
 import { skip } from './helpers/run-if-main.js';
 import { isTestHome } from './helpers/test-env.js';
@@ -104,6 +105,19 @@ async function testCommandExtraction() {
     // Test 14: REPL text the shell can't parse is still allowed
     const replCheck = await commandManager.checkProcessInput('print("ok")', 'bash');
     assert.strictEqual(replCheck.verdict, 'allowed', 'FAIL: REPL input should not be refused for its syntax alone');
+
+    // Test 15: input goes to the shell the command starts, not the one it ran in
+    assert.strictEqual(getInputShell('cmd.exe', 'powershell.exe'), 'cmd.exe', 'FAIL: a cmd session reads cmd input');
+    assert.strictEqual(getInputShell('"C:\\Windows\\System32\\cmd.exe" /k', 'pwsh'), 'C:\\Windows\\System32\\cmd.exe', 'FAIL: a quoted cmd path reads cmd input');
+    assert.strictEqual(getInputShell('pwsh -NoLogo', 'cmd.exe'), 'pwsh', 'FAIL: a pwsh session reads PowerShell input');
+    assert.strictEqual(getInputShell('bash -i', 'cmd.exe'), 'bash', 'FAIL: a bash session reads bash input');
+    assert.strictEqual(getInputShell('python3 -i', 'powershell.exe'), 'powershell.exe', 'FAIL: other programs fall back to the launching shell');
+
+    // Test 16: cmd removes carets, so n^et runs net in a cmd session
+    await configManager.setValue('blockedCommands', ['net']);
+    const caretCheck = await commandManager.checkProcessInput('n^et user', getInputShell('cmd.exe', 'powershell.exe'));
+    console.log('  checkProcessInput(n^et user) in cmd =>', caretCheck);
+    assert.strictEqual(caretCheck.verdict, 'blocked', 'FAIL: n^et should be read as net in a cmd session');
 }
 
 async function testInteractWithProcessValidation(tempDir) {

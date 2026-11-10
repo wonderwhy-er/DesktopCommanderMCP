@@ -272,6 +272,21 @@ export function getCommandShell(shell: string | undefined, defaultShell: string 
 }
 
 /**
+ * The shell that reads input typed into a process start_process started:
+ * the shell the command names as its program (cmd.exe /k, pwsh, bash -i),
+ * else the shell the command ran in. A cmd session started from PowerShell
+ * reads its input with cmd's grammar, so the input check must too.
+ */
+export function getInputShell(command: string, shell: string): string {
+  const text = command.trim();
+  const quoted = text.match(/^(["'])(.*?)\1/);
+  const program = quoted ? quoted[2] : text.split(/\s+/)[0] ?? '';
+  const name = path.win32.basename(program).toLowerCase().replace(/\.exe$/, '');
+  const named = ['cmd', 'powershell', 'pwsh'].includes(name) || POSIX_SHELLS.has(name);
+  return named ? program : shell;
+}
+
+/**
  * Configuration for spawning a shell with appropriate flags
  */
 export interface ShellSpawnConfig {
