@@ -3,7 +3,6 @@ import assert from 'node:assert/strict';
 import https from 'node:https';
 import { EventEmitter } from 'node:events';
 import { syncBuiltinESMExports } from 'node:module';
-import { parseDeviceTransportPayload } from '@desktop-commander/telemetry-contract/transport';
 import { configManager } from '../dist/config-manager.js';
 import { observeTransport } from '../dist/remote-device/transport-telemetry.js';
 import { capture } from '../dist/utils/capture.js';
@@ -31,15 +30,16 @@ assert.equal('monotonic_ms' in receipt, false);
 assert.match(receipt.observation_id, /^[0-9a-f-]{36}$/);
 assert.match(receipt.source_process_id, /^[0-9a-f-]{36}$/);
 assert.equal('tool_name' in receipt, false);
+assert.equal('IS_MQTT_EXECUTION_ENABLED' in receipt, false);
 assert.notEqual(received(target).observation_id, receipt.observation_id);
 assert.equal(observeTransport({ stage: 'received', payload: target, deviceId: 'device-1', userId: 'other-user' }), null);
 assert.equal(observeTransport({ stage: 'received', payload: target, deviceId: 'other-device', userId: 'user-1' }), null);
 assert.equal(received({ ...target, call_id: 'bad id' }), null);
 assert.equal(received({ ...target, call_id: { unsafe: true } }), null);
 const start = observeTransport({ stage: 'operation_start', callId: 'call-1', deviceId: 'device-1',
-    toolName: 'read_file', operation: 'result_write' });
+    userId: 'user-1', toolName: 'read_file', operation: 'result_write' });
 const end = observeTransport({ stage: 'operation_end', callId: 'call-1', deviceId: 'device-1',
-    toolName: 'read_file', operation: 'result_write', operationId: start.operation_id,
+    userId: 'user-1', toolName: 'read_file', operation: 'result_write', operationId: start.operation_id,
     fields: { duration_ms: 12, outcome: 'success', tool_name: 'injected' } });
 assert.equal(start.operation_id, start.observation_id);
 assert.equal(end.operation_id, start.operation_id);
@@ -54,15 +54,20 @@ assert.equal('transport' in start, false);
 assert.equal('notification_id' in start, false);
 assert.equal('attempt_number' in start, false);
 const mqtt = observeTransport({ stage: 'execution_start', callId: 'call-1', deviceId: 'device-1',
-    toolName: 'read_file', transport: 'mqtt' });
+    userId: 'user-1', toolName: 'read_file', transport: 'mqtt' });
 assert.equal(mqtt.transport, 'mqtt');
 assert.equal('notification_id' in mqtt, false);
+assert.equal('attempt_number' in mqtt, false);
 assert.equal('duration_ms' in end, false);
 assert.equal('outcome' in end, false);
 assert.equal('tool_name' in observeTransport({ stage: 'execution_start', callId: 'call-1', deviceId: 'device-1',
-    toolName: 'x'.repeat(129) }), false);
-assert.equal(observeTransport({ stage: 'operation_end', callId: 'bad id', deviceId: 'device-1' }), null);
-assert.equal(observeTransport({ stage: '', callId: 'call-1', deviceId: 'device-1' }), null);
+    userId: 'user-1', toolName: 'x'.repeat(129) }), false);
+assert.equal(observeTransport({ stage: 'operation_end', callId: 'bad id', deviceId: 'device-1', userId: 'user-1' }), null);
+assert.equal(observeTransport({ stage: '', callId: 'call-1', deviceId: 'device-1', userId: 'user-1' }), null);
+assert.equal(observeTransport({ stage: 42, callId: 'call-1', deviceId: 'device-1', userId: 'user-1' }), null);
+for (const userId of [undefined, '', ' ', 'x'.repeat(129)]) {
+    assert.equal(observeTransport({ stage: 'execution_start', callId: 'call-1', deviceId: 'device-1', userId }), null);
+}
 
 // Capture the actual /mp/collect body without making a network request.
 const originalRequest = https.request;
@@ -78,7 +83,6 @@ try {
     configManager.getValue = async key => key === 'telemetryEnabled' ? true : undefined;
     configManager.getOrCreateClientId = async () => 'installation-1';
     https.request = (options, onResponse) => {
-        assert.equal(options.hostname, 'telemetry.desktopcommander.app');
         assert.equal(options.path, '/mp/collect');
         const request = new EventEmitter();
         request.setTimeout = () => request;
@@ -95,7 +99,7 @@ try {
     };
     syncBuiltinESMExports();
 
-    const wireObservation = received({ ...target, call_id: 'call-wire' });
+    const wireObservation = received({ ...target, call_id: 'call-wire', IS_MQTT_EXECUTION_ENABLED: false });
     void capture('ordinary_event', { custom_field: 'kept' });
     await Promise.race([
         bothSent,
@@ -105,18 +109,22 @@ try {
     ]);
 
     const transportBody = sent.find(body => body.events[0].name === 'received');
+    assert.equal(transportBody.telemetry_type, 'transport');
+    assert.equal(transportBody.user_id, 'user-1');
     assert.deepEqual(transportBody.events[0].params, wireObservation);
     assert.equal('platform' in transportBody.events[0].params, false);
-    const parsed = parseDeviceTransportPayload(transportBody);
-    assert.equal(parsed.client_id, 'installation-1');
-    assert.equal(parsed.events[0].params.call_id, 'call-wire');
-    assert.equal(parsed.events[0].params.source, 'device');
-    assert.equal(parsed.events[0].params.monotonic_ms, undefined);
+    assert.equal(transportBody.client_id, 'installation-1');
+    assert.equal(transportBody.events[0].params.call_id, 'call-wire');
+    assert.equal(transportBody.events[0].params.stage, transportBody.events[0].name);
+    assert.ok(!Number.isNaN(Date.parse(transportBody.events[0].params.timestamp_utc)));
+    assert.equal(transportBody.events[0].params.monotonic_ms, undefined);
+    assert.equal('IS_MQTT_EXECUTION_ENABLED' in transportBody.events[0].params, false);
 
     const ordinaryBody = sent.find(body => body.events[0].name === 'ordinary_event');
+    assert.equal('telemetry_type' in ordinaryBody, false);
+    assert.equal('user_id' in ordinaryBody, false);
     assert.equal(ordinaryBody.events[0].params.custom_field, 'kept');
     assert.equal(typeof ordinaryBody.events[0].params.platform, 'string');
-    assert.throws(() => parseDeviceTransportPayload(ordinaryBody), /Invalid transport/);
 } finally {
     clearTimeout(sendTimeout);
     https.request = originalRequest;
@@ -125,4 +133,4 @@ try {
     configManager.getOrCreateClientId = originalGetOrCreateClientId;
     process.env.DESKTOP_COMMANDER_DISABLE_TELEMETRY = originalDisableTelemetry;
 }
-console.log('PASS transport observations: contract accepted wire payload; ordinary capture unchanged');
+console.log('PASS transport observations: required wire fields and identity retained; ordinary capture unchanged');

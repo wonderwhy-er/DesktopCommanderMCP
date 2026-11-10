@@ -11,6 +11,16 @@ param(
 $script:Folders = @()
 $script:DockerArgs = @()
 
+# Folders Claude Desktop is installed in: Find-ClaudeExecutable looks for Claude.exe in them, and
+# Find-ClaudeProcess stops only the claude.exe that runs from one of them
+$script:ClaudeDesktopFolders = @(
+    "$env:LOCALAPPDATA\Programs\Claude",
+    "$env:PROGRAMFILES\Claude",
+    "${env:ProgramFiles(x86)}\Claude",
+    "$env:APPDATA\Claude",
+    "$env:USERPROFILE\AppData\Local\Programs\Claude"
+)
+
 # Colors and output functions
 function Write-Success { param($Message) Write-Host "[SUCCESS] $Message" -ForegroundColor Green }
 function Write-Error { param($Message) Write-Host "[ERROR] $Message" -ForegroundColor Red }
@@ -196,6 +206,51 @@ function Initialize-Volumes {
     Write-Success "Persistent environment ready - your tools will survive restarts!"
 }
 
+# Bring the pulled image into the dc-system volume. The volume keeps /usr, so
+# without this a new image's Desktop Commander and its Chromium stay hidden
+# behind the ones from the image the volume was first made with.
+function Update-SystemVolume {
+    Write-Info "Updating Desktop Commander in your persistent volume dc-system..."
+
+    # Nothing may use the volume while it is copied: stop the containers that have it (found by
+    # the volume, not ancestor=, which after the pull no longer matches the older image's containers),
+    # then ask again. If Docker doesn't answer, or one still runs, stop before anything changes.
+    $problem = $null
+    $containers = docker ps -q --filter "volume=dc-system" 2>$null
+    if ($LASTEXITCODE -ne 0) {
+        $problem = "Docker didn't answer which containers use the volume dc-system"
+    } elseif ($containers) {
+        if ($VerboseOutput) { Write-Info "Stopping running Desktop Commander containers..." }
+        docker stop $containers 2>$null | Out-Null
+        $containers = docker ps -q --filter "volume=dc-system" 2>$null
+        if ($LASTEXITCODE -ne 0) {
+            $problem = "Docker didn't answer which containers use the volume dc-system"
+        } elseif ($containers) {
+            $problem = "Desktop Commander's container is still running and uses the volume dc-system"
+        }
+    }
+    if ($problem) {
+        Write-Error $problem
+        Write-Info "Nothing was changed. Run the installer again."
+        exit 1
+    }
+
+    # Copies the new image's /usr into the volume, mounted at /target, so an update reaches users
+    # whose /usr is kept in that volume. Desktop Commander's own folder is replaced; the rest is
+    # copied over what the volume has, so the tools the AI installed stay. install-docker.sh has
+    # the same command.
+    docker run --rm -v dc-system:/target mcp/desktop-commander:latest sh -c 'rm -rf /target/src/app && cp -a /usr/. /target/'
+    if ($LASTEXITCODE -eq 0) {
+        Write-Success "Desktop Commander updated; the tools you installed are kept"
+    } else {
+        Write-Error "Could not copy the new image into the volume dc-system"
+        Write-Info "A folder in the volume may be a link in the new image, or the other way round."
+        Write-Info "Start again from a clean environment (this removes your installed tools and settings):"
+        Write-Info "- Run: .\install-docker.ps1 -Reset; .\install-docker.ps1"
+        exit 1
+    }
+}
+
 function Build-DockerArgs {
     Write-Info "Building Docker configuration..."
 
@@ -235,58 +290,48 @@ function Build-DockerArgs {
         Write-Info "Mounted folders: $($script:Folders.Count) folders" 
         Write-Info "Container mode: Auto-remove after each use (--rm)"
     }
-}function Find-ClaudeProcess {
+}
+
+function Test-ClaudeDesktopExecutablePath {
+    param([string]$Path)
+
+    $desktopFolders = @("$env:LOCALAPPDATA\AnthropicClaude") + $script:ClaudeDesktopFolders
+    # Installation roots are literal paths; only the Store package name is a wildcard.
+    # PowerShell uses native path separators, including when the fixtures run on Unix.
+    $desktopPatterns = @($desktopFolders | ForEach-Object {
+        [System.Management.Automation.WildcardPattern]::Escape(($_ -replace '\\', '/')) + '/*'
+    })
+    $storeRoot = "$env:ProgramFiles\WindowsApps\" -replace '\\', '/'
+    $desktopPatterns += [System.Management.Automation.WildcardPattern]::Escape($storeRoot) + 'Claude_*/*'
+    $normalizedPath = $Path -replace '\\', '/'
+    return [bool]($Path -and ($desktopPatterns | Where-Object { $normalizedPath -like $_ }))
+}
+
+function Find-ClaudeProcess {
     Write-Info "Looking for Claude Desktop processes..."
-    
-    # Try different process name patterns for Claude
-    $processNames = @("Claude", "claude", "Claude Desktop", "claude-desktop", "ClaudeDesktop")
+
+    # Claude Code also runs as claude.exe (for example from ~\.local\bin), and its sessions must
+    # keep running. So a process counts as Claude Desktop only when it runs from a folder Claude
+    # Desktop is installed in, the Microsoft Store package's and the classic installer's too.
     $foundProcesses = @()
-    
-    foreach ($processName in $processNames) {
-        if ($VerboseOutput) { Write-Info "Checking for process pattern: $processName" }
-        try {
-            $processes = Get-Process -Name $processName -ErrorAction SilentlyContinue
-            if ($processes) {
-                foreach ($proc in $processes) {
-                    $procPath = try { $proc.Path } catch { "Unknown" }
-                    $procWindowTitle = try { $proc.MainWindowTitle } catch { "N/A" }
-                    
-                    $foundProcesses += @{
-                        Name = $proc.ProcessName
-                        Id = $proc.Id
-                        Path = $procPath
-                        WindowTitle = $procWindowTitle
-                    }
-                    if ($VerboseOutput) { Write-Info "Found: $($proc.ProcessName) (PID: $($proc.Id))" }
-                }
-            }
-        } catch {
-            if ($VerboseOutput) { Write-Info "No processes found for pattern: $processName" }
+
+    foreach ($proc in Get-Process -Name "claude" -ErrorAction SilentlyContinue) {
+        $procPath = try { $proc.Path } catch { $null }
+        if (-not (Test-ClaudeDesktopExecutablePath $procPath)) {
+            if ($VerboseOutput) { Write-Info "Not Claude Desktop, left running: $($proc.ProcessName) (PID: $($proc.Id)) $procPath" }
+            continue
         }
+        $procWindowTitle = try { $proc.MainWindowTitle } catch { "N/A" }
+
+        $foundProcesses += @{
+            Name = $proc.ProcessName
+            Id = $proc.Id
+            Path = $procPath
+            WindowTitle = $procWindowTitle
+        }
+        if ($VerboseOutput) { Write-Info "Found: $($proc.ProcessName) (PID: $($proc.Id))" }
     }
-    
-    # Also try WMI for more comprehensive search
-    if ($VerboseOutput) { Write-Info "Searching with WMI for Claude-related processes..." }
-    try {
-        $wmiProcesses = Get-WmiObject Win32_Process | Where-Object { 
-            $_.Name -like "*claude*" -or 
-            $_.CommandLine -like "*claude*" -or
-            $_.ExecutablePath -like "*claude*"
-        }
-        
-        foreach ($proc in $wmiProcesses) {
-            $foundProcesses += @{
-                Name = $proc.Name
-                Id = $proc.ProcessId
-                Path = $proc.ExecutablePath
-                CommandLine = $proc.CommandLine
-            }
-            if ($VerboseOutput) { Write-Info "WMI Found: $($proc.Name) (PID: $($proc.ProcessId))" }
-        }
-    } catch {
-        if ($VerboseOutput) { Write-Info "WMI search failed or no additional processes found" }
-    }
-    
+
     return $foundProcesses
 }
 
@@ -356,18 +401,12 @@ function Find-ClaudeExecutable {
     if ($VerboseOutput) { Write-Info "Searching for Claude Desktop executable..." }
     
     # Common installation paths for Claude Desktop
-    $claudePaths = @(
-        "$env:LOCALAPPDATA\Programs\Claude\Claude.exe",
-        "$env:PROGRAMFILES\Claude\Claude.exe", 
-        "$env:PROGRAMFILES(x86)\Claude\Claude.exe",
-        "$env:APPDATA\Claude\Claude.exe",
-        "$env:USERPROFILE\AppData\Local\Programs\Claude\Claude.exe"
-    )
+    $claudePaths = $script:ClaudeDesktopFolders | ForEach-Object { "$_\Claude.exe" }
     
     if ($VerboseOutput) { Write-Info "Checking standard installation paths..." }
     foreach ($path in $claudePaths) {
         if ($VerboseOutput) { Write-Info "Checking: $path" }
-        if (Test-Path $path) {
+        if (Test-Path -LiteralPath $path) {
             if ($VerboseOutput) { Write-Info "Found Claude executable: $path" }
             return $path
         }
@@ -391,7 +430,8 @@ function Find-ClaudeExecutable {
                     if ($entry.InstallLocation) {
                         $possibleExe = Join-Path $entry.InstallLocation "Claude.exe"
                         if ($VerboseOutput) { Write-Info "Registry found: $($entry.DisplayName) at $possibleExe" }
-                        if (Test-Path $possibleExe) {
+                        if ((Test-ClaudeDesktopExecutablePath $possibleExe) -and
+                            (Test-Path -LiteralPath $possibleExe)) {
                             if ($VerboseOutput) { Write-Info "Found Claude executable via registry: $possibleExe" }
                             return $possibleExe
                         }
@@ -400,7 +440,8 @@ function Find-ClaudeExecutable {
                         $uninstallDir = Split-Path $entry.UninstallString -Parent
                         $possibleExe = Join-Path $uninstallDir "Claude.exe"
                         if ($VerboseOutput) { Write-Info "Trying uninstall directory: $possibleExe" }
-                        if (Test-Path $possibleExe) {
+                        if ((Test-ClaudeDesktopExecutablePath $possibleExe) -and
+                            (Test-Path -LiteralPath $possibleExe)) {
                             if ($VerboseOutput) { Write-Info "Found Claude executable via uninstall path: $possibleExe" }
                             return $possibleExe
                         }
@@ -419,16 +460,18 @@ function Find-ClaudeExecutable {
     $searchDirs = @(
         "$env:LOCALAPPDATA\Programs",
         "$env:PROGRAMFILES",
-        "$env:PROGRAMFILES(x86)"
+        "${env:ProgramFiles(x86)}"
     )
     
     foreach ($dir in $searchDirs) {
-        if (Test-Path $dir) {
+        if (Test-Path -LiteralPath $dir) {
             if ($VerboseOutput) { Write-Info "Searching in: $dir" }
             try {
-                $found = Get-ChildItem -Path $dir -Recurse -Name "Claude.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+                $found = Get-ChildItem -LiteralPath $dir -Recurse -Filter "Claude.exe" -File -ErrorAction SilentlyContinue |
+                    Where-Object { Test-ClaudeDesktopExecutablePath $_.FullName } |
+                    Select-Object -First 1
                 if ($found) {
-                    $fullPath = Join-Path $dir $found
+                    $fullPath = $found.FullName
                     if ($VerboseOutput) { Write-Info "Found Claude executable via search: $fullPath" }
                     return $fullPath
                 }
@@ -837,6 +880,7 @@ function Start-Installation {
     Get-DockerImage
     Ask-ForFolders
     Initialize-Volumes
+    Update-SystemVolume
     Build-DockerArgs
     Update-ClaudeConfig
     Restart-Claude

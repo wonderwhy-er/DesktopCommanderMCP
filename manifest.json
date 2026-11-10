@@ -1,0 +1,167 @@
+{
+  "manifest_version": "0.3",
+  "name": "desktop-commander",
+  "display_name": "Desktop Commander",
+  "version": "0.3.2",
+  "description": "Build, explore, and automate on your local machine with access to files and terminal.",
+  "long_description": "Combine local filesystem access with full terminal control to handle technical tasks through natural language. Desktop Commander empowers you to build, explore, and automate - from organizing repositories to creating complete applications:\n* **Build from scratch** - Create features and applications with simple commands\n* **Manage development environments** - Set up servers, configure systems, and handle processes\n* **Manage context and documentation** - Keep track of project details and technical specifications\n* **Explore existing codebases and projects** - Navigate and understand complex repositories\n\nThis extension bridges technical skill gaps by providing full command-line superpowers through an interface that understands your intent and handles complexity automatically.",
+  "author": {
+    "name": "Desktop Commander Team",
+    "email": "er@desktopcommander.app",
+    "url": "https://desktopcommander.app/"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/wonderwhy-er/DesktopCommanderMCP.git"
+  },
+  "homepage": "https://github.com/wonderwhy-er/DesktopCommanderMCP",
+  "documentation": "https://github.com/wonderwhy-er/DesktopCommanderMCP/blob/main/FAQ.md",
+  "support": "https://github.com/wonderwhy-er/DesktopCommanderMCP/issues",
+  "privacy_policies": [
+    "https://legal.desktopcommander.app/privacy_desktop_commander_mcp"
+  ],
+  "icon": "icon.png",
+  "server": {
+    "type": "node",
+    "entry_point": "dist/index.js",
+    "mcp_config": {
+      "command": "node",
+      "args": [
+        "${__dirname}/dist/index.js"
+      ],
+      "env": {
+        "MCP_DXT": "true",
+        "NODE_ENV": "production"
+      }
+    }
+  },
+  "tools": [
+    {
+      "name": "get_config",
+      "description": "Get the complete server configuration including blocked commands, allowed directories, file limits, telemetry settings, client info, and system information."
+    },
+    {
+      "name": "set_config_value",
+      "description": "Set a specific configuration value by key. WARNING: Should be used in a separate chat from file operations to prevent security issues."
+    },
+    {
+      "name": "read_file",
+      "description": "Read contents from local filesystem, URLs, Excel files (.xlsx, .xls, .xlsm), PDFs, and DOCX files with line/page-based pagination."
+    },
+    {
+      "name": "read_multiple_files",
+      "description": "Read the contents of multiple files simultaneously. Handles text files and renders images."
+    },
+    {
+      "name": "write_file",
+      "description": "Write or append to file contents. Supports Excel files (JSON 2D array format) and DOCX creation from markdown. For PDFs, use write_pdf instead."
+    },
+    {
+      "name": "write_pdf",
+      "description": "Create new PDF files from markdown or modify existing PDFs (insert/delete pages). Supports HTML/CSS styling and SVG graphics."
+    },
+    {
+      "name": "create_directory",
+      "description": "Create a new directory or ensure a directory exists. Can create multiple nested directories in one operation."
+    },
+    {
+      "name": "list_directory",
+      "description": "Get a detailed recursive listing of all files and directories in a specified path. Supports depth parameter (default: 2) for multi-level directory traversal."
+    },
+    {
+      "name": "move_file",
+      "description": "Move or rename files and directories between locations."
+    },
+    {
+      "name": "start_search",
+      "description": "Start streaming search for files by name or content patterns. Searches text files, Excel, and DOCX content."
+    },
+    {
+      "name": "get_more_search_results",
+      "description": "Get more results from an active search with offset-based pagination."
+    },
+    {
+      "name": "stop_search",
+      "description": "Stop an active search gracefully when you've found what you need."
+    },
+    {
+      "name": "list_searches",
+      "description": "List all active searches with their status and runtime information."
+    },
+    {
+      "name": "get_file_info",
+      "description": "Retrieve detailed metadata about a file or directory including size, timestamps, permissions, line counts, and sheet info for Excel files."
+    },
+    {
+      "name": "edit_block",
+      "description": "Apply targeted text replacements for text and DOCX files, or range-based cell updates for Excel files."
+    },
+    {
+      "name": "start_process",
+      "description": "Start a new terminal process with intelligent state detection. Primary tool for local file analysis (CSV, JSON, logs, etc.)."
+    },
+    {
+      "name": "read_process_output",
+      "description": "Read output from a running process with intelligent completion detection, REPL prompt recognition, and offset/length pagination."
+    },
+    {
+      "name": "interact_with_process",
+      "description": "Send input to a running process and automatically receive the response. Critical tool for all local file analysis."
+    },
+    {
+      "name": "force_terminate",
+      "description": "Force terminate a running terminal session."
+    },
+    {
+      "name": "list_sessions",
+      "description": "List all active terminal sessions with status information including blocked state and runtime."
+    },
+    {
+      "name": "list_processes",
+      "description": "List all running processes with PID, command name, CPU usage, and memory usage."
+    },
+    {
+      "name": "kill_process",
+      "description": "Terminate a running process by PID. Use with caution."
+    },
+    {
+      "name": "get_usage_stats",
+      "description": "Get usage statistics for debugging and analysis including tool usage and performance metrics."
+    },
+    {
+      "name": "get_recent_tool_calls",
+      "description": "Get recent tool call history with their arguments and outputs. Returns chronological list of tool calls made during this session for debugging, context recovery, and onboarding new chats."
+    },
+    {
+      "name": "give_feedback_to_desktop_commander",
+      "description": "Open feedback form in browser to provide feedback about Desktop Commander."
+    }
+  ],
+  "keywords": [
+    "orchestration",
+    "workflow",
+    "development",
+    "prototyping",
+    "terminal",
+    "processes",
+    "file-management",
+    "automation",
+    "productivity",
+    "end-to-end",
+    "data-analysis",
+    "docx",
+    "pdf",
+    "excel"
+  ],
+  "license": "MIT",
+  "compatibility": {
+    "platforms": [
+      "darwin",
+      "win32",
+      "linux"
+    ],
+    "runtimes": {
+      "node": ">=22.12.0"
+    }
+  }
+}

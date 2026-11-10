@@ -6,8 +6,8 @@
  * Publishing is done by CI (.github/workflows/release.yml), triggered by
  * pushing a version tag. This script prepares and fires that trigger:
  *
- * 1. Run tests (or just build with --skip-tests)
- * 2. Bump version (package.json, server.json, src/version.ts)
+ * 1. Run tests (or use CI with --skip-tests; MCPB build still runs)
+ * 2. Bump version (package.json, server.json, src/version.ts, manifest.json)
  * 3. Commit, tag vX.Y.Z, push main + tag  ← this starts the CI release
  *
  * CI then builds the MCPB, creates the GitHub release with the .mcpb asset
@@ -24,6 +24,7 @@ const { execSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 const readline = require('readline');
+const { nextStableVersion } = require('./release-version.cjs');
 
 const REPO_URL = 'https://github.com/wonderwhy-er/DesktopCommanderMCP';
 
@@ -96,10 +97,7 @@ function confirm(question) {
  * Preview the next version for a bump type without changing anything.
  */
 function bumpPreview(version, type) {
-    const [major, minor, patch] = version.split('.').map(Number);
-    if (type === 'major') return `${major + 1}.0.0`;
-    if (type === 'minor') return `${major}.${minor + 1}.0`;
-    return `${major}.${minor}.${patch + 1}`;
+    return nextStableVersion(version, type);
 }
 
 /**
@@ -138,6 +136,14 @@ function updateVersionFiles(newVersion) {
     fs.writeFileSync(serverJsonPath, JSON.stringify(serverJson, null, 2) + '\n');
 
     fs.writeFileSync(path.join(process.cwd(), 'src', 'version.ts'), `export const VERSION = '${newVersion}';\n`);
+
+    const lockPath = path.join(process.cwd(), 'package-lock.json');
+    if (fs.existsSync(lockPath)) {
+        const lock = JSON.parse(fs.readFileSync(lockPath, 'utf8'));
+        lock.version = newVersion;
+        if (lock.packages?.['']) lock.packages[''].version = newVersion;
+        fs.writeFileSync(lockPath, JSON.stringify(lock, null, 2) + '\n');
+    }
 }
 
 function parseArgs() {
@@ -201,7 +207,7 @@ function showHelp() {
     console.log('Options:');
     console.log('  --minor         Bump minor version (default: patch)');
     console.log('  --major         Bump major version (default: patch)');
-    console.log('  --skip-tests    Build only instead of running the test suite');
+    console.log('  --skip-tests    Skip full tests (CI builds/verifies MCPB; alpha builds locally)');
     console.log('  --alpha         Alpha release: publish to npm (alpha tag) from this');
     console.log('                  machine, no git tag, no CI (needs npm login)');
     console.log('  --dry-run       Show what would happen without changing anything');
@@ -249,6 +255,7 @@ async function dispatchRelease(options) {
     } else {
         ghArgs.push('-f', `bump=${options.bumpType}`);
     }
+    if (options.skipTests) ghArgs.push('-f', 'skip_tests=true');
     if (options.skipNpm) ghArgs.push('-f', 'skip_npm=true');
     if (options.skipRegistry) ghArgs.push('-f', 'skip_registry=true');
     if (options.skipGithubRelease) ghArgs.push('-f', 'skip_github_release=true');
@@ -259,7 +266,7 @@ async function dispatchRelease(options) {
     if (options.tag) {
         printInfo(`Re-releasing existing tag ${options.tag}`);
     } else {
-        printInfo(`CI will run tests, bump (${options.bumpType}), commit, tag, and publish.`);
+        printInfo(`CI will ${options.skipTests ? 'skip the full tests and ' : 'run tests, then '}bump (${options.bumpType}), commit, tag, and publish.`);
     }
 
     const skips = [
@@ -355,7 +362,8 @@ async function publishRelease() {
 
     // Skip flags and --tag can't ride on a plain tag push — hand the release
     // to CI through workflow dispatch instead.
-    if (options.skipNpm || options.skipRegistry || options.skipGithubRelease || options.tag) {
+    if (options.skipNpm || options.skipRegistry || options.skipGithubRelease || options.tag
+        || (options.skipTests && !options.alpha)) {
         await dispatchRelease(options);
         return;
     }
@@ -421,14 +429,8 @@ async function publishRelease() {
     }
 
     // --------------------------------------------------------------- stable --
-    // Guard: never cut a stable release on top of an alpha version
-    if (currentVersion.includes('-')) {
-        printError(`Current version "${currentVersion}" is a pre-release.`);
-        printError('Set a stable version in package.json (and server.json, src/version.ts) first,');
-        printError('or use --alpha for an alpha release.');
-        process.exit(1);
-    }
-
+    // Patch bumps promote X.Y.Z-alpha.N directly to X.Y.Z; minor/major bump
+    // the version core. The same helper is used by sync-version.js in CI.
     // Guard: releases are cut from main
     const branch = execSilent('git rev-parse --abbrev-ref HEAD', { ignoreError: true }).trim();
     if (branch !== 'main') {
@@ -496,7 +498,7 @@ async function publishRelease() {
         return;
     }
 
-    exec('git add package.json server.json src/version.ts');
+    exec('git add package.json package-lock.json server.json src/version.ts manifest.json');
     exec(`git commit -m "Release ${tagName}
 
 Automated release commit with version bump from ${currentVersion} to ${newVersion}"`);

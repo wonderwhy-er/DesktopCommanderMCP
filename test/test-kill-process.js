@@ -14,12 +14,27 @@
  *   says it "will forcefully terminate the specified process", but it sent
  *   SIGTERM only and answered "Successfully terminated" while the process ran
  *   on. On Windows process.kill always terminates outright.
+ * - A command that start_process runs is ended with every process it started.
+ *   The PID start_process answers with is the shell's, and kill_process ended
+ *   only that PID. On Windows, and with sh on Linux, the shell runs the
+ *   command's program as its child, so the program kept running. zsh and bash
+ *   run a single command in the shell's place, so there the program ended,
+ *   but a child the program had started kept running. Checked in each shell
+ *   start_process can use on this OS.
+ * - When kill_process can't end every process of such a command, it answers
+ *   as force_terminate does then, instead of "Successfully terminated".
  */
 import assert from 'assert';
 import { spawn } from 'child_process';
 import { killProcess } from '../dist/tools/process.js';
+import { startProcess, forceTerminate } from '../dist/tools/improved-process-tools.js';
 import { handleKillProcess } from '../dist/handlers/process-handlers.js';
-import { runIfMain } from './helpers/run-if-main.js';
+import { isShellAvailable } from '../dist/utils/shell.js';
+import { GIT_BASH } from './helpers/powershell.js';
+import { runIfMain, skip } from './helpers/run-if-main.js';
+import {
+  createPidDir, processTreeCommand, readTreePids, readWrittenPids, waitForExit, withoutTreeTool, cleanUpProcesses
+} from './helpers/process-tree.js';
 
 // The message of the refusal: the argument check's own, as for any invalid argument
 const REFUSAL = 'Number must be greater than 0';
@@ -82,8 +97,89 @@ async function testEndsProcessIgnoringSigterm() {
   }
 }
 
+/** The shells start_process can run a command in here. Not detectAvailableShells(): that can give WSL's bash.exe, and adds every shell in /etc/shells */
+function shellsOnThisOs() {
+  if (process.platform === 'win32') return ['powershell', 'pwsh', 'cmd', GIT_BASH];
+  return process.platform === 'darwin' ? ['zsh', 'bash'] : ['sh', 'bash'];
+}
+
+/**
+ * start_process runs, in `shell`, a command whose program starts a child of its
+ * own, and both keep running. kill_process with the PID start_process answered
+ * with must end the shell and both processes, and answer as it always has.
+ */
+async function assertKillEndsTree(shell) {
+  const dir = createPidDir();
+  let shellPid;
+  try {
+    const started = await startProcess({ command: processTreeCommand(dir, 2), shell, timeout_ms: 500 });
+    shellPid = started.structuredContent?.pid;
+    assert(shellPid > 0, `start_process should start the command: ${started.content[0].text}`);
+    const treePids = await readTreePids(dir, 2);
+
+    const killed = await killProcess({ pid: shellPid });
+    const stillRunning = await waitForExit([shellPid, ...treePids]);
+    assert.deepStrictEqual(stillRunning, [],
+      `kill_process answered "${killed.content[0].text}", but of the shell ${shellPid} and the command's processes (${treePids.join(', ')}) these still run: ${stillRunning.join(', ')}`);
+    assert.strictEqual(killed.content[0].text, `Successfully terminated process ${shellPid}`);
+    console.log(`✓ ${shell}: the shell ${shellPid} and the command's processes (${treePids.join(' -> ')}) are gone, and the answer is the old one`);
+  } finally {
+    if (shellPid > 0) await forceTerminate({ pid: shellPid });
+    cleanUpProcesses([shellPid, ...readWrittenPids(dir)], [dir]);
+  }
+}
+
+async function testEndsCommandStartedByStartProcess() {
+  console.log('\nTest: kill_process with the PID start_process gave ends the whole tree, in each shell');
+  // Every shell is tried even after one fails
+  const failures = [];
+  for (const shell of shellsOnThisOs()) {
+    if (!isShellAvailable(shell)) {
+      skip(`kill_process in ${shell}: the shell is not installed`);
+      continue;
+    }
+    try {
+      await assertKillEndsTree(shell);
+    } catch (error) {
+      failures.push(`${shell}: ${error.message}`);
+    }
+  }
+  assert.deepStrictEqual(failures, [], failures.join('\n'));
+}
+
+/**
+ * When the tool that finds a tree can't run (taskkill on Windows, ps on
+ * macOS/Linux), kill_process can't tell whether every process ended: it must
+ * answer as force_terminate does then, and still kill the shell.
+ */
+async function testKillFailureIsReported() {
+  console.log('\nTest: kill_process reports a tree it could not end');
+  const dir = createPidDir();
+  let shellPid;
+  try {
+    const started = await startProcess({ command: processTreeCommand(dir, 1), timeout_ms: 500 });
+    shellPid = started.structuredContent?.pid;
+    assert(shellPid > 0, `start_process should start the command: ${started.content[0].text}`);
+    await readTreePids(dir, 1);
+
+    const killed = await withoutTreeTool(dir, () => killProcess({ pid: shellPid }));
+    assert(killed.isError, `kill_process should report the failure: ${killed.content[0].text}`);
+    assert.strictEqual(killed.content[0].text, `Error: Could not terminate every process of session ${shellPid}; some may still be running`);
+    assert.deepStrictEqual(await waitForExit([shellPid]), [], `The shell ${shellPid} itself should still be killed`);
+    console.log('✓ Answered as force_terminate answers, and the shell was killed');
+  } finally {
+    if (shellPid > 0) await forceTerminate({ pid: shellPid });
+    cleanUpProcesses([shellPid, ...readWrittenPids(dir)], [dir]);
+  }
+}
+
 export default async function runTests() {
-  const tests = [testRefusesPidsBelowOne, testEndsProcessIgnoringSigterm];
+  const tests = [
+    testRefusesPidsBelowOne,
+    testEndsProcessIgnoringSigterm,
+    testEndsCommandStartedByStartProcess,
+    testKillFailureIsReported,
+  ];
   // Every case runs even after one fails
   const failures = [];
   for (const test of tests) {

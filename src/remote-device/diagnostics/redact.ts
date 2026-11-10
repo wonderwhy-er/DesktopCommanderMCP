@@ -56,6 +56,35 @@ function safeUserName(): string {
     }
 }
 
+/** Mask overlapping private values together so one replacement cannot expose another's fragments. */
+function maskHostnamesAndUuids(text: string): string {
+    const hostname = os.hostname();
+    const hosts = [...new Set([hostname, hostname.split('.')[0]])]
+        .map(wordPattern).filter((pattern): pattern is RegExp => pattern !== null);
+    const patterns = [
+        { pattern: UUID, placeholder: '<id>' },
+        ...hosts.map((pattern) => ({ pattern, placeholder: '<host>' })),
+    ];
+    const matches = patterns.flatMap(({ pattern, placeholder }) =>
+        Array.from(text.matchAll(pattern), (match) => ({
+            start: match.index, end: match.index + match[0].length, placeholder,
+        }))).sort((a, b) => a.start - b.start || b.end - a.end);
+    const ranges: typeof matches = [];
+    for (const match of matches) {
+        const previous = ranges.at(-1);
+        if (previous && match.start < previous.end) previous.end = Math.max(previous.end, match.end);
+        else ranges.push({ ...match });
+    }
+    const pieces: string[] = [];
+    let cursor = 0;
+    for (const range of ranges) {
+        pieces.push(text.slice(cursor, range.start), range.placeholder);
+        cursor = range.end;
+    }
+    pieces.push(text.slice(cursor));
+    return pieces.join('');
+}
+
 export function redact(text: string): string {
     let out = text;
     const home = homePattern(os.homedir());
@@ -64,13 +93,7 @@ export function redact(text: string): string {
     out = out.replace(BEARER, '$1<redacted>');
     out = out.replace(JWT, '<jwt>');
     out = out.replace(EMAIL, '<email>');
-    out = out.replace(UUID, '<id>');
-    // "name.local" and the bare "name" a Mac also goes by
-    const hostname = os.hostname();
-    for (const name of new Set([hostname, hostname.split('.')[0]])) {
-        const host = wordPattern(name);
-        if (host) out = out.replace(host, '<host>');
-    }
+    out = maskHostnamesAndUuids(out);
     const user = wordPattern(safeUserName());
     if (user) out = out.replace(user, '<user>');
     return out;

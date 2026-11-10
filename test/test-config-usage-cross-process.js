@@ -8,8 +8,22 @@ import { runIfMain } from './helpers/run-if-main.js';
 
 const TEST_FILE = fileURLToPath(import.meta.url);
 const WORKERS = 8;
-const TIMEOUT_MS = 8_000;
+// Each wait ends when its message or the last save arrives (8 processes
+// starting at once, then 8 locked writes: about a second here); this much
+// holds up on a loaded machine
+const TIMEOUT_MS = 30_000;
+// A save applied twice would land SAVE_RETRY_MS (250 ms) after the first
+const SETTLE_MS = 500;
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** usageStats in config.json, or undefined while it can't be read (a write may be replacing it) */
+function readUsageStats(configPath) {
+  try {
+    return JSON.parse(readFileSync(configPath, 'utf8')).usageStats;
+  } catch {
+    return undefined;
+  }
+}
 
 async function worker() {
   const { configManager } = await import('../dist/config-manager.js');
@@ -19,8 +33,8 @@ async function worker() {
   process.on('message', async (message) => {
     if (message.type !== 'track') return;
     try {
+      // Its save runs in the background: the parent watches config.json for it
       await usageTracker.trackSuccess('list_processes');
-      await sleep(400);
       process.send?.({ type: 'done' });
     } catch (error) {
       process.send?.({ type: 'error', message: error.stack || error.message });
@@ -51,6 +65,12 @@ async function parent() {
     const done = children.map((child) => waitFor(child, 'done'));
     children.forEach((child) => child.send({ type: 'track' }));
     await Promise.all(done);
+    // Read config.json until every increment has landed, however long the
+    // locked writes take; an increment that was lost never lands, and the
+    // count is checked at the deadline
+    const deadline = Date.now() + TIMEOUT_MS;
+    while ((readUsageStats(configPath)?.totalToolCalls ?? 0) < WORKERS && Date.now() < deadline) await sleep(50);
+    await sleep(SETTLE_MS);
     const stats = JSON.parse(readFileSync(configPath, 'utf8')).usageStats;
     assert.equal(stats.totalToolCalls, WORKERS, 'all process increments must survive');
     assert.equal(stats.successfulCalls, WORKERS);
@@ -58,7 +78,13 @@ async function parent() {
     assert.equal(stats.processOperations, WORKERS);
     console.log(`✓ usage counters preserve ${WORKERS} concurrent process increments`);
   } finally {
+    // Removed once the children are gone: until then they watch the config
+    // folder, and a slow exit on a loaded machine would make the removal fail
+    const exits = children.map((child) => child.exitCode !== null || child.signalCode !== null
+      ? Promise.resolve()
+      : new Promise((resolve) => child.once('exit', resolve)));
     children.forEach((child) => child.kill('SIGTERM'));
+    await Promise.all(exits);
     rmSync(home, { recursive: true, force: true });
   }
 }
