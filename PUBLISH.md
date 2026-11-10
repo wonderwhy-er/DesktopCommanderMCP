@@ -43,16 +43,24 @@ the tag push hands off to CI. Watch the run at
 https://github.com/wonderwhy-er/DesktopCommanderMCP/actions/workflows/release.yml
 
 Requirements: on `main`, clean working tree, tests passing. `--yes` skips the
-prompt, `--skip-tests` builds without the test suite.
+prompt. `npm run release -- --skip-tests` dispatches CI with the test-suite
+skip checkbox set; CI still builds and verifies the MCPB before publishing.
 
 ## Normal release (GitHub UI — no local setup at all)
 
-1. Actions → **Release** → **Run workflow**
+1. Actions → **Release** → **Run workflow** (from `main`)
 2. Pick `bump` = patch / minor / major
-3. Run
+3. Optionally select **Skip tests** if the candidate has already passed testing
+4. Run
 
-CI runs the tests, bumps the version, commits and tags `main`, then publishes
-everywhere — identical result to the terminal flow.
+By default CI runs the full tests, bumps the version, commits and tags `main`,
+then publishes everywhere. **Skip tests** bypasses only the full test suite;
+dependency installation, MCPB build, version consistency and bundle validation
+remain mandatory. Skipped tests are recorded as a warning in the workflow log.
+
+When the current version is an alpha such as `0.3.2-alpha.3`, **patch**
+promotes it directly to `0.3.2`, not `0.3.3`. Minor and major still
+advance to `0.4.0` and `1.0.0` respectively.
 
 ---
 
@@ -127,8 +135,9 @@ npm run release:alpha    # 0.2.47 → 0.2.48-alpha.0 → npm only, under the alp
 
 Alphas are the one flow that still publishes from your machine (needs
 `npm login`). No git tag, no CI, no GitHub release, no registry — CI
-intentionally refuses pre-release tags. After alpha testing, reset the version
-files to a stable version before the next regular release.
+intentionally refuses publishing pre-release tags. After alpha testing,
+choose `bump=patch` in the GitHub Actions release workflow to promote
+`0.3.2-alpha.N` directly to stable `0.3.2`.
 
 Install an alpha with: `npm install -g @wonderwhy-er/desktop-commander@alpha`
 

@@ -69,6 +69,11 @@ on:
         type: choice
         options: ['none', 'patch', 'minor', 'major']
         default: 'none'
+      skip_tests:
+        description: 'Skip full tests for a previously verified release candidate (build and MCPB checks still run)'
+        required: false
+        type: boolean
+        default: false
       tag:
         description: 'OR: re-release an existing tag (e.g. v0.2.48) after a failed run'
         required: false
@@ -199,12 +204,16 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      # Cut mode does in CI what the local script does locally: test first,
-      # then bump, commit, tag. Tag-push releases assume the local script
-      # already ran the tests before tagging.
+      # Cut mode normally runs tests. Skipping is explicit and opt-in for a
+      # release candidate already validated on the target platforms. Install,
+      # MCPB build, version checks and bundle verification still run.
       - name: Run tests (cut mode)
-        if: steps.mode.outputs.mode == 'cut'
+        if: steps.mode.outputs.mode == 'cut' && !inputs.skip_tests
         run: npm test
+
+      - name: Note skipped release tests
+        if: steps.mode.outputs.mode == 'cut' && inputs.skip_tests
+        run: echo "::warning::Full tests deliberately skipped for this release; MCPB build and verification still run"
 
       # Local only. The commit and tag stay in the runner's clone until the
       # MCPB bundle has been built and verified, so a failed build leaves
@@ -220,9 +229,8 @@ jobs:
           SKIP_GH: ${{ inputs.skip_github_release }}
         run: |
           CURRENT=$(node -p "require('./package.json').version")
-          case "$CURRENT" in
-            *-*) echo "Current version $CURRENT is a pre-release; set a stable version first"; exit 1 ;;
-          esac
+          # A patch bump from X.Y.Z-alpha.N promotes directly to X.Y.Z.
+          # scripts/sync-version.js also handles minor/major and validates the version.
           # Resume instead of bumping. A previous run can push the release
           # commit and tag and then fail while publishing; re-running it must
           # finish that version, not cut a second one. Only resume while the
@@ -254,7 +262,7 @@ jobs:
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add package.json server.json src/version.ts manifest.json
+          git add package.json package-lock.json server.json src/version.ts manifest.json
           git commit -m "Release v$VERSION
 
           Automated release commit with version bump from $CURRENT to $VERSION"
@@ -369,8 +377,10 @@ jobs:
           path: |
             desktop-commander-*.mcpb
             package.json
+            package-lock.json
             server.json
             src/version.ts
+            manifest.json
           if-no-files-found: error
           retention-days: 7
 
@@ -399,10 +409,9 @@ jobs:
           registry-url: 'https://registry.npmjs.org'
           cache: 'npm'
 
-      # Lands the .mcpb next to the checkout and overwrites package.json /
-      # server.json / src/version.ts with the exact files the bundle was built
-      # from. On a real release those are already identical; on a rehearsal
-      # this is what applies the bump.
+      # Lands the .mcpb next to the checkout and overlays version metadata
+      # and the lockfile from the exact build. On a real release those are
+      # already identical; on a rehearsal this applies the local-only bump.
       - name: Download release assets
         uses: actions/download-artifact@v4
         with:
