@@ -131,9 +131,16 @@ async function getAllowedDirs(): Promise<string[]> {
     return [];
 }
 
-// Normalize all paths consistently
+// Normalize all paths consistently. Only Windows compares paths without case:
+// on POSIX filesystems lowercasing made distinct directories (e.g. /tmp/DC-Allow
+// and /tmp/dc-allow) compare as the same one, letting a sibling directory pass
+// the allowedDirectories check. Checked paths are already real paths, so a
+// case-insensitive volume still compares consistently.
+const PATHS_ARE_CASE_INSENSITIVE = process.platform === 'win32';
+
 function normalizePath(p: string): string {
-    return path.normalize(expandHome(p)).toLowerCase();
+    const normalized = path.normalize(expandHome(p));
+    return PATHS_ARE_CASE_INSENSITIVE ? normalized.toLowerCase() : normalized;
 }
 
 function expandHome(filepath: string): string {
