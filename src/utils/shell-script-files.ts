@@ -1,8 +1,15 @@
 import { getShellType, POSIX_SHELLS } from './shell.js';
+import { requireCompleteArguments, type ArgumentInspection } from './command-reading.js';
 
 type FileWord = string | null;
+interface FileWordSource extends ArgumentInspection {
+    written?: readonly string[];
+}
 
 const POSIX_VALUE_OPTIONS = new Set(['-o', '+o', '-O', '+O', '--rcfile', '--init-file']);
+const POSIX_SHORT_OPTIONS = /^[-+][a-zA-Z]+$/;
+// These scalar spellings prove one argument; quoted $@ and arrays do not.
+const QUOTED_SCALAR_VALUE = /^"\$(?:[A-Za-z_]\w*|\{[A-Za-z_]\w*\})"$/;
 const BASH_STARTUP_OPTIONS = new Set(['--rcfile', '--init-file']);
 // Minimum spellings and aliases follow the PowerShell host's option precedence.
 const POWERSHELL_VALUE_OPTIONS = [
@@ -13,24 +20,35 @@ const POWERSHELL_VALUE_OPTIONS = [
 ];
 const POWERSHELL_VALUE_ALIASES = new Set(['-ep', '-if', '-of', '-wd', '-ea']);
 
-/** Option values must not be mistaken for the shell's script filename. */
-function posixValueOption(arg: string): boolean {
-    return POSIX_VALUE_OPTIONS.has(arg) || /^[-+][a-zA-Z]*[oO]/.test(arg);
+/** Skipping only one grouped value would mistake another option name for the script. */
+function posixValueOptions(arg: string): string[] {
+    if (POSIX_VALUE_OPTIONS.has(arg)) return [arg];
+    if (!POSIX_SHORT_OPTIONS.test(arg)) return [];
+    return [...arg.slice(1)]
+        .filter((letter) => letter === 'o' || letter === 'O')
+        .map((letter) => arg[0] + letter);
 }
 
 /** Command/stdin mode owns later words, so only a positional file before that boundary is a script. */
-function posixScriptFile(args: FileWord[]): FileWord | undefined {
+function posixScriptFile(args: FileWord[], source: FileWordSource): FileWord | undefined {
+    let quotedRuntimeValue = false;
     for (let i = 0; i < args.length; i++) {
         const arg = args[i];
         if (arg === null) return arg;
         if (/^-[a-zA-Z]*[cs]/.test(arg) || arg === '--command') return undefined;
-        if (posixValueOption(arg)) {
-            i++;
+        const valueOptions = posixValueOptions(arg);
+        if (valueOptions.length > 0) {
+            const optionValues = args.slice(i + 1, i + 1 + valueOptions.length);
+            const uncertainValue = optionValues.some((value, offset) => value === null
+                && !QUOTED_SCALAR_VALUE.test(source.written?.[i + 1 + offset] ?? ''));
+            if (uncertainValue) return null;
+            quotedRuntimeValue ||= optionValues.includes(null);
+            i += valueOptions.length;
             continue;
         }
         if (!arg.startsWith('-') && !arg.startsWith('+')) return arg;
     }
-    return undefined;
+    return quotedRuntimeValue ? null : undefined;
 }
 
 /** A custom rcfile needs a note only when the explicit host options cause Bash to read it. */
@@ -39,7 +57,6 @@ function bashStartupFile(args: FileWord[]): FileWord | undefined {
     let interactive = false;
     let login = false;
     let noRc = false;
-    let posix = false;
     for (let i = 0; i < args.length; i++) {
         const arg = args[i];
         if (arg === null || arg === '--') break;
@@ -49,19 +66,19 @@ function bashStartupFile(args: FileWord[]): FileWord | undefined {
         }
         if (arg === '--norc') noRc = true;
         if (arg === '--login') login = true;
-        if (arg === '--posix') posix = true;
-        if (/^[-+][a-zA-Z]+$/.test(arg)) {
+        if (POSIX_SHORT_OPTIONS.test(arg)) {
             if (arg.includes('i')) interactive = arg[0] === '-';
             if (arg.includes('l')) login = arg[0] === '-';
         }
-        if (posixValueOption(arg)) {
-            if (args[++i] === 'posix' && /^[-+][a-zA-Z]*o/.test(arg)) posix = arg[0] === '-';
+        const valueOptions = posixValueOptions(arg);
+        if (valueOptions.length > 0) {
+            i += valueOptions.length;
             continue;
         }
         if (!arg.startsWith('-') && !arg.startsWith('+')) break;
     }
-    // Bash reads the custom rcfile only in interactive, non-login Bash mode.
-    if (!interactive || login || noRc || posix || file === '') return undefined;
+    // POSIX-mode rcfile handling differs by Bash version; it cannot prove this file is unused.
+    if (!interactive || login || noRc || file === '') return undefined;
     return file;
 }
 
@@ -94,16 +111,20 @@ function powershellScriptFile(program: string, args: FileWord[]): FileWord | und
 }
 
 /** File arguments are found before command/script arguments can be mistaken for more host options. */
-export function shellScriptFiles(program: string, args: FileWord[]): FileWord[] {
+export function shellScriptFiles(program: string, args: FileWord[], source: FileWordSource = {}): FileWord[] {
     if (POSIX_SHELLS.has(program)) {
+        requireCompleteArguments(source);
         const files: FileWord[] = [];
         const startup = program === 'bash' ? bashStartupFile(args) : undefined;
-        const script = posixScriptFile(args);
+        const script = posixScriptFile(args, program === 'bash' ? source : {});
         if (startup !== undefined) files.push(startup);
-        if (script !== undefined) files.push(script);
+        // Known file roles stay visible; only two null roles repeat the same program-level notice.
+        const repeatsRuntimeNotice = script === null && startup === null;
+        if (script !== undefined && !repeatsRuntimeNotice) files.push(script);
         return files;
     }
     if (getShellType(program) === 'powershell') {
+        requireCompleteArguments(source);
         const script = powershellScriptFile(program, args);
         if (script !== undefined) return [script];
     }

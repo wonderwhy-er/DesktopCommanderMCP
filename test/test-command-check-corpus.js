@@ -12,14 +12,52 @@
  * skipped where that PowerShell isn't installed. The other readers need no
  * shell installed.
  *
- * Nothing is run: every command goes to commandManager.checkCommand, which only parses it.
+ * Corpus commands are only parsed by commandManager.checkCommand. A fixed native Bash builtin oracle
+ * evaluates arguments without executing those commands.
  */
 import assert from 'assert';
+import fs from 'node:fs';
+import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { commandManager } from '../dist/command-manager.js';
 import { runIfMain, skip } from './helpers/run-if-main.js';
 import { isTestHome } from './helpers/test-env.js';
 import { installedPowerShells } from './helpers/powershell.js';
 import { CORPUS } from './fixtures/command-check-corpus.mjs';
+import { resolveShellPath } from '../dist/utils/shell.js';
+
+// The oracle may use only these fixed installed native paths, captured before the corpus runs.
+const nativeBashPaths = process.platform === 'win32'
+  ? [path.join(process.env.ProgramFiles ?? 'C:\\Program Files', 'Git', 'bin', 'bash.exe'),
+    path.join(process.env.ProgramFiles ?? 'C:\\Program Files', 'Git', 'usr', 'bin', 'bash.exe')]
+  : ['/bin/bash', '/usr/bin/bash', '/usr/local/bin/bash', '/opt/homebrew/bin/bash'];
+const nativeBashEndpoints = nativeBashPaths.flatMap((file) => {
+  try { return [fs.realpathSync(file)]; } catch { return []; } // An absent fixed native path supplies no oracle.
+});
+
+/** This one fixed oracle decides by actual arguments, independently of the production brace reader/capability. */
+function expectedAnswer(fixture, shell) {
+  const expected = fixture.expectPerShell && Object.hasOwn(fixture.expectPerShell, shell)
+    ? fixture.expectPerShell[shell] : fixture.expect;
+  if (fixture.nativeOracle !== 'bash-plus-step') return expected;
+  const selected = resolveShellPath(shell);
+  if (selected === null) return expected;
+  const selectedEndpoint = fs.realpathSync(selected);
+  const endpoint = nativeBashEndpoints.find((file) => file === selectedEndpoint);
+  if (endpoint === undefined) return expected; // Never execute an arbitrary caller's custom endpoint as an oracle.
+  assert.equal(fixture.command, 'su{d..d..+1}o ls');
+  const env = Object.fromEntries(Object.entries(process.env)
+    .filter(([name]) => !['BASH_ENV', 'ENV'].includes(name.toUpperCase())));
+  // Every word is an argument to set: neither sudo nor the literal command name is ever executed.
+  const output = execFileSync(endpoint, ['--noprofile', '--norc', '-c',
+    'set -- su{d..d..+1}o ls; builtin printf "%s\\0" "$@"'],
+  { encoding: 'utf8', timeout: 3000, env });
+  const words = output.split('\0').slice(0, -1);
+  assert.equal(words.length, 2);
+  assert.equal(words[1], 'ls');
+  assert.ok(words[0] === 'sudo' || words[0] === 'su{d..d..+1}o', 'unexpected native plus-step expansion');
+  return words[0] === 'sudo' ? 'sudo' : null;
+}
 
 export default async function runTests() {
   // The answers hold for the default blockedCommands, which a fresh test home has
@@ -46,7 +84,7 @@ export default async function runTests() {
     const shells = c.shell === 'powershell' ? powershells : [c.shell];
     for (const shell of shells) {
       checked++;
-      const expect = c.expectPerShell && Object.hasOwn(c.expectPerShell, shell) ? c.expectPerShell[shell] : c.expect;
+      const expect = expectedAnswer(c, shell);
       let check;
       try {
         check = await commandManager.checkCommand(c.command, shell);

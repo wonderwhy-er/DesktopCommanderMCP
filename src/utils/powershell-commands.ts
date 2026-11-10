@@ -1,9 +1,10 @@
 import { spawn, type ChildProcess } from 'child_process';
 import { randomBytes } from 'crypto';
+import fs from 'fs';
 import type { Socket } from 'net';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { getShellEnvironment, resolveProgramPath } from './shell.js';
+import { getShellEnvironment, resolveShellPath } from './shell.js';
 import type { CommandReading, FoundCommand } from './command-reading.js';
 
 /**
@@ -413,16 +414,65 @@ export class PowerShellHelper {
 /** One helper per PowerShell program (Windows PowerShell and PowerShell 7 read some names differently) */
 const helpers = new Map<string, PowerShellHelper>();
 
+function parserIdentity(program: string): string {
+  const identity = fs.realpathSync(program);
+  return process.platform === 'win32' ? identity.toLowerCase() : identity;
+}
+
+// The server's launch PATH is the operator's authority for parser endpoints. Capture it
+// before a request can select a shell; finding a candidate must never execute it.
+const nativeParsers = (process.platform === 'win32' ? ['powershell', 'pwsh'] : ['pwsh'])
+  .flatMap((name) => {
+    const program = resolveShellPath(name);
+    if (program === null) return [];
+    // Relative PATH entries belong to the launch cwd, not the helper's mcpRoot cwd.
+    try {
+      return [{ name, program: path.resolve(program), identity: parserIdentity(program) }];
+    }
+    catch {
+      // An endpoint may disappear or become unreadable after lookup. Omitting it denies approval.
+      return [];
+    }
+  });
+
+function launchParserForBareName(shell: string) {
+  const requestedName = shell.trim();
+  if (requestedName.includes('/') || requestedName.includes('\\')) return undefined;
+  const name = process.platform === 'win32'
+    ? requestedName.toLowerCase().replace(/\.exe$/, '')
+    : requestedName;
+  return nativeParsers.find((parser) => parser.name === name);
+}
+
 /**
  * Reads a command for a PowerShell shell ("powershell.exe", "pwsh" or a path),
- * with the same program as the helper. checkCommand() has made sure it's there.
+ * only when its filesystem identity matches a launch-PATH parser. Custom
+ * executables are refused before startup, rather than used to validate themselves.
  */
 export function readPowerShellCommands(command: string, shell: string): Promise<CommandReading> {
-  const program = path.resolve(resolveProgramPath(shell));
-  let helper = helpers.get(program);
+  const requested = resolveShellPath(shell);
+  // A bare native name can retain its launch binding when relative PATH entries
+  // stop resolving after chdir. A currently resolved different program is never replaced.
+  let identity = requested === null ? launchParserForBareName(shell)?.identity : undefined;
+  try {
+    if (requested !== null) identity = parserIdentity(requested);
+  }
+  catch { /* A missing or unreadable identity cannot approve a parser. */ }
+  const native = nativeParsers.find((parser) => parser.identity === identity);
+  if (!native) {
+    throw new Error(
+      `No trusted PowerShell parser matches "${shell}"; ` +
+      'use a PowerShell executable from the server\'s launch PATH'
+    );
+  }
+  // An alias keeps the launch flags its requested name uses for execution. A
+  // PowerShell 7 login helper must not share state with a non-login alias.
+  const args = helperArgs(shell);
+  const key = `${identity}\0${args.includes('-Login')}`;
+  let helper = helpers.get(key);
   if (!helper) {
-    helper = new PowerShellHelper(program);
-    helpers.set(program, helper);
+    helper = new PowerShellHelper(native.program, args);
+    helpers.set(key, helper);
   }
   return helper.read(command);
 }
