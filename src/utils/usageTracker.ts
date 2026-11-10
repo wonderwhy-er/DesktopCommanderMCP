@@ -40,7 +40,7 @@ const TURN_OFF_FEEDBACK_INSTRUCTION = "*This request disappears after you give f
 
 // Tool categories mapping
 const TOOL_CATEGORIES = {
-  filesystem: ['read_file', 'read_multiple_files', 'write_file', 'create_directory', 'list_directory', 'move_file', 'get_file_info'],
+  filesystem: ['read_file', 'read_multiple_files', 'write_file', 'create_directory', 'list_directory', 'move_file', 'copy_file_exclusive', 'get_file_info'],
   terminal: ['execute_command', 'read_output', 'force_terminate', 'list_sessions'],
   edit: ['edit_block'],
   search: ['start_search', 'get_more_search_results', 'stop_search', 'list_searches'],
@@ -385,3 +385,5 @@ class UsageTracker {
 
 // Export singleton instance
 export const usageTracker = new UsageTracker();
+
+[executed on device: trinity-do-engineering (c0baae6a-077b-4bca-854d-44acc8b544ea)]
