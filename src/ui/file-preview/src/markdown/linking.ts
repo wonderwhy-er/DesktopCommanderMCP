@@ -17,6 +17,11 @@ interface ParsedWikiLink {
 
 const WIKI_LINK_PATTERN = /\[\[([^\]|#]*)(?:#([^\]|]+))?(?:\|([^\]]+))?\]\]/g;
 const FENCE_PATTERN = /^(`{3,}|~{3,})/;
+const FRONTMATTER_DELIMITER_PATTERN = /^---\s*$/;
+
+function isFrontmatterDelimiter(line: string | undefined): boolean {
+    return typeof line === 'string' && FRONTMATTER_DELIMITER_PATTERN.test(line);
+}
 
 function encodeLinkPath(pathValue: string): string {
     return encodeURI(normalizePathSeparators(pathValue));
@@ -218,8 +223,21 @@ export function restoreWikiLinks(markdown: string): string {
 export function rewriteWikiLinks(source: string): string {
     const lines = source.split('\n');
     let activeFence: string | null = null;
+    let inFrontmatter = isFrontmatterDelimiter(lines[0])
+        && lines.slice(1).some((line) => isFrontmatterDelimiter(line));
 
-    return lines.map((line) => {
+    return lines.map((line, index) => {
+        if (index === 0 && inFrontmatter) {
+            return line;
+        }
+
+        if (inFrontmatter) {
+            if (isFrontmatterDelimiter(line)) {
+                inFrontmatter = false;
+            }
+            return line;
+        }
+
         const trimmedStart = line.trimStart();
         const fenceMatch = trimmedStart.match(FENCE_PATTERN);
         if (fenceMatch) {
