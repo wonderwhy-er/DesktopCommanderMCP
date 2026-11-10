@@ -1,18 +1,7 @@
-import { readFileSync, writeFileSync } from 'fs';
-import path from 'path';
+import { existsSync, readFileSync, writeFileSync } from 'fs';
+import releaseVersion from './release-version.cjs';
 
-function bumpVersion(version, type = 'patch') {
-    const [major, minor, patch] = version.split('.').map(Number);
-    switch(type) {
-        case 'major':
-            return `${major + 1}.0.0`;
-        case 'minor':
-            return `${major}.${minor + 1}.0`;
-        case 'patch':
-        default:
-            return `${major}.${minor}.${patch + 1}`;
-    }
-}
+const { nextStableVersion } = releaseVersion;
 
 // Read command line arguments
 const shouldBump = process.argv.includes('--bump');
@@ -26,7 +15,7 @@ let version = pkg.version;
 
 // Bump version if requested
 if (shouldBump) {
-    version = bumpVersion(version, bumpType);
+    version = nextStableVersion(version, bumpType);
     // Update package.json
     pkg.version = version;
     writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
@@ -48,6 +37,15 @@ writeFileSync('server.json', JSON.stringify(serverJson, null, 2) + '\n');
 // Update version.ts
 const versionFileContent = `export const VERSION = '${version}';\n`;
 writeFileSync('src/version.ts', versionFileContent);
+
+// npm ci uses this lockfile on the next checkout, and release tags should
+// describe a single version across every tracked package metadata file.
+if (existsSync('package-lock.json')) {
+    const lock = JSON.parse(readFileSync('package-lock.json', 'utf8'));
+    lock.version = version;
+    if (lock.packages?.['']) lock.packages[''].version = version;
+    writeFileSync('package-lock.json', JSON.stringify(lock, null, 2) + '\n');
+}
 
 // The repository-root manifest is a discoverable snapshot of the latest STABLE MCPB.
 // Never advertise an alpha/beta package to directory crawlers. The real bundle
