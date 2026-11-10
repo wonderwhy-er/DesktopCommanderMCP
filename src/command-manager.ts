@@ -527,11 +527,14 @@ class CommandManager {
         try {
             const check = await this.checkCommand(input, shell);
             if (check.verdict === 'blocked') return check;
-            if (check.verdict === 'failed') {
+            // checkCommand() allows PowerShell text it can't parse, as PowerShell runs none of it,
+            // but a session still runs the lines before the one it can't parse
+            const shellType = getShellType(shell);
+            if (check.verdict === 'failed' || (shellType === 'powershell' && isShellAvailable(shell))) {
                 const reading = await this.readCommands(input, shell);
-                if (!reading.syntaxError) return check;
+                if (check.verdict === 'failed' && !reading.syntaxError) return check;
                 const lines = input.split(/\r\n|\n|\r/);
-                if (lines.length > 1) {
+                if (reading.syntaxError && lines.length > 1) {
                     for (const line of lines) {
                         const lineCheck = await this.checkProcessInput(line, shell);
                         if (lineCheck.verdict !== 'allowed') return lineCheck;
@@ -541,7 +544,6 @@ class CommandManager {
             const config = await configManager.getConfig();
             const entries = (config.blockedCommands || [])
                 .filter((entry): entry is string => typeof entry === 'string');
-            const shellType = getShellType(shell);
             const names = this.extractCommands(input);
             for (const name of names.length > 0 ? names : [this.getBaseCommand(input)]) {
                 if (!name) continue;

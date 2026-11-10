@@ -12,7 +12,7 @@ import { configManager } from '../dist/config-manager.js';
 import { commandManager } from '../dist/command-manager.js';
 import { forceTerminate, interactWithProcess, startProcess } from '../dist/tools/improved-process-tools.js';
 import { exitProcess } from '../dist/utils/exit-process.js';
-import { getInputShell } from '../dist/utils/shell.js';
+import { getInputShell, isShellAvailable } from '../dist/utils/shell.js';
 import { pythonCommand } from './helpers/python.js';
 import { skip } from './helpers/run-if-main.js';
 import { isTestHome } from './helpers/test-env.js';
@@ -118,6 +118,14 @@ async function testCommandExtraction() {
     const caretCheck = await commandManager.checkProcessInput('n^et user', getInputShell('cmd.exe', 'powershell.exe'));
     console.log('  checkProcessInput(n^et user) in cmd =>', caretCheck);
     assert.strictEqual(caretCheck.verdict, 'blocked', 'FAIL: n^et should be read as net in a cmd session');
+
+    // Test 17: a PowerShell session runs the lines before one it can't parse
+    if (isShellAvailable('pwsh')) {
+        const psInput = "if ($true) { net user }\n'";
+        const psCheck = await commandManager.checkProcessInput(psInput, 'pwsh');
+        console.log('  checkProcessInput(if ($true) { net user }\\n\') in pwsh =>', psCheck);
+        assert.strictEqual(psCheck.verdict, 'blocked', 'FAIL: net in a script block should be found before a parse error');
+    }
 }
 
 async function testInteractWithProcessValidation(tempDir) {
