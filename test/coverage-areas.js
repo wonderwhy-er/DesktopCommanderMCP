@@ -1,7 +1,7 @@
 /**
  * Coverage per area, from c8's coverage-summary.json: each folder under src/
  * (src/tools, src/utils, src/remote-device, src/ui, …), src/'s own files, the
- * install scripts at the root, and vendor/telemetry-contract. A single total hides
+ * install scripts at the root. A single total hides
  * where the gaps are.
  *
  *   node test/coverage-areas.js [coverage-summary.json]   # prints the table
@@ -27,11 +27,10 @@ export function inCheckout(key) {
   return key;
 }
 
-/** The area of a file: the install scripts, vendor/<package>, or its folder under src/ */
+/** The area of a file: the install scripts or its folder under src/ */
 export function areaOf(file) {
   if (INSTALL_SCRIPTS.includes(file)) return 'install scripts';
   const parts = file.split('/');
-  if (parts[0] === 'vendor') return parts.slice(0, 2).join('/');
   return parts.length > 2 ? parts.slice(0, 2).join('/') : `${parts[0]}/*`;
 }
 

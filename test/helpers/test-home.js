@@ -1,13 +1,15 @@
 import fs from 'fs';
 import path from 'path';
-import { createTestEnv, LEFT_OUT } from './test-env.js';
+import { createTestEnv, LEFT_OUT, NO_WSL_INTEROP } from './test-env.js';
 
 /**
  * Loaded with --import into every test file's process that the runners start
  * through node:test (helpers/node-test-runner.js passes it as execArgv). Before
  * the file's own imports run, it gives the process the environment the runners
  * have always given each file: createTestEnv()'s temporary home, telemetry off,
- * none of the variables it leaves out (FORCE_COLOR, XDG_CONFIG_HOME). It also
+ * none of the variables it leaves out (FORCE_COLOR, WSL_DISTRO_NAME, XDG_CONFIG_HOME),
+ * and on Linux WSL's interop entry hidden (createTestEnv()'s preload, loaded here for
+ * this process, and through NODE_OPTIONS for the processes it starts). It also
  * points skip() at this file's own record
  * (DC_TEST_SKIP_FILE), in the run's folder (DC_TEST_RUN_DIR).
  *
@@ -19,6 +21,7 @@ if (!process.env.DC_TEST_HOME_SET) {
   const testEnv = createTestEnv();
   for (const name of LEFT_OUT) delete process.env[name];
   Object.assign(process.env, testEnv.env, { DC_TEST_HOME_SET: '1' });
+  if (process.platform === 'linux') await import(NO_WSL_INTEROP);
 
   const runDir = process.env.DC_TEST_RUN_DIR;
   if (runDir && process.argv[1]) {

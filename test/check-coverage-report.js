@@ -4,8 +4,7 @@
  * - every file under src/ (.ts and .js);
  * - the install scripts the package ships at its root: setup-claude-server.js
  *   (bin `setup`), uninstall-claude-server.js (bin `remove`) and
- *   track-installation.js (postinstall);
- * - the vendored vendor/telemetry-contract/, without its own tests.
+ *   track-installation.js (postinstall).
  * Not a .ts file of types only: it compiles to no JavaScript, so no test can run
  * it. .c8rc.json excludes exactly those, which the check confirms.
  * It fails on:
@@ -28,9 +27,7 @@ import { fileURLToPath } from 'url';
 import { ROOT } from './helpers/node-test-runner.js';
 
 export const INSTALL_SCRIPTS = ['setup-claude-server.js', 'uninstall-claude-server.js', 'track-installation.js'];
-const VENDORED = 'vendor/telemetry-contract';
 const SOURCE = /\.(ts|tsx|js|mjs|cjs)$/;
-const isTest = (file) => /\.test\.(js|mjs|cjs|ts)$/.test(file);
 const require = createRequire(import.meta.url);
 
 /** Whether TypeScript source holds types only: transpiled, nothing but an empty export is left */
@@ -66,7 +63,7 @@ export function typeOnlyFiles() {
  */
 export function isCounted(file) {
   if (file.includes('node_modules/') || file.endsWith('.d.ts')) return false;
-  return file.startsWith('src/') || INSTALL_SCRIPTS.includes(file) || (file.startsWith(`${VENDORED}/`) && !isTest(file));
+  return file.startsWith('src/') || INSTALL_SCRIPTS.includes(file);
 }
 
 /** Every counted source file in this checkout, the type-only ones left out */
@@ -82,7 +79,6 @@ export function countedFiles() {
     }
   };
   walk('src');
-  walk(VENDORED);
   return files;
 }
 
@@ -115,7 +111,7 @@ if (isMain) {
   if (unexcluded.length > 0) console.error(`✗ Types only, but not in .c8rc.json's exclude: ${unexcluded.join(', ')}`);
   if (withCode.length > 0) console.error(`✗ .c8rc.json excludes them, but they have code: ${withCode.join(', ')}`);
   if (outside.length > 0) {
-    console.error(`✗ ${outside.length} file(s) in the coverage report aren't counted product code (src/, the install scripts, ${VENDORED}/), e.g.:`);
+    console.error(`✗ ${outside.length} file(s) in the coverage report aren't counted product code (src/, the install scripts), e.g.:`);
     for (const key of outside.slice(0, 10)) console.error(`  ${key}`);
   }
   if (missing.length > 0) {
@@ -123,5 +119,5 @@ if (isMain) {
     for (const file of missing.slice(0, 10)) console.error(`  ${file}`);
   }
   if (outside.length > 0 || missing.length > 0 || unexcluded.length > 0 || withCode.length > 0) process.exit(1);
-  console.log(`✓ Coverage report: all ${sources.length} counted product files (src/, the install scripts, ${VENDORED}/), nothing else`);
+  console.log(`✓ Coverage report: all ${sources.length} counted product files (src/, the install scripts), nothing else`);
 }

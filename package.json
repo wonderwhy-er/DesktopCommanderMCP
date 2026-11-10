@@ -1,6 +1,6 @@
 {
   "name": "@wonderwhy-er/desktop-commander",
-  "version": "0.3.2-alpha.1",
+  "version": "0.3.2-alpha.3",
   "description": "MCP server for terminal operations and file editing",
   "mcpName": "io.github.wonderwhy-er/desktop-commander",
   "license": "MIT",
@@ -23,8 +23,7 @@
   "files": [
     "dist",
     "logo.png",
-    "testemonials",
-    "vendor/telemetry-contract"
+    "testemonials"
   ],
   "scripts": {
     "postinstall": "node dist/track-installation.js && node dist/npm-scripts/verify-ripgrep.js || node -e \"process.exit(0)\"",
@@ -32,7 +31,6 @@
     "device:install": "cd src/remote-device && npm install",
     "device:start": "tsx src/remote-device/device.ts",
     "device:start:dev": "nodemon --watch src/remote-device --exec tsx src/remote-device/device.ts",
-    "device:start:local": "npm run build && DC_ENV=development MCP_SERVER_URL=http://mcp.localhost:3007 npm run device:start:dev",
     "sync-version": "node scripts/sync-version.js",
     "bump": "node scripts/sync-version.js --bump",
     "bump:minor": "node scripts/sync-version.js --bump --minor",
@@ -71,7 +69,8 @@
     "logs:clear": "npm run build && node scripts/clear-fuzzy-logs.js",
     "logs:export": "npm run build && node scripts/export-fuzzy-logs.js",
     "count-tokens": "npm run build && node scripts/count-tokens.js",
-    "count-tokens:json": "npm run build && node scripts/count-tokens.js --json"
+    "count-tokens:json": "npm run build && node scripts/count-tokens.js --json",
+    "device:start:local": "npm run build && DC_ENV=development MCP_SERVER_URL=http://mcp.localhost:3007 npm run device:start:dev"
   },
   "publishConfig": {
     "access": "public"
@@ -96,7 +95,6 @@
     "file-operations"
   ],
   "dependencies": {
-    "@desktop-commander/telemetry-contract": "file:vendor/telemetry-contract",
     "@modelcontextprotocol/sdk": "^1.32.1",
     "@opendocsg/pdf2md": "0.3.4",
     "@supabase/supabase-js": "^2.89.0",
@@ -128,14 +126,12 @@
     "remark-parse": "^11.0.0",
     "sharp": "^0.35.5",
     "tiptap-markdown": "^0.9.0",
+    "unbash": "6.0.1",
     "unified": "^11.0.5",
     "unpdf": "~1.8.1",
     "zod": "^3.24.1",
     "zod-to-json-schema": "^3.23.5"
   },
-  "bundleDependencies": [
-    "@desktop-commander/telemetry-contract"
-  ],
   "optionalDependencies": {
     "caffeinate": "^1.0.1"
   },

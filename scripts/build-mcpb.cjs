@@ -85,8 +85,7 @@ const filesToCopy = [
     'README.md',
     'LICENSE',
     'PRIVACY.md',
-    'icon.png',
-    'vendor/telemetry-contract' // a file: dependency, installed from here in step 6b
+    'icon.png'
 ];
 
 filesToCopy.forEach(file => {

@@ -1,38 +1,12 @@
-// Repro: neither release package carries #794's telemetry contract, so the
-// remote device can't load its transport telemetry from either.
+// Release smoke check: the remote telemetry module loads from both installed
+// packages outside the checkout, where repository-local dependencies cannot hide
+// missing files. Builds and installs the npm tarball and the MCPB bundle; skips
+// the slow MCPB zip step and checks its file rules instead. No install hooks run,
+// telemetry is disabled, and all temporary files/processes are cleaned up.
 //
-// package.json depends on "@desktop-commander/telemetry-contract":
-// "file:vendor/telemetry-contract", and dist/remote-device/transport-telemetry.js
-// imports it. In a checkout npm links that folder into node_modules; the
-// release packages are built without the checkout:
-//   npm:  `npm pack` (package.json's "files"), then the tarball installed in an
-//         empty folder, as a user's npm installs it. Without the contract in
-//         the tarball, npm links the dependency to a vendor/ folder that isn't
-//         there.
-//   MCPB: scripts/build-mcpb.cjs (what `npm run build:mcpb` runs) builds
-//         mcpb-bundle/: a copy list, then npm install there. Without the
-//         contract copied, the bundle gets the same missing link. Its last
-//         step, mcpb pack, is skipped: it reads every file of the bundle before
-//         zipping it (over a minute on Windows). mcpb's own file rules
-//         (shouldExclude) say instead whether the contract would be in the .mcpb.
-// Each package then loads transport-telemetry.js in a new process, from a
-// temporary folder outside the checkout (whose own node_modules would supply
-// the contract), and says where the contract came from: it has to be real
-// files, not a link.
-//
-// Needs `npm run build` first (the tarball takes dist/ as it is) and network
-// (npm). No install scripts run (npm_config_ignore_scripts; npm 10 still runs
-// the prepare script, the build, during npm pack), npm's cache is a
-// temporary folder unless REPRO_NPM_CACHE names one (CI points it at the job's
-// own npm cache: from an empty one, the tarball's install took 522 s on GitHub's
-// Windows), telemetry is off. mcpb-bundle/ (git-ignored) is removed at
-// the end. If the script is stopped (Ctrl+C, SIGTERM), or is still running
-// 15 s before run-repro.js's limit (REPRO_TIMEOUT_MS, default 180 s), it stops
-// the processes it started and removes what they made.
-//
-// Run: node test/repro/run-repro.js test-release-packages-ship-contract.js
-// Exit code: 0 if both packages load transport-telemetry.js with the contract
-// inside them, 1 if either doesn't.
+// Needs a build and npm network access. Run through run-repro.js, which supplies
+// the overall timeout; this check reserves its last 15 seconds for cleanup.
+// Run: node test/repro/run-repro.js test-release-packages-load-telemetry.js
 import { execFileSync, spawn } from 'child_process';
 import fs from 'fs';
 import path from 'path';
@@ -42,7 +16,6 @@ import { createTempDir } from '../helpers/test-env.js';
 const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const ENTRY = path.join('dist', 'remote-device', 'transport-telemetry.js');
 const BUNDLE = path.join(PROJECT_ROOT, 'mcpb-bundle');
-const CONTRACT = 'node_modules/@desktop-commander/telemetry-contract';
 /** Stops itself this long before run-repro.js would kill it, so it can stop its own processes first */
 const OWN_LIMIT_MS = (Number(process.env.REPRO_TIMEOUT_MS) || 180_000) - 15_000;
 const deadline = Date.now() + OWN_LIMIT_MS;
@@ -71,31 +44,18 @@ childProcess.execSync = (command, options) => {
 };
 `;
 
-// Runs in a new process: finds the contract the way Node does from the entry, then imports the entry
+// Import from the installed package in a fresh process, outside the checkout.
 const LOAD = `
-import fs from 'fs';
 import path from 'path';
 import { pathToFileURL } from 'url';
 const [root, entry] = process.argv.slice(1);
-let real = false;
-for (let dir = path.dirname(path.join(root, entry)); ; dir = path.dirname(dir)) {
-  const contract = path.join(dir, 'node_modules', '@desktop-commander', 'telemetry-contract');
-  const stat = fs.lstatSync(contract, { throwIfNoEntry: false });
-  if (stat) {
-    real = !stat.isSymbolicLink();
-    console.log('     contract: ' + path.relative(root, contract) + (real ? ' (real files)' : ' -> link to ' + fs.readlinkSync(contract)));
-    break;
-  }
-  if (path.dirname(dir) === dir) { console.log('     contract: not in any node_modules above the entry'); break; }
-}
 try {
   await import(pathToFileURL(path.join(root, entry)).href);
   console.log('     import: ok');
 } catch (error) {
   console.log('     import: ' + (error.code ?? '') + ' ' + String(error.message).split('\\n')[0]);
-  real = false;
+  process.exitCode = 1;
 }
-process.exitCode = real ? 0 : 1;
 `;
 
 let running = null;
@@ -140,7 +100,7 @@ function run(command, args, cwd) {
 /** The lines of a failed command that say why */
 const why = (output) => output.split(/\r?\n/).filter((line) => /npm error|ERROR|❌/.test(line)).slice(0, 4).map((line) => `     ${line.trim()}`).join('\n');
 
-/** True when transport-telemetry.js loads from the package at root, with the contract as real files */
+/** True when transport-telemetry.js loads from the installed package at root. */
 async function loads(label, root) {
   const result = await run(process.execPath, ['--input-type=module', '-e', LOAD, root, ENTRY], root);
   process.stdout.write(result.output);
@@ -160,8 +120,7 @@ async function npmPackage() {
   // build's output comes before the JSON on stdout; npm 11 prints only the JSON. The JSON starts
   // at the line that is just "[".
   const [info] = JSON.parse(pack.stdout.slice(pack.stdout.search(/^\[\r?$/m)));
-  const shipped = info.files.map((file) => file.path).filter((file) => file.includes('telemetry-contract'));
-  console.log(`npm: ${info.filename}, ${info.entryCount} files; contract files in it: ${shipped.length ? shipped.join(', ') : 'none'}`);
+  console.log(`npm: ${info.filename}, ${info.entryCount} files`);
 
   const installDir = path.join(work, 'install');
   fs.mkdirSync(installDir);
@@ -195,15 +154,14 @@ async function mcpbBundle() {
   }
   console.log('MCPB: mcpb-bundle/ built (its zip step skipped), moved out of the checkout');
 
-  // What mcpb pack would put in the .mcpb: the contract's files, unless mcpb's own rules leave them out
+  // Ensure the imported entry itself survives MCPB's packaging rules.
   const { readMcpbIgnorePatterns, shouldExclude } = await import('@anthropic-ai/mcpb/node');
   const patterns = readMcpbIgnorePatterns(bundle);
-  const isFolder = fs.lstatSync(path.join(bundle, CONTRACT), { throwIfNoEntry: false })?.isDirectory() ?? false;
-  const files = isFolder ? fs.readdirSync(path.join(bundle, CONTRACT)).map((file) => `${CONTRACT}/${file}`) : [];
-  const packed = files.filter((file) => !file.split('/').some((_, i, parts) => shouldExclude(parts.slice(0, i + 1).join('/'), patterns)));
-  console.log(`     mcpb pack would include: ${packed.length ? packed.join(', ') : 'no contract files'}`);
+  const entryPath = ENTRY.split(path.sep).join('/');
+  const excluded = entryPath.split('/').some((_, i, parts) => shouldExclude(parts.slice(0, i + 1).join('/'), patterns));
+  console.log(`     mcpb pack includes telemetry entry: ${!excluded}`);
   const loaded = await loads('MCPB', bundle);
-  return loaded && packed.includes(`${CONTRACT}/transport.js`);
+  return loaded && !excluded;
 }
 
 function cleanUp() {

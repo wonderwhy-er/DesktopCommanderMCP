@@ -9,10 +9,10 @@
  * - `post`: one review with event COMMENT on the PR: a finding on a changed
  *   line is a comment on that line, the rest go in the summary with their file
  *   and line. Without a PR, the job summary only.
- * - The workflow: the job holding the OpenAI key reads the PR's code with a
- *   read-only token, and can't write; the job that writes holds no secret and
- *   runs our script (on a comment's run, main's), never the PR's head.
- * Against a stand-in for GitHub's API, one for OpenAI Responses, and a git repo in a temp folder.
+ * - The hosted workflow runs the approved pinned Haiku runner. Its company-key
+ *   job has a read-only token; its separately gated posting job holds no secret.
+ *   The local legacy-runner fixtures below remain independent of that workflow.
+ * Against a stand-in for GitHub's API, one for Gemini CLI, and a git repo in a temp folder.
  */
 import assert from 'assert';
 import { test } from 'node:test';
@@ -527,7 +527,7 @@ export default async function run() {
   // The workflow: triggers, and who holds what
   const workflow = readWorkflow('review.yml');
   assert.ok(/^ {2}workflow_call:\n {4}inputs:\n {6}pr:/m.test(workflow) && /^ {6}sha:/m.test(workflow), 'called by tests.yml after its tests, with the PR, head and base');
-  assert.ok(/^ {4}secrets:\n {6}CLAUDE_CODE_OAUTH_TOKEN:/m.test(workflow), 'and given the key');
+  assert.ok(/^ {4}secrets:\n {6}CLAUDE_CODE_OAUTH_TOKEN:/m.test(workflow), 'and given the company Claude API key');
   assert.ok(!/^ {2}pull_request:/m.test(workflow) && !/^ {2}issue_comment:/m.test(workflow), 'the PR\'s events are tests.yml\'s: the review comes after their tests');
   assert.ok(/^ {2}workflow_dispatch:\n {4}inputs:\n {6}commit:/m.test(workflow) && /^ {6}base:/m.test(workflow), 'on demand, with commit and base');
   const requestJob = jobLines(workflow, 'request');
@@ -549,20 +549,27 @@ export default async function run() {
   assert.ok(steps.includes('CHECK: ${{ inputs.check }}') && steps.includes('if [[ "$CHECK" == text ]]; then text=(--text pr); fi'), 'check=text: the PR\'s description');
   assert.ok(steps.includes('pattern: results-*') && steps.includes('pattern: coverage-*') && steps.includes('path: ci'), 'the run\'s results and coverage, downloaded as data');
   // The script's own files, checked out sparsely: every file run reads (the review found the text check's prompt missing)
-  for (const file of ['/.github/review-prompt.md', '/.github/text-check-prompt.md', '/.github/writing-style.md', '/test/helpers/claude-review.js',
+  for (const file of ['/.github/review-prompt.md', '/.github/text-check-prompt.md', '/.github/writing-style.md',
+    '/test/helpers/claude-review.js', '/test/helpers/review-tools.js', '/test/helpers/review-context.js', '/test/helpers/review-source.js',
     '/test/check-coverage-report.js', '/test/helpers/node-test-runner.js']) {
     assert.ok(steps.includes(file), `the review job checks out ${file}`);
   }
   assert.ok(steps.includes('ANTHROPIC_API_KEY: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}'));
+  assert.ok(!reviewJob.some((line) => line.includes('GEMINI_API_KEY')), 'the hosted review has no Gemini credential route');
   assert.ok(steps.includes('name: review') && steps.includes('path: review/'), 'the review artifact');
   const upload = steps.indexOf('- name: Upload the review');
   assert.ok(upload > 0 && steps.slice(upload, steps.findIndex((line, i) => i > upload && line.startsWith('- '))).includes('if: always()'),
     'the review artifact is uploaded when the review fails too: the answer.json and session.jsonl of a failed run show its tokens');
   const postJob = jobLines(workflow, 'post');
-  assert.ok(postJob.some((line) => line.trim() === "if: inputs.check != 'text' && vars.REVIEW_POST_ENABLED == 'true'"), 'a text check posts nothing');
+  assert.ok(postJob.some((line) => line.trim() === "if: inputs.check != 'text' && vars.REVIEW_POST_ENABLED == 'true'"), 'text checks never post and code posting needs the operator gate');
   assert.deepStrictEqual(blockUnder(postJob, 'permissions'), ['contents: read', 'pull-requests: write'], 'the job that writes');
   assert.ok(!postJob.some((line) => line.includes('secrets.')), 'holds no secret');
-  assert.ok(!postJob.some((line) => line.trim().startsWith('ref:')), 'and checks out no ref: on a comment\'s run, main\'s script, never the PR\'s head');
+  const runnerRef = 'ref: 100ef96121cd32b3f466b965e0680027b90edc73';
+  for (const [name, lines, expectedRefs] of [['request', requestJob, 1], ['review', reviewJob, 2], ['post', postJob, 1]]) {
+    const refs = lines.map((line) => line.trim()).filter((line) => line.startsWith('ref:'));
+    assert.strictEqual(refs.length, expectedRefs, `${name}: only the runner and separate product checkout are allowed`);
+    assert.ok(refs.includes(runnerRef), `${name}: runner source is the approved Haiku commit`);
+  }
   assert.ok(postJob.some((line) => line.trim() === 'run: node test/ci-review.js post review >> "$GITHUB_STEP_SUMMARY"'), 'the job summary, with or without a PR');
   console.log('✓ the workflow: the key\'s job reads with a read-only token and can\'t write; the writing job holds no secret');
 }

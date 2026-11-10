@@ -27,8 +27,8 @@ function testPlans() {
   assert.deepStrictEqual(plan('test'), ['suite: run-all-tests.js --no-build --without-timed'], 'test: the suite, npm test\'s files');
   assert.deepStrictEqual(plan('integration'), ['integration: run-all-integration-tests.js --without-timed']);
   assert.deepStrictEqual(plan('repro'), [
-    'repro: run-repro.js --without-timed --skip test-release-packages-ship-contract.js',
-    'repro, rebuilds dist/ (not covered): run-repro.js test-release-packages-ship-contract.js --out repro-rebuilds-dist',
+    'repro: run-repro.js --without-timed --skip test-release-packages-load-telemetry.js',
+    'repro, rebuilds dist/ (not covered): run-repro.js test-release-packages-load-telemetry.js --out repro-rebuilds-dist',
     'coverage build again: tsc -p tsconfig.coverage.json',
     'copied scripts mapped again: map-copied-scripts.js',
   ], 'repro: test/repro/, the release repro last and uncovered');
@@ -48,8 +48,8 @@ function testPlans() {
     'integration: run-all-integration-tests.js d.js',
     'docker: run-docker-tests.js test-e.js',
   ], 'files: exactly those, each through its folder\'s runner, timed or not');
-  assert.deepStrictEqual(plan('files:repro/test-release-packages-ship-contract.js'), [
-    'repro, rebuilds dist/ (not covered): run-repro.js test-release-packages-ship-contract.js --out repro-rebuilds-dist',
+  assert.deepStrictEqual(plan('files:repro/test-release-packages-load-telemetry.js'), [
+    'repro, rebuilds dist/ (not covered): run-repro.js test-release-packages-load-telemetry.js --out repro-rebuilds-dist',
     'coverage build again: tsc -p tsconfig.coverage.json',
     'copied scripts mapped again: map-copied-scripts.js',
   ], 'the release repro named alone: uncovered, then the coverage build again');
@@ -86,16 +86,16 @@ export default async function run() {
   assert.deepStrictEqual(covered.map(script).slice(0, 4), ['run-all-tests.js', 'run-repro.js', 'run-all-integration-tests.js', 'run-docker-tests.js']);
   assert.ok(covered[0].args.includes('--no-build'), 'the suite doesn\'t build again: the coverage build is already there');
   const repro = covered[1].args;
-  assert.strictEqual(repro[repro.indexOf('--skip') + 1], 'test-release-packages-ship-contract.js', 'the release repro is left out of the covered repro part');
+  assert.strictEqual(repro[repro.indexOf('--skip') + 1], 'test-release-packages-load-telemetry.js', 'the release repro is left out of the covered repro part');
   assert.ok(!('NODE_V8_COVERAGE' in covered[3].env) && covered[3].args.slice(-3).join(' ') === '--changed A B', 'docker runs uncovered, with the arguments given');
 
   const release = covered[4];
-  assert.ok(release.args.includes('test-release-packages-ship-contract.js') && script(release) === 'run-repro.js', 'the release repro, through run-repro.js');
+  assert.ok(release.args.includes('test-release-packages-load-telemetry.js') && script(release) === 'run-repro.js', 'the release repro, through run-repro.js');
   assert.ok(!('NODE_V8_COVERAGE' in release.env) && release.env.PATH === '/bin', 'it runs uncovered, in the rest of the environment');
   assert.ok(Number(release.env.REPRO_TIMEOUT_MS) >= 600_000,
     'a hang guard of 10 minutes: its two npm installs, with an empty cache, outlast 3 on GitHub\'s Windows');
   // Its npm cache: one CI names (REPRO_NPM_CACHE), else a new one; from an empty cache its first install took 522 s on GitHub's Windows
-  const releaseRepro = fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), 'repro', 'test-release-packages-ship-contract.js'), 'utf8');
+  const releaseRepro = fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), 'repro', 'test-release-packages-load-telemetry.js'), 'utf8');
   assert.ok(releaseRepro.includes('npm_config_cache: process.env.REPRO_NPM_CACHE ||'), 'the release repro takes the npm cache it\'s given');
   for (const part of covered.slice(3)) assert.ok(!('NODE_V8_COVERAGE' in part.env), `${part.name} runs uncovered`);
   assert.deepStrictEqual(covered.slice(5).map(script), ['tsc', 'map-copied-scripts.js'], 'then the coverage build again, its copied scripts mapped');

@@ -32,7 +32,6 @@ export default async function run() {
   assert.strictEqual(areaOf('src/index.ts'), 'src/*', 'src/\'s own files');
   assert.strictEqual(areaOf('src/ui/file-preview/src/app.ts'), 'src/ui', 'src/ui is an ordinary area');
   assert.strictEqual(areaOf('setup-claude-server.js'), 'install scripts');
-  assert.strictEqual(areaOf('vendor/telemetry-contract/transport.js'), 'vendor/telemetry-contract');
   console.log('✓ each file\'s area');
 
   const summary = {
@@ -40,14 +39,14 @@ export default async function run() {
     [path.join(ROOT, 'src', 'tools', 'edit.ts')]: entry(5, 10),
     [path.join(ROOT, 'src', 'tools', 'filesystem.ts')]: entry(5, 10),
     [path.join(ROOT, 'src', 'index.ts')]: entry(0, 10),
-    [path.join(ROOT, 'vendor', 'telemetry-contract', 'transport.js')]: entry(5, 10),
+    [path.join(ROOT, 'setup-claude-server.js')]: entry(5, 10),
   };
   const areas = coverageByArea(summary);
-  assert.deepStrictEqual(areas.map(({ area, files }) => [area, files]), [['src/*', 1], ['src/tools', 2], ['vendor/telemetry-contract', 1]], 'sorted by name, files counted');
-  assert.deepStrictEqual(areas[1].lines, { covered: 10, total: 20, pct: 50 }, 'an area sums its files');
-  assert.strictEqual(areas[0].lines.pct, 0);
-  assert.strictEqual(areas[0].branches.pct, 50);
-  assert.strictEqual(areas[0].functions.pct, 100, 'nothing to cover is 100 %');
+  assert.deepStrictEqual(areas.map(({ area, files }) => [area, files]), [['install scripts', 1], ['src/*', 1], ['src/tools', 2]], 'sorted by name, files counted');
+  assert.deepStrictEqual(areas[2].lines, { covered: 10, total: 20, pct: 50 }, 'an area sums its files');
+  assert.strictEqual(areas[1].lines.pct, 0);
+  assert.strictEqual(areas[1].branches.pct, 50);
+  assert.strictEqual(areas[1].functions.pct, 100, 'nothing to cover is 100 %');
   const table = areaLines(summary);
   assert.ok(table[0].includes('area') && table.at(-1).trimStart().startsWith('total'), 'a header, the areas, then the total');
   assert.ok(table.at(-1).includes('37.5 % (15/40)'), 'the total is the report\'s own');
