@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "blockedCommands": ["sudo", "format"],
+  "fixtures": [
+    {"id":"L1","kind":"literal_false_positive","input":"Write-Output '`sudo`'","expectedPowerShellCommands":["write-output"],"expectedPowerShellDenied":false,"observedBaselineCommands":["sudo","write-output"],"observedBaselineDenied":true,"rule":"ordinary_single_quote"},
+    {"id":"L2","kind":"literal_false_positive","input":"Write-Output '$(format)'","expectedPowerShellCommands":["write-output"],"expectedPowerShellDenied":false,"observedBaselineCommands":["format","write-output"],"observedBaselineDenied":true,"rule":"ordinary_single_quote"},
+    {"id":"L3","kind":"literal_false_positive","input":"Write-Output '#`sudo`'","expectedPowerShellCommands":["write-output"],"expectedPowerShellDenied":false,"observedBaselineCommands":["sudo","write-output"],"observedBaselineDenied":true,"rule":"ordinary_single_quote"},
+    {"id":"L4","kind":"literal_false_positive","input":"Write-Output 'it''s $(format)'","expectedPowerShellCommands":["write-output"],"expectedPowerShellDenied":false,"observedBaselineCommands":["format","write-output"],"observedBaselineDenied":true,"rule":"doubled_single_quote"},
+    {"id":"L5","kind":"literal_false_positive","input":"Write-Output 'first\n`sudo`\nlast'","expectedPowerShellCommands":["write-output"],"expectedPowerShellDenied":false,"observedBaselineCommands":["sudo","write-output"],"observedBaselineDenied":true,"rule":"ordinary_single_quote"},
+    {"id":"L6","kind":"literal_false_positive","input":"Write-Output 'literal \"$(format)\" text'","expectedPowerShellCommands":["write-output"],"expectedPowerShellDenied":false,"observedBaselineCommands":["format","write-output"],"observedBaselineDenied":true,"rule":"ordinary_single_quote"},
+    {"id":"C1","kind":"blocked_control","input":"sudo","expectedPowerShellCommands":["sudo"],"expectedPowerShellDenied":true,"observedBaselineCommands":["sudo"],"observedBaselineDenied":true,"rule":"direct_command"},
+    {"id":"C2","kind":"blocked_control","input":"format","expectedPowerShellCommands":["format"],"expectedPowerShellDenied":true,"observedBaselineCommands":["format"],"observedBaselineDenied":true,"rule":"direct_command"},
+    {"id":"C3","kind":"blocked_control","input":"Write-Output 'plain'; sudo","expectedPowerShellCommands":["write-output","sudo"],"expectedPowerShellDenied":true,"observedBaselineCommands":["write-output","sudo"],"observedBaselineDenied":true,"rule":"statement_separator"},
+    {"id":"C4","kind":"blocked_control","input":"Write-Output $(format)","expectedPowerShellCommands":["format","write-output"],"expectedPowerShellDenied":true,"observedBaselineCommands":["format","write-output"],"observedBaselineDenied":true,"rule":"subexpression"},
+    {"id":"C5","kind":"blocked_control","input":"Write-Output \"$(sudo)\"","expectedPowerShellCommands":["sudo","write-output"],"expectedPowerShellDenied":true,"observedBaselineCommands":["sudo","write-output"],"observedBaselineDenied":true,"rule":"expandable_double_quote"},
+    {"id":"C6","kind":"blocked_control","input":"Write-Output 'plain'; format","expectedPowerShellCommands":["write-output","format"],"expectedPowerShellDenied":true,"observedBaselineCommands":["write-output","format"],"observedBaselineDenied":true,"rule":"statement_separator"},
+    {"id":"M1","kind":"literal_match","input":"Write-Output 'ordinary text'","expectedPowerShellCommands":["write-output"],"expectedPowerShellDenied":false,"observedBaselineCommands":["write-output"],"observedBaselineDenied":false,"rule":"ordinary_single_quote"},
+    {"id":"M2","kind":"literal_match","input":"Write-Output 'it''s plain'","expectedPowerShellCommands":["write-output"],"expectedPowerShellDenied":false,"observedBaselineCommands":["write-output"],"observedBaselineDenied":false,"rule":"doubled_single_quote"},
+    {"id":"G1","kind":"legacy_gap","input":"& 'sudo'","expectedPowerShellCommands":["sudo"],"expectedPowerShellDenied":true,"observedBaselineCommands":["'sudo'"],"observedBaselineDenied":false,"rule":"call_operator"},
+    {"id":"G2","kind":"legacy_gap","input":". sudo","expectedPowerShellCommands":["sudo"],"expectedPowerShellDenied":true,"observedBaselineCommands":["."],"observedBaselineDenied":false,"rule":"dot_operator"}
+  ]
+}
