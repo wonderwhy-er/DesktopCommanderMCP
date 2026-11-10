@@ -118,17 +118,17 @@ export class TerminalManager {
   private deliveryTurn = 0;
   private deliveryTurnOpen = false;
 
+  /** The shell that reads input sent to a running process, if it is one this manager started */
+  getInputShell(pid: number): string | undefined {
+    return this.sessions.get(pid)?.inputShell;
+  }
+
   /**
    * Send input to a running process
    * @param pid Process ID
    * @param input Text to send to the process
    * @returns Whether input was successfully sent
    */
-  /** The shell that reads input sent to a running process, if it is one this manager started */
-  getInputShell(pid: number): string | undefined {
-    return this.sessions.get(pid)?.inputShell;
-  }
-
   sendInputToProcess(pid: number, input: string): boolean {
     const session = this.sessions.get(pid);
     if (!session) {
