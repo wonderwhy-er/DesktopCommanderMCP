@@ -95,4 +95,6 @@ export interface CommandReading {
   functions: DefinedFunction[];
   /** A syntax/name-inspection error, with empty lists. Deferred argument budgets are explicit on their commands. */
   parseError?: string;
+  /** parseError is the grammar's: the text isn't the shell's syntax, rather than too big to inspect */
+  syntaxError?: true;
 }

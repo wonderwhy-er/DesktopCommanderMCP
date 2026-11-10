@@ -292,7 +292,7 @@ class CommandManager {
         const reading = await readPosixCommands(command, selectedEndpoint);
         // fish's name, as getShellSpawnArgs() finds it
         if (reading.parseError === undefined || !path.basename(shell).toLowerCase().includes('fish')) return reading;
-        const { parseError, ...read } = reading;
+        const { parseError, syntaxError, ...read } = reading;
         const names = this.extractCommands(command);
         return {
             ...read,
@@ -514,9 +514,12 @@ class CommandManager {
      * (interact_with_process). The process may be a shell or a REPL such as
      * python -i, so the input is read two ways: with the grammar of `shell`,
      * and by the names extractCommands() finds, which needs no grammar. Input
-     * that either reading finds a blocked program in is blocked. Input the
-     * shell can't parse, such as print("ok"), isn't refused for that alone:
-     * it is often not shell text. A settings read failure still refuses it.
+     * that either reading finds a blocked program in is blocked. Input whose
+     * syntax the shell can't parse, such as print("ok"), isn't refused for that
+     * alone: it is often not shell text. Each of its lines is still checked on
+     * its own, since a shell runs the lines before the one it can't parse. Any
+     * other failure, such as input too big to inspect or a settings read
+     * failure, refuses it.
      */
     async checkProcessInput(
         input: string, shell: string
@@ -524,6 +527,17 @@ class CommandManager {
         try {
             const check = await this.checkCommand(input, shell);
             if (check.verdict === 'blocked') return check;
+            if (check.verdict === 'failed') {
+                const reading = await this.readCommands(input, shell);
+                if (!reading.syntaxError) return check;
+                const lines = input.split(/\r\n|\n|\r/);
+                if (lines.length > 1) {
+                    for (const line of lines) {
+                        const lineCheck = await this.checkProcessInput(line, shell);
+                        if (lineCheck.verdict !== 'allowed') return lineCheck;
+                    }
+                }
+            }
             const config = await configManager.getConfig();
             const entries = (config.blockedCommands || [])
                 .filter((entry): entry is string => typeof entry === 'string');

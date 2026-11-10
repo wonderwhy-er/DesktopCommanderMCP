@@ -195,12 +195,17 @@ export async function readPosixCommands(command: string, selectedShell?: string)
   const options = { semantics };
   const script = parse(command);
   let parseError: string | undefined;
+  let syntaxError = false;
   const commands: FoundCommand[] = [];
 
   // Positions inside backticks count from the backticks' own text, so a command
   // there is given the start of the backticks around it
   const visit = (node: SyntaxNode, backticksStart: number | undefined): void => {
-    if (node.type === 'Script') parseError ??= node.errors?.[0]?.message;
+    const grammarError = node.type === 'Script' ? node.errors?.[0]?.message : undefined;
+    if (parseError === undefined && grammarError !== undefined) {
+      parseError = grammarError;
+      syntaxError = true;
+    }
     if (node.type === 'Command' && node.name) {
       const words = [node.name, ...node.args.filter((arg): arg is Word => arg.type === 'Word')];
       const expanded = commandWords(words, options);
@@ -234,7 +239,7 @@ export async function readPosixCommands(command: string, selectedShell?: string)
   };
   visit(script, undefined);
 
-  if (parseError !== undefined) return { commands: [], functions: [], parseError };
+  if (parseError !== undefined) return { commands: [], functions: [], parseError, ...(syntaxError ? { syntaxError: true } : {}) };
 
   // Only the script's own statements (see CommandReading.functions), and none the
   // text may remove: wherever the removal is written, it may run before a call,

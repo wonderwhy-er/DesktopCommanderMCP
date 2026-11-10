@@ -388,7 +388,7 @@ export class PowerShellHelper {
     if (typeof answer.error === 'string') {
       request.reject(new Error(`PowerShell could not read the command: ${answer.error}`));
     } else if (typeof answer.parseError === 'string') {
-      request.resolve({ commands: [], functions: [], parseError: answer.parseError });
+      request.resolve({ commands: [], functions: [], parseError: answer.parseError, syntaxError: true });
     } else {
       request.resolve({ commands: answer.commands.map(withStopParsing), functions: answer.functions });
     }

@@ -88,6 +88,22 @@ async function testCommandExtraction() {
     const cmds11 = commandManager.extractCommands('echo one \\\nsudo');
     console.log('  echo one \\<newline>sudo =>', cmds11);
     assert.ok(!cmds11.includes('sudo'), 'FAIL: should not split a line continuation');
+
+    // Test 12: process input too big to inspect is refused, not read as REPL text
+    const tooBig = 'env rm -f /tmp/canary {1..1001}';
+    const tooBigCheck = await commandManager.checkProcessInput(tooBig, 'bash');
+    console.log(`  checkProcessInput(${tooBig}) =>`, tooBigCheck);
+    assert.strictEqual(tooBigCheck.verdict, 'failed', 'FAIL: input over the inspection limit should be refused');
+
+    // Test 13: a line the shell can't parse doesn't hide an earlier line's failure
+    const tooBigThenRepl = `${tooBig}\nprint("ok")`;
+    const tooBigThenReplCheck = await commandManager.checkProcessInput(tooBigThenRepl, 'bash');
+    console.log('  checkProcessInput(<too big>\\nprint("ok")) =>', tooBigThenReplCheck);
+    assert.notStrictEqual(tooBigThenReplCheck.verdict, 'allowed', 'FAIL: a line over the inspection limit should be refused');
+
+    // Test 14: REPL text the shell can't parse is still allowed
+    const replCheck = await commandManager.checkProcessInput('print("ok")', 'bash');
+    assert.strictEqual(replCheck.verdict, 'allowed', 'FAIL: REPL input should not be refused for its syntax alone');
 }
 
 async function testInteractWithProcessValidation(tempDir) {
