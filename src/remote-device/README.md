@@ -71,11 +71,18 @@ The Remote MCP service forwards tool calls to the connected device. The local De
 
 ## Session persistence
 
-Session persistence is enabled by default. The Remote Device validates the MCP
-server URL (HTTPS or explicitly supported local HTTP) and refuses HTTP redirects
-on authentication requests. The hosted `mcp.desktopcommander.app` endpoint only
-accepts the production Supabase project; explicitly configured custom MCP
-servers can use their own secure Supabase backend.
+Session persistence is enabled by default. `MCP_SERVER_URL` must use HTTPS and
+point to `desktopcommander.app` or any depth of subdomain, such as
+`staging-mcp.desktopcommander.app` or `mcp.dev.desktopcommander.app`. Local
+development also permits HTTP or HTTPS on `localhost`, `127.0.0.1`, `[::1]`, and
+`mcp.localhost`. Unrelated domains, embedded credentials, paths, queries, and
+fragments are rejected.
+
+Authentication requests refuse HTTP redirects. The production
+`mcp.desktopcommander.app` endpoint still requires the production Supabase
+project; staging/development MCP endpoints can use their own secure Supabase
+backend. Allowing sibling subdomains does not share saved credentials between
+them: session bindings still compare the complete MCP and Supabase endpoints.
 
 A saved session is bound to its original MCP and Supabase endpoints. Switching
 to another backend requires browser authorization; a rejected saved session is

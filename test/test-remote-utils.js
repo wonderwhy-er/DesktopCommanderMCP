@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import os from 'node:os';
 import path from 'node:path';
-import { getRemoteDeviceConfigDirectory, getRemoteDeviceConfigPath, isBackendLocal } from '../dist/remote-device/remote-utils.js';
+import { getRemoteDeviceConfigDirectory, getRemoteDeviceConfigPath, isBackendLocal, validateRemoteServerUrl } from '../dist/remote-device/remote-utils.js';
 
 for (const value of [
   'http://localhost', 'http://LOCALHOST:3007', 'http://127.0.0.1:3007',
@@ -22,6 +22,33 @@ for (const value of [
 }
 
 console.log('PASS remote utilities: local HTTP hosts allowed, other hosts and protocols rejected');
+
+for (const value of [
+  'https://desktopcommander.app', 'https://mcp.desktopcommander.app',
+  'https://staging-mcp.desktopcommander.app', 'https://dev.desktopcommander.app',
+  'https://mcp.dev.eu.desktopcommander.app:8443', 'https://MCP.STAGING.DESKTOPCOMMANDER.APP/',
+  'http://localhost:3007', 'http://127.0.0.1:3007',
+  'http://[::1]:3007', 'http://mcp.localhost:3007',
+  'https://localhost:3007', 'https://127.0.0.1:3007',
+  'https://[::1]:3007', 'https://mcp.localhost:3007',
+]) {
+  assert.equal(validateRemoteServerUrl(value).origin, new URL(value).origin, value);
+}
+
+for (const value of [
+  'https://custom.example', 'https://evildesktopcommander.app',
+  'https://desktopcommander.app.example.com', 'https://mcp.desktopcommander.app.example.com',
+  'https://desktopcommander-app.com', 'https://desktopcommander.app@evil.example',
+  'https://localhost.example.com', 'https://192.168.1.10',
+  'http://mcp.desktopcommander.app', 'http://other.localhost',
+  'https://user:pass@staging.desktopcommander.app',
+  'https://staging.desktopcommander.app/path',
+  'https://staging.desktopcommander.app/?token=1', 'https://staging.desktopcommander.app/#hash',
+  'file:///etc/passwd', 'not-a-url',
+]) {
+  assert.throws(() => validateRemoteServerUrl(value), /Unsafe|Invalid/, value);
+}
+console.log('PASS remote utilities: MCP endpoints allow owned subdomains and local hosts, rejecting lookalikes and unsafe URLs');
 
 const originalNodeEnv = process.env.NODE_ENV;
 const originalIsStaging = process.env.IS_STAGING;

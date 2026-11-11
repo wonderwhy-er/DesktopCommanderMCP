@@ -39,7 +39,7 @@ async function runTests() {
     }
     assert.equal(validateRemoteServerUrl('http://127.0.0.1:3007').origin, 'http://127.0.0.1:3007');
     assert.equal(validateRemoteServerUrl('http://mcp.localhost:3007').origin, 'http://mcp.localhost:3007');
-    assert.equal(validateRemoteServerUrl('https://custom.example').origin, 'https://custom.example');
+    assert.equal(validateRemoteServerUrl('https://staging-mcp.desktopcommander.app').origin, 'https://staging-mcp.desktopcommander.app');
 
     for (const value of [
         'https://rogue.supabase.co',
@@ -51,7 +51,7 @@ async function runTests() {
         assert.throws(() => validateRemoteAuthContext(DEFAULT_REMOTE_SERVER_URL, value), /Unsafe|Unexpected/, value);
     }
 
-    const custom = validateRemoteAuthContext('https://custom.example', 'https://custom-supabase.example/rest-root/');
+    const custom = validateRemoteAuthContext('https://staging-mcp.desktopcommander.app', 'https://custom-supabase.example/rest-root/');
     assert.equal(custom.supabaseUrl, 'https://custom-supabase.example/rest-root');
     assert.equal(validateRemoteAuthContext('http://127.0.0.1:3007', 'http://127.0.0.1:3007').supabaseUrl, 'http://127.0.0.1:3007');
     assert.equal(savedSessionMatchesContext(undefined, production), true, 'legacy production session must keep working');
@@ -108,7 +108,7 @@ async function runTests() {
         assert.equal(customDevice.deviceId, undefined, 'cross-backend device ID must not be reused');
         assert.deepEqual(JSON.parse(await fs.readFile(configPath, 'utf8')).session, session, 'rejected tokens must be kept until re-authorization');
 
-        process.env.MCP_SERVER_URL = 'https://custom.example';
+        process.env.MCP_SERVER_URL = 'https://staging-mcp.desktopcommander.app';
         await assert.rejects(
             logoutRemoteDevice(configPath),
             /Saved session belongs to another or unknown backend/,

@@ -11,12 +11,14 @@ export interface RemoteAuthContext {
     supabaseUrl: string;
 }
 
+const LOCAL_BACKEND_HOSTNAMES = ["localhost", "127.0.0.1", "[::1]", "mcp.localhost"];
+
 // This checks the hostname, not its resolved address. HTTP is only for the
 // explicit local development hosts below; all remote endpoints require TLS.
 export function isBackendLocal(url: URL): boolean {
     return (
         url.protocol === "http:" &&
-        ["localhost", "127.0.0.1", "[::1]", "mcp.localhost"].includes(url.hostname)
+        LOCAL_BACKEND_HOSTNAMES.includes(url.hostname)
     );
 }
 
@@ -45,6 +47,13 @@ function parseTrustedEndpoint(value: unknown, label: string): URL {
 /** Validate before requesting configuration or sending any device credentials. */
 export function validateRemoteServerUrl(value: string): URL {
     const url = parseTrustedEndpoint(value, "MCP_SERVER_URL");
+    // Match a complete DNS label so lookalikes such as evildesktopcommander.app
+    // and desktopcommander.app.example.com cannot become credential recipients.
+    const isDesktopCommanderHost = url.hostname === "desktopcommander.app" ||
+        url.hostname.endsWith(".desktopcommander.app");
+    if (!isDesktopCommanderHost && !LOCAL_BACKEND_HOSTNAMES.includes(url.hostname)) {
+        throw new Error("Unsafe MCP_SERVER_URL: use desktopcommander.app, one of its subdomains, or a supported local host");
+    }
     if (url.pathname !== "/") {
         throw new Error("Unsafe MCP_SERVER_URL: paths are not supported");
     }
@@ -54,7 +63,7 @@ export function validateRemoteServerUrl(value: string): URL {
 /**
  * Validate the Supabase endpoint BEFORE setSession() can send persisted tokens.
  * For the hosted service, an arbitrary HTTPS Supabase project is not trusted.
- * Explicitly configured self-hosted/dev MCP servers retain their own HTTPS or
+ * Staging/dev MCP servers retain their own HTTPS or
  * local HTTP Supabase endpoints; saved sessions are separately bound to them.
  */
 export function validateRemoteAuthContext(serverUrl: string, supabaseUrl: unknown): RemoteAuthContext {
