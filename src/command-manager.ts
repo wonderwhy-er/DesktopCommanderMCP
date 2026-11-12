@@ -53,8 +53,9 @@ class CommandManager {
             // Trim any leading/trailing whitespace
             commandString = commandString.trim();
 
-            // Define command separators - these are the operators that can chain commands
-            const separators = [';', '&&', '||', '|', '&'];
+            // Define command separators - these are the operators that can chain commands.
+            // A newline outside quotes also starts a new command in a shell.
+            const separators = [';', '&&', '||', '|', '&', '\n', '\r'];
 
             // This will store our extracted commands
             const commands: string[] = [];
@@ -291,7 +292,7 @@ class CommandManager {
         const reading = await readPosixCommands(command, selectedEndpoint);
         // fish's name, as getShellSpawnArgs() finds it
         if (reading.parseError === undefined || !path.basename(shell).toLowerCase().includes('fish')) return reading;
-        const { parseError, ...read } = reading;
+        const { parseError, syntaxError, ...read } = reading;
         const names = this.extractCommands(command);
         return {
             ...read,
@@ -506,6 +507,56 @@ class CommandManager {
     /** Whether a check's answer refuses the command */
     isRefused(check: CommandCheck): check is Extract<CommandCheck, { verdict: 'blocked' | 'failed' }> {
         return check.verdict === 'blocked' || check.verdict === 'failed';
+    }
+
+    /**
+     * The check's answer for input typed into a running process
+     * (interact_with_process). The process may be a shell or a REPL such as
+     * python -i, so the input is read two ways: with the grammar of `shell`,
+     * and by the names extractCommands() finds, which needs no grammar. Input
+     * that either reading finds a blocked program in is blocked. Input whose
+     * syntax the shell can't parse, such as print("ok"), isn't refused for that
+     * alone: it is often not shell text. Each of its lines is still checked on
+     * its own, since a shell runs the lines before the one it can't parse. Any
+     * other failure, such as input too big to inspect or a settings read
+     * failure, refuses it.
+     */
+    async checkProcessInput(
+        input: string, shell: string
+    ): Promise<Extract<CommandCheck, { verdict: 'allowed' | 'blocked' | 'failed' }>> {
+        try {
+            const check = await this.checkCommand(input, shell);
+            if (check.verdict === 'blocked') return check;
+            // checkCommand() allows PowerShell text it can't parse, as PowerShell runs none of it,
+            // but a session still runs the lines before the one it can't parse
+            const shellType = getShellType(shell);
+            if (check.verdict === 'failed' || (shellType === 'powershell' && isShellAvailable(shell))) {
+                const reading = await this.readCommands(input, shell);
+                if (check.verdict === 'failed' && !reading.syntaxError) return check;
+                const lines = input.split(/\r\n|\n|\r/);
+                if (reading.syntaxError && lines.length > 1) {
+                    for (const line of lines) {
+                        const lineCheck = await this.checkProcessInput(line, shell);
+                        if (lineCheck.verdict !== 'allowed') return lineCheck;
+                    }
+                }
+            }
+            const config = await configManager.getConfig();
+            const entries = (config.blockedCommands || [])
+                .filter((entry): entry is string => typeof entry === 'string');
+            const names = this.extractCommands(input);
+            for (const name of names.length > 0 ? names : [this.getBaseCommand(input)]) {
+                if (!name) continue;
+                const entry = entries.find((candidate) => programName(candidate, shellType) === programName(name, shellType));
+                if (entry !== undefined) return { verdict: 'blocked', name: entry };
+            }
+            return { verdict: 'allowed' };
+        } catch (error) {
+            const reason = error instanceof Error ? error.message : String(error);
+            capture('server_validate_command_error', { error: reason });
+            // Fail closed, as checkCommand() does
+            return { verdict: 'failed', reason };
+        }
     }
 
     /** Whether the command may run in `shell`: the check doesn't refuse it */

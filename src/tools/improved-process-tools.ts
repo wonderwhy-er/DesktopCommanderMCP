@@ -515,6 +515,19 @@ export async function interactWithProcess(args: unknown, maxWaitMs: number = MAX
   // Get config for output line limit
   const config = await configManager.getConfig();
   const maxOutputLines = config.fileReadLineLimit ?? 1000;
+
+  // Input is checked like start_process's command, so a running shell or REPL
+  // can't be used to run a program in blockedCommands. It is read with the
+  // grammar of the shell that receives it (a cmd session started from
+  // PowerShell reads cmd), falling back to the default shell
+  const inputShell = terminalManager.getInputShell(pid) ?? getCommandShell(undefined, config.defaultShell);
+  const inputCheck = await commandManager.checkProcessInput(input, inputShell);
+  if (inputCheck.verdict !== 'allowed') {
+    return {
+      content: [{ type: "text", text: "Input rejected: contains blocked command." }],
+      isError: true,
+    };
+  }
   const waitLimit = getProcessWaitLimit(timeout_ms, maxWaitMs);
 
   // Check if this is a virtual Node session (node:local)
