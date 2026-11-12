@@ -2,7 +2,7 @@
   "manifest_version": "0.3",
   "name": "desktop-commander",
   "display_name": "Desktop Commander",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "description": "Build, explore, and automate on your local machine with access to files and terminal.",
   "long_description": "Combine local filesystem access with full terminal control to handle technical tasks through natural language. Desktop Commander empowers you to build, explore, and automate - from organizing repositories to creating complete applications:\n* **Build from scratch** - Create features and applications with simple commands\n* **Manage development environments** - Set up servers, configure systems, and handle processes\n* **Manage context and documentation** - Keep track of project details and technical specifications\n* **Explore existing codebases and projects** - Navigate and understand complex repositories\n\nThis extension bridges technical skill gaps by providing full command-line superpowers through an interface that understands your intent and handles complexity automatically.",
   "author": {
