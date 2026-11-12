@@ -137,7 +137,7 @@ async function checkRule(rule) {
  * `check(standIn, device)` runs once the device got through its start.
  */
 async function withDevice({ standInOptions, prepare }, check) {
-  const standIn = await startRemoteStandIn(standInOptions);
+  const standIn = await startRemoteStandIn({ ...standInOptions, hostedSupabase: true });
   const testEnv = createTestEnv();
   let device;
   try {

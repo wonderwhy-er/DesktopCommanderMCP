@@ -14,6 +14,7 @@ import { getRemoteDeviceConfigPath } from '../../dist/remote-device/remote-utils
 
 const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const DEVICE = path.join(PROJECT_ROOT, 'dist/remote-device/device.js');
+const SUPABASE_TRANSPORT = new URL('../fixtures/remote-supabase-transport.mjs', import.meta.url).href;
 /** A stopped device ends within its own 5 s shutdown limit; SIGKILL after far longer */
 const STOP_GRACE_MS = 30_000;
 
@@ -35,7 +36,8 @@ export function writeDeviceConfig(home, config) {
 export function startDevice(env, args = []) {
   const child = spawn(process.execPath, [DEVICE, ...args], {
     cwd: PROJECT_ROOT,
-    env,
+    // Inherited by the blocking offline-update child as well as the device.
+    env: { ...env, NODE_OPTIONS: [env.NODE_OPTIONS, `--import ${SUPABASE_TRANSPORT}`].filter(Boolean).join(' ') },
     stdio: ['ignore', 'pipe', 'pipe'],
     // Own process group on macOS/Linux, so a stop reaches the local MCP child
     // too, as a systemd unit's control group does
@@ -60,7 +62,7 @@ export function startDevice(env, args = []) {
 export function runRemote(env, args, { execPath = process.execPath, timeoutMs } = {}) {
   const child = spawn(execPath, [path.join(PROJECT_ROOT, 'dist/index.js'), 'remote', ...args], {
     cwd: PROJECT_ROOT,
-    env,
+    env: { ...env, NODE_OPTIONS: [env.NODE_OPTIONS, `--import ${SUPABASE_TRANSPORT}`].filter(Boolean).join(' ') },
     stdio: ['ignore', 'pipe', 'pipe'],
     windowsHide: true,
   });

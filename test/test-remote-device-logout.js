@@ -65,7 +65,7 @@ async function runTests() {
   const failures = [];
 
   async function test(name, fn) {
-    const standIn = await startRemoteStandIn();
+    const standIn = await startRemoteStandIn({ hostedSupabase: true });
     const testEnv = createTestEnv();
     const env = { ...testEnv.env, MCP_SERVER_URL: standIn.url };
     const devices = [];

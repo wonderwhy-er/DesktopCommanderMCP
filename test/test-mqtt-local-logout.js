@@ -55,7 +55,7 @@ async function runTests() {
   process.env.MQTT_BROKER_URL = brokerUrl;
   async function test(name, run) {
     const fixture = createTestEnv();
-    const standIn = await startRemoteStandIn();
+    const standIn = await startRemoteStandIn({ hostedSupabase: true });
     fixture.env.MCP_SERVER_URL = standIn.url;
     mock.method(os, 'homedir', () => fixture.home);
     try {
