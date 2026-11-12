@@ -110,6 +110,48 @@ function getRepairedPathExt(): string {
   return current;
 }
 
+type UserSessionStat = Pick<fs.Stats, 'uid' | 'mode' | 'isDirectory' | 'isSocket'>;
+type UserSessionLstatSync = (filePath: string) => UserSessionStat;
+
+/**
+ * Fill Linux systemd user-session variables only when the standard runtime
+ * resources prove they belong to this uid. Existing values always win.
+ */
+export function repairLinuxUserSessionEnvironment(
+  env: NodeJS.ProcessEnv,
+  platform: NodeJS.Platform = os.platform(),
+  uid: number | undefined = typeof process.getuid === 'function' ? process.getuid() : undefined,
+  lstatSync: UserSessionLstatSync = fs.lstatSync,
+): NodeJS.ProcessEnv {
+  if (platform !== 'linux' || uid === undefined) return env;
+
+  const runtimeDir = `/run/user/${uid}`;
+  if (!env.XDG_RUNTIME_DIR) {
+    try {
+      const stat = lstatSync(runtimeDir);
+      if (stat.isDirectory() && stat.uid === uid && (stat.mode & 0o777) === 0o700) {
+        env.XDG_RUNTIME_DIR = runtimeDir;
+      }
+    } catch {
+      // No safe standard runtime directory: leave the inherited environment alone.
+    }
+  }
+
+  if (!env.DBUS_SESSION_BUS_ADDRESS && env.XDG_RUNTIME_DIR === runtimeDir) {
+    const busPath = path.posix.join(runtimeDir, 'bus');
+    try {
+      const stat = lstatSync(busPath);
+      if (stat.isSocket() && stat.uid === uid) {
+        env.DBUS_SESSION_BUS_ADDRESS = `unix:path=${busPath}`;
+      }
+    } catch {
+      // No current user's bus socket: do not synthesize an unusable address.
+    }
+  }
+
+  return env;
+}
+
 /**
  * The environment for what Desktop Commander runs for the AI (start_process
  * commands, node:local code): the server's own, with on Windows what a
@@ -119,6 +161,9 @@ function getRepairedPathExt(): string {
  * exits 255 without a word when it's unset (#702). Windows keeps it on the
  * system drive, which the SDK's set does pass (SystemDrive, else SystemRoot's
  * drive); with neither it stays unset.
+ * On Linux, when a launcher omitted the systemd user-session variables, restore
+ * the standard XDG runtime directory and D-Bus address only when their on-disk
+ * resources belong to the current uid (#809).
  */
 export function getCommandEnvironment(): NodeJS.ProcessEnv {
   const env = { ...process.env };
@@ -130,7 +175,7 @@ export function getCommandEnvironment(): NodeJS.ProcessEnv {
       env.ProgramData = path.win32.join(drive, '\\', 'ProgramData');
     }
   }
-  return env;
+  return repairLinuxUserSessionEnvironment(env);
 }
 
 /**
