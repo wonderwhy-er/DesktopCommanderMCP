@@ -59,6 +59,38 @@ async function testRangeToCorner(dir) {
   assert.deepStrictEqual((await sheets(file)).Sheet1, [['a', 'b'], ['c', '4']], 'content inside A1:B2 should be written');
 }
 
+async function testAmbiguousSheetOnlyRange(dir) {
+  for (const includeShorterName of [true, false]) {
+    const file = path.join(dir, `bang-sheet-${includeShorterName}.xlsx`);
+    await write(file, {
+      ...(includeShorterName ? { 'Budget!2024': [['keep shorter sheet']] } : {}),
+      'Budget!2024!': [['keep intended sheet']],
+    });
+    const before = await sheets(file);
+    const beforeBytes = fs.readFileSync(file);
+
+    const ambiguous = await handleEditBlock({
+      file_path: file, range: 'Budget!2024!', content: [['replacement']],
+    });
+    assert.deepStrictEqual(await sheets(file), before,
+      'an unquoted ambiguous sheet-only range must not overwrite or create another sheet');
+    assert.strictEqual(ambiguous.isError, true,
+      `an unquoted ambiguous sheet-only range should be refused, got: ${text(ambiguous)}`);
+    assert.deepStrictEqual(fs.readFileSync(file), beforeBytes,
+      'rejecting an ambiguous range must leave the XLSX file unchanged');
+
+    const quoted = await handleEditBlock({
+      file_path: file, range: "'Budget!2024!'!", content: [['replacement']],
+    });
+    assert.notStrictEqual(quoted.isError, true,
+      `a quoted sheet-only range should still replace the intended sheet, got: ${text(quoted)}`);
+    assert.deepStrictEqual(await sheets(file), {
+      ...(includeShorterName ? { 'Budget!2024': [['keep shorter sheet']] } : {}),
+      'Budget!2024!': [['replacement']],
+    });
+  }
+}
+
 async function testSheetNamedLikeANumber(dir) {
   const file = path.join(dir, 'years.xlsx');
   await write(file, { Summary: [['summary']], 2024: [['year 2024']] });
@@ -97,6 +129,7 @@ export default async function runTests() {
   const failures = [];
   const cases = [
     ["edit_block keeps content within the range TO corner", testRangeToCorner],
+    ["edit_block refuses ambiguous unquoted sheet-only ranges without changing the workbook", testAmbiguousSheetOnlyRange],
     ["read_file reads a sheet named like a number", testSheetNamedLikeANumber],
     ["write_file appends a 2D array to the workbook, not to a new Sheet1", testAppendArrayWithoutSheet1],
     ["get_file_info says why a workbook can't be read", testInfoOnUnreadableWorkbook],

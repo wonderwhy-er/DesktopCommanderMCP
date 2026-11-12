@@ -71,12 +71,12 @@ export class ExcelFileHandler implements FileHandler {
             ? `\n[Showing rows ${firstRow}-${firstRow + returnedRows - 1} of ${totalRows} total. Use offset/length to paginate.]`
             : `\n[No rows returned: row ${firstRow} is past the end (${totalRows} rows total). Use offset/length to paginate.]`;
 
-        const sheetHasSpace = /\s/.test(sheetName);
-        const exampleSheet = sheetHasSpace ? sheetName : 'Sheet1';
-        const content = `[Sheet: '${sheetName}' from ${path}]${paginationInfo}
-[To MODIFY cells: use edit_block with range param, e.g., edit_block(path, {range: "${exampleSheet}!E5", content: [[newValue]]}). read_file accepts the same range form, or pass sheet + range separately.]
-
-${JSON.stringify(data)}`;
+        const exampleSheet = /[\s!']/.test(sheetName) ? `'${sheetName.replace(/'/g, "''")}'` : 'Sheet1';
+        const exampleRange = JSON.stringify(`${exampleSheet}!E5`);
+        const content = `[Sheet: '${sheetName}' from ${path}]${paginationInfo}\n` +
+            `[To MODIFY cells: use edit_block with range param, e.g., edit_block(path, ` +
+            `{range: ${exampleRange}, content: [[newValue]]}). ` +
+            `read_file accepts the same range form, or pass sheet + range separately.]\n\n${JSON.stringify(data)}`;
 
         return {
             content,
@@ -525,7 +525,9 @@ ${JSON.stringify(data)}`;
 
     private parseRange(range: string): [string, string | null] {
         if (range.includes('!')) {
-            const idx = range.indexOf('!');
+            // Only quoted sheet prefixes can contain !; unquoted ranges split at the first !.
+            const quotedPrefix = range.match(/^'(?:[^']|'')*'!/);
+            const idx = quotedPrefix ? quotedPrefix[0].length - 1 : range.indexOf('!');
             let sheetName = range.slice(0, idx);
             const cellRange = range.slice(idx + 1);
             // Strip Excel-native single quotes around sheet names with spaces:
