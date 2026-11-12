@@ -14,7 +14,6 @@ import { capture } from './utils/capture.js';
 import { logToStderr, logger } from './utils/logger.js';
 import { exitProcess } from './utils/exit-process.js';
 import { runRemote } from './npm-scripts/remote.js';
-import { ensureChromeAvailable } from './tools/pdf/markdown.js';
 import { preloadFileSupport } from './utils/files/index.js';
 
 // Store messages to defer until after initialization
@@ -135,8 +134,8 @@ async function runServer() {
       transport.sendLog('info', 'Server connected successfully');
       transport.sendLog('info', 'MCP fully initialized, all startup messages sent');
 
-      // Preemptively check/download Chrome for PDF generation (runs in background)
-      ensureChromeAvailable();
+      // Chrome is resolved only when a PDF render needs it. Ordinary MCP
+      // startup must not make the network request/download a browser (#797).
 
       // Load the Excel, DOCX and PDF packages, one at a time, now that initialize
       // has been answered; until then the calls that need them answer at once
