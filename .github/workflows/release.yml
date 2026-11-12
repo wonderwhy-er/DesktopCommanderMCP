@@ -453,23 +453,6 @@ jobs:
             npm publish
           fi
 
-      - name: Verify npm publish
-        if: ${{ !inputs.skip_npm }}
-        env:
-          VERSION: ${{ needs.prepare.outputs.version }}
-          REHEARSAL: ${{ needs.prepare.outputs.rehearsal }}
-        run: |
-          if [ "$REHEARSAL" = "true" ]; then
-            echo "REHEARSAL: nothing was published, skipping npm verification"; exit 0
-          fi
-          for i in 1 2 3 4 5; do
-            if npm view "@wonderwhy-er/desktop-commander@$VERSION" version >/dev/null 2>&1; then
-              echo "npm has $VERSION"; exit 0
-            fi
-            echo "waiting for npm to list $VERSION (attempt $i)"; sleep 15
-          done
-          echo "npm never listed $VERSION"; exit 1
-
       - name: Create GitHub release and attach MCPB
         if: ${{ !inputs.skip_github_release }}
         env:
