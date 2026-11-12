@@ -83,6 +83,7 @@ only these HTTPS project endpoints:
 
 - supabase1: `https://olvbkozcufcbptfogatw.supabase.co`
 - supabase2: `https://xnalhwxchxhthlmzkhal.supabase.co`
+- supabase3: `https://example.supabase.co`
 
 Other projects, subdomains, non-default ports, paths, and local hosts are rejected,
 including when `MCP_SERVER_URL` is local. A trailing slash is accepted and normalized.

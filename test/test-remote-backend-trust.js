@@ -12,6 +12,7 @@ import {
     DEFAULT_REMOTE_SERVER_URL,
     SUPABASE1_ORIGIN,
     SUPABASE2_ORIGIN,
+    SUPABASE3_ORIGIN,
     savedSessionMatchesContext,
     validateRemoteAuthContext,
     validateRemoteServerUrl,
@@ -57,7 +58,7 @@ async function runTests() {
         'https://olvbkozcufcbptfogatw.supabase.co#fragment',
         'https://supabase.co', 'https://another-project.supabase.co',
         'https://auth.dev.project.supabase.co',
-        ...[SUPABASE1_ORIGIN, SUPABASE2_ORIGIN].flatMap((endpoint) => [
+        ...[SUPABASE1_ORIGIN, SUPABASE2_ORIGIN, SUPABASE3_ORIGIN].flatMap((endpoint) => [
             `${endpoint}:8443`, `${endpoint}/rest-root/`, `${endpoint}//`,
             `${endpoint}?changed=1`, `${endpoint}#fragment`,
             `${endpoint}.attacker.example`, endpoint.replace('https://', 'https://sub.'),
@@ -70,10 +71,11 @@ async function runTests() {
     }
 
     for (const value of [
-        SUPABASE1_ORIGIN, SUPABASE2_ORIGIN,
-        `${SUPABASE1_ORIGIN}/`, `${SUPABASE2_ORIGIN}/`,
+        SUPABASE1_ORIGIN, SUPABASE2_ORIGIN, SUPABASE3_ORIGIN,
+        `${SUPABASE1_ORIGIN}/`, `${SUPABASE2_ORIGIN}/`, `${SUPABASE3_ORIGIN}/`,
         `${SUPABASE1_ORIGIN.toUpperCase()}:443/`,
         `${SUPABASE2_ORIGIN.toUpperCase()}:443/`,
+        `${SUPABASE3_ORIGIN.toUpperCase()}:443/`,
     ]) {
         for (const server of servers) {
             assert.equal(validateRemoteAuthContext(server, value).supabaseUrl, new URL(value).origin);
@@ -109,6 +111,11 @@ async function runTests() {
     const anotherProject = validateRemoteAuthContext(DEFAULT_REMOTE_SERVER_URL, SUPABASE2_ORIGIN);
     assert.equal(savedSessionMatchesContext(undefined, anotherProject), false, 'supabase2 cannot receive legacy supabase1 credentials');
     assert.equal(savedSessionMatchesContext(supabase1Context, anotherProject), false, 'another allowed project must not receive saved supabase1 tokens');
+    const supabase3Context = validateRemoteAuthContext(DEFAULT_REMOTE_SERVER_URL, SUPABASE3_ORIGIN);
+    assert.equal(savedSessionMatchesContext(undefined, supabase3Context), false, 'supabase3 cannot receive legacy credentials');
+    assert.equal(savedSessionMatchesContext(supabase1Context, supabase3Context), false, 'supabase3 cannot receive saved supabase1 credentials');
+    assert.equal(savedSessionMatchesContext(anotherProject, supabase3Context), false, 'supabase3 cannot receive saved supabase2 credentials');
+    assert.equal(savedSessionMatchesContext(supabase3Context, supabase3Context), true);
 
     const originalFetch = globalThis.fetch;
     const originalServer = process.env.MCP_SERVER_URL;
