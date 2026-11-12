@@ -391,6 +391,14 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         - Large files with negative offsets use reverse reading for efficiency
                         - Large files with deep positive offsets use byte estimation
                         - Small files use fast readline streaming
+
+                        EXACT-CONTENT LIMITS:
+                        - Text reads are decoded, line-oriented views, not the original file bytes.
+                        - LF, CRLF, and lone CR line endings are returned as \n, and a final line terminator is not preserved.
+                        - UTF-16LE files with a BOM are decoded without returning that BOM, so source encoding/BOM cannot generally be reconstructed.
+                        - There is no general-purpose raw-byte or Base64 mode for arbitrary files. Supported image files are a format-specific exception.
+                        - For byte-exact verification, prefer a local hash or comparison with start_process rather than transporting file bytes through process output.
+                        - Pagination status can include total/remaining lines for smaller text files; larger files may omit totals, so it is not a complete-file proof.
                         
                         When reading from the file system, only works within allowed directories.
                         Can fetch content from URLs when isUrl parameter is set to true
@@ -438,6 +446,14 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         Each file's content is returned with its path as a reference.
                         Handles text files normally and renders images as viewable content.
                         Recognized image types: PNG, JPEG, GIF, WebP.
+
+                        Text items have the same decoded, line-oriented representation as read_file; they do not
+                        preserve original newline style, a final line terminator, or UTF-16LE BOM presence, and
+                        there is no general-purpose raw-byte/Base64 mode for arbitrary files. This tool has no
+                        per-file offset/length arguments, so each text item uses the configured default read limit.
+                        For smaller text files the embedded read status can report total/remaining lines; larger
+                        files can omit totals, so the response alone is not a complete-file proof. For byte-exact
+                        verification, prefer a local hash or comparison with start_process.
                         
                         Failed reads for individual files won't stop the entire operation.
                         Only works within allowed directories.
