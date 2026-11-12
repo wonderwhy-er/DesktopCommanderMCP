@@ -1,6 +1,7 @@
 /**
  * Tests for command blocklist bypass fixes
- * Covers: absolute path bypass (#218), command substitution bypass (#217)
+ * Covers: absolute path bypass (#218), command substitution bypass (#217),
+ * newline-separated commands bypass (#933, #957, #976)
  */
 
 import assert from 'assert';
@@ -58,6 +59,32 @@ async function runTests() {
         console.log('  $MYVAR ls =>', cmds8);
         assert.ok(cmds8.includes('ls'), 'FAIL: should extract "ls" and ignore $MYVAR');
         assert.ok(!cmds8.includes('$MYVAR'), 'FAIL: should not include $MYVAR as a command');
+
+        // Test 9: newline-separated commands are separate commands (#933, #957, #976)
+        const cmds9 = commandManager.extractCommands('echo ok\nrm -rf /tmp/x');
+        console.log('  echo ok\\nrm -rf /tmp/x =>', cmds9);
+        assert.ok(cmds9.includes('echo'), 'FAIL: should extract "echo" before the newline');
+        assert.ok(cmds9.includes('rm'), 'FAIL: should extract "rm" after a newline separator');
+
+        // Test 10: CRLF line endings (Windows)
+        const cmds10 = commandManager.extractCommands('echo ok\r\nsudo reboot');
+        console.log('  echo ok\\r\\nsudo reboot =>', cmds10);
+        assert.ok(cmds10.includes('sudo'), 'FAIL: should extract "sudo" after a CRLF separator');
+
+        // Test 11: lone CR line endings
+        const cmds11 = commandManager.extractCommands('echo ok\riptables -L');
+        console.log('  echo ok\\riptables -L =>', cmds11);
+        assert.ok(cmds11.includes('iptables'), 'FAIL: should extract "iptables" after a CR separator');
+
+        // Test 12: a newline inside quotes is data, not a separator
+        const cmds12 = commandManager.extractCommands('echo "line one\nline two"');
+        console.log('  echo "line one\\nline two" =>', cmds12);
+        assert.deepStrictEqual(cmds12, ['echo'], 'FAIL: a quoted newline must stay part of the argument');
+
+        // Test 13: newline chained with a blocked command in the middle
+        const cmds13 = commandManager.extractCommands('ls\nrm -rf /\n&& echo done');
+        console.log('  ls\\nrm -rf /\\n&& echo done =>', cmds13);
+        assert.ok(cmds13.includes('rm'), 'FAIL: should extract "rm" from a multi-line chain');
 
         console.log('\nAll tests passed!');
     } catch (error) {
