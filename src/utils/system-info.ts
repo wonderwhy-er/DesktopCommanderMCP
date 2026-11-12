@@ -82,7 +82,18 @@ export function isBubblewrapInitProcess(comm: string): boolean {
  * Detect container environment and type
  */
 function detectContainerEnvironment(): { isContainer: boolean; containerType: ContainerInfo['containerType']; orchestrator: ContainerInfo['orchestrator'] } {
-    // Method 1: Check environment variables first (most reliable when set)
+    // Bubblewrap may inherit host cgroups despite creating a PID namespace.
+    if (os.platform() === 'linux') {
+        try {
+            if (isBubblewrapInitProcess(fs.readFileSync('/proc/1/comm', 'utf8'))) {
+                return { isContainer: true, containerType: 'bubblewrap', orchestrator: null };
+            }
+        } catch {
+            // A restricted /proc must not break system information reporting.
+        }
+    }
+
+    // Method 1: Check environment variables (reliable when set)
     
     // Docker-specific
     if (isDockerImage()) {
@@ -102,17 +113,6 @@ function detectContainerEnvironment(): { isContainer: boolean; containerType: Co
     // Method 2: Check for container indicator files
     if (fs.existsSync('/.dockerenv')) {
         return { isContainer: true, containerType: 'docker', orchestrator: null };
-    }
-
-    // Bubblewrap may inherit host cgroups despite creating a PID namespace.
-    if (os.platform() === 'linux') {
-        try {
-            if (isBubblewrapInitProcess(fs.readFileSync('/proc/1/comm', 'utf8'))) {
-                return { isContainer: true, containerType: 'bubblewrap', orchestrator: null };
-            }
-        } catch {
-            // A restricted /proc must not break system information reporting.
-        }
     }
 
     // Method 3: Check /proc/1/cgroup for container indicators (Linux only)
@@ -855,12 +855,18 @@ ${envInfo}`;
  */
 export function getPathGuidance(systemInfo: SystemInfo): string {
     let guidance = `Absolute paths are the most reliable because they do not depend on the current working directory. Paths are automatically normalized regardless of slash direction.`;
+
+    if (systemInfo.docker.isContainer && systemInfo.docker.containerType === 'bubblewrap') {
+        return `${guidance}
+
+BUBBLEWRAP SANDBOX: Bind mounts may be read-only or ephemeral.
+Do not infer persistence, Docker-style path translation, or host filesystem authority.`;
+    }
     
     if (systemInfo.docker.isContainer && systemInfo.docker.mountPoints.length > 0) {
         const containerLabel = systemInfo.docker.containerType === 'kubernetes' ? 'KUBERNETES' :
                               systemInfo.docker.containerType === 'docker' ? 'DOCKER' :
                               systemInfo.docker.containerType === 'podman' ? 'PODMAN' :
-                              docker.containerType === 'bubblewrap' ? 'BUBBLEWRAP' :
                               'CONTAINER';
         const verifiedMounts = systemInfo.docker.mountPoints.filter(m => m.verifiedMount).map(m => m.containerPath);
         const unverifiedCandidates = systemInfo.docker.mountPoints.filter(m => !m.verifiedMount).map(m => m.containerPath);
