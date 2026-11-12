@@ -6,7 +6,7 @@ Desktop Commander Remote MCP lets web-based AI clients such as **ChatGPT** and *
 
 ### Prerequisites
 
-- Node.js 18 or newer
+- Node.js 22.12 or newer
 - A Desktop Commander account
 - An AI client that can connect to the Desktop Commander Remote MCP
 
