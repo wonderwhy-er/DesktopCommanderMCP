@@ -38,6 +38,7 @@ export interface ServerConfig {
   defaultShell?: string;
   allowedDirectories?: string[];
   telemetryEnabled?: boolean; // New field for telemetry control
+  toolCallAuditLogEnabled?: boolean; // Whether tool calls are written to claude_tool_call.log and tool-history.jsonl
   fileWriteLineLimit?: number; // Line limit for file write operations
   fileReadLineLimit?: number; // Default line limit for file read operations (changed from character-based)
   clientId?: string; // Unique client identifier for analytics
@@ -71,13 +72,34 @@ export function isTelemetryDisabledValue(value: unknown): boolean {
   return normalizeTelemetryEnabledValue(value) === false;
 }
 
+/** The settings that are on or off */
+const ON_OFF_SETTINGS = ['telemetryEnabled', 'toolCallAuditLogEnabled'];
+
+/**
+ * Makes `config`'s on/off settings booleans, as the server reads them: off
+ * only for false, or "false" in any spelling, which config.json edited by hand
+ * can hold; on for anything else, so also for a missing value (a config.json
+ * from before the setting existed), null or 0. Returns `config`.
+ */
+function normalizeOnOffSettings(config: ServerConfig): ServerConfig {
+  for (const key of ON_OFF_SETTINGS) {
+    config[key] = normalizeTelemetryEnabledValue(config[key]) !== false;
+  }
+  return config;
+}
+
 /**
  * Parses config.json's text. Editors saving "UTF-8 with BOM" (Notepad,
  * PowerShell 5's Set-Content -Encoding UTF8) put U+FEFF first, which
- * JSON.parse rejects although the config is complete.
+ * JSON.parse rejects although the config is complete. The on/off settings
+ * come out as booleans (normalizeOnOffSettings).
  */
 export function parseConfig(text: string): ServerConfig {
-  return JSON.parse(text.charCodeAt(0) === 0xfeff ? text.slice(1) : text);
+  const config = JSON.parse(text.charCodeAt(0) === 0xfeff ? text.slice(1) : text);
+  if (config && typeof config === 'object') {
+    normalizeOnOffSettings(config);
+  }
+  return config;
 }
 
 /** Marks a config written before the welcome page existed as an existing install, which never gets it */
@@ -181,13 +203,13 @@ class ConfigManager {
         } catch (recoveryError) {
           // Left as it is, the next start recovers it
           const text = await fs.readFile(this.configPath, 'utf8').catch(() => '');
-          return this.startWithoutSaving(buildRecoveredConfig(this.getDefaultConfig(), null, text),
+          return this.startWithoutSaving(this.recoveredConfig(null, text),
             `config.json could not be parsed, and replacing it failed (${messageOf(recoveryError)}). For this session Desktop Commander uses the settings still readable in it and the defaults for the rest; config.json is left as it is.`);
         }
       } else {
         // There, but it can't be read (e.g. no permission): an existing install,
         // so the welcome page stays off, and initialize has nothing to save for it
-        return this.startWithoutSaving(buildRecoveredConfig(this.getDefaultConfig(), null, ''),
+        return this.startWithoutSaving(this.recoveredConfig(null, ''),
           `config.json could not be read (${messageOf(error)}). For this session Desktop Commander uses the default settings; config.json is left as it is.`);
       }
     }
@@ -278,6 +300,7 @@ class ConfigManager {
       defaultShell: getDefaultShell(),
       allowedDirectories: [],
       telemetryEnabled: true, // Default to opt-out approach (telemetry on by default)
+      toolCallAuditLogEnabled: true, // Tool calls are written to the two log files unless the user turns it off
       fileWriteLineLimit: 50,  // Default line limit for file write operations (changed from 100)
       fileReadLineLimit: 1000,  // Default line limit for file read operations (changed from character-based)
       pendingWelcomeOnboarding: true, // New install flag - triggers A/B test for welcome page
@@ -299,8 +322,18 @@ class ConfigManager {
   }
 
   /**
+   * What a corrupt or unreadable config.json is recovered as (buildRecoveredConfig).
+   * The settings salvaged from it are read with plain JSON.parse, so its on/off
+   * settings are made booleans here, as parseConfig() makes them for a config.json
+   * that parses: a salvaged "false" means off.
+   */
+  private recoveredConfig(lastRead: ServerConfig | null, text: string): ServerConfig {
+    return normalizeOnOffSettings(buildRecoveredConfig(this.getDefaultConfig(), lastRead, text));
+  }
+
+  /**
    * Recovers a corrupt config.json; the caller holds the config lock. It is backed
-   * up once, then rewritten as buildRecoveredConfig(). Returns the config now on disk.
+   * up once, then rewritten as recoveredConfig(). Returns the config now on disk.
    */
   private async recoverCorruptConfig(phase: RecoveryPhase): Promise<ServerConfig> {
     const bytes = await fs.readFile(this.configPath).catch((error) => {
@@ -319,7 +352,7 @@ class ConfigManager {
     }
 
     const backupName = await backupCorruptConfig(this.configPath, bytes);
-    const config = buildRecoveredConfig(this.getDefaultConfig(), this.initialized ? this.config : null, text);
+    const config = this.recoveredConfig(this.initialized ? this.config : null, text);
     await this.writeConfigAtomically(config);
     this.config = { ...config, version: VERSION };
     console.error(`config.json could not be parsed (${parseError.message})${backupName ? `; kept as ${backupName}` : ''}; ` +

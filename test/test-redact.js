@@ -32,10 +32,12 @@ function assertGone(output, secret, what) {
     assert(!output.toLowerCase().includes(secret.toLowerCase()), `${what} came out: ${JSON.stringify(output)}`);
 }
 
+/** Check planted secrets and overlapping private values without exposing fragments or changing plain text. */
 async function runTests() {
     const { redact } = await import('../dist/remote-device/diagnostics/redact.js');
     const failures = [];
 
+    /** Retain all masking failures and explicit skips instead of stopping at the first case. */
     async function test(name, fn) {
         try {
             console.log(`${await fn() === SKIPPED ? '- skipped:' : '✅ PASS '} ${name}`);
