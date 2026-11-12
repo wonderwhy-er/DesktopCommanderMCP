@@ -6,6 +6,7 @@ export const DEFAULT_REMOTE_SERVER_URL = "https://mcp.desktopcommander.app";
 /** Trusted project endpoints; never learned from /api/mcp-info. */
 export const SUPABASE1_ORIGIN = "https://olvbkozcufcbptfogatw.supabase.co";
 export const SUPABASE2_ORIGIN = "https://xnalhwxchxhthlmzkhal.supabase.co";
+export const SUPABASE3_ORIGIN = "https://example.supabase.co";
 
 export interface RemoteAuthContext {
     serverOrigin: string;
@@ -63,16 +64,17 @@ export function validateRemoteServerUrl(value: string): URL {
 
 /**
  * Validate the Supabase endpoint BEFORE setSession() can send persisted tokens.
- * Accept only the supabase1 and supabase2 project endpoints. Saved sessions are
+ * Accept only the explicitly listed project endpoints. Saved sessions are
  * separately bound to their exact MCP and Supabase endpoints before restoration.
  */
 export function validateRemoteAuthContext(serverUrl: string, supabaseUrl: unknown): RemoteAuthContext {
     const server = validateRemoteServerUrl(serverUrl);
     const auth = parseTrustedEndpoint(supabaseUrl, "Supabase URL");
     // Compare the complete origin, including scheme and port; paths are never endpoints.
-    if ((auth.origin !== SUPABASE1_ORIGIN && auth.origin !== SUPABASE2_ORIGIN) ||
+    if ((auth.origin !== SUPABASE1_ORIGIN && auth.origin !== SUPABASE2_ORIGIN &&
+        auth.origin !== SUPABASE3_ORIGIN) ||
         auth.pathname !== "/") {
-        throw new Error("Unsafe Supabase URL: only the supabase1 and supabase2 project URLs are allowed, without paths");
+        throw new Error("Unsafe Supabase URL: only the supabase1, supabase2, and supabase3 project URLs are allowed, without paths");
     }
     return {
         serverOrigin: server.origin,
