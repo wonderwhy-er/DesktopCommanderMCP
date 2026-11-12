@@ -419,7 +419,7 @@ export async function startRemoteStandIn({
   standIn.url = `http://127.0.0.1:${server.address().port}`;
   // Device startup validates a hosted Supabase URL; the test-only transport
   // preload routes this exact hostname to this server without changing validation.
-  if (hostedSupabase) standIn.supabaseUrl = `https://remote-stand-in.supabase.co:${server.address().port}`;
+  if (hostedSupabase) standIn.supabaseUrl = 'https://xnalhwxchxhthlmzkhal.supabase.co';
   if (diagnostics) standIn.diagnosticsUrl = `${standIn.url}/diagnostics`;
   return standIn;
 }

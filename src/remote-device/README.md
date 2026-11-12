@@ -79,20 +79,21 @@ development also permits HTTP or HTTPS on `localhost`, `127.0.0.1`, `[::1]`, and
 fragments are rejected.
 
 Authentication requests refuse HTTP redirects. Supabase configuration accepts
-HTTPS on `supabase.co` or any of its subdomains. Local hosts are never accepted
-for Supabase, including when `MCP_SERVER_URL` is local.
-This is a temporary domain allowlist, not project ownership verification:
-other Supabase customers' projects also pass it. Replace `SUPABASE_DOMAIN` in
-`remote-utils.ts` with `desktopcommander.app` once our Supabase environments use
-custom domains. Moving an endpoint still requires re-pairing because saved
+only these HTTPS project endpoints:
+
+- Production: `https://olvbkozcufcbptfogatw.supabase.co`
+- Staging: `https://xnalhwxchxhthlmzkhal.supabase.co`
+
+Other projects, subdomains, non-default ports, paths, and local hosts are rejected,
+including when `MCP_SERVER_URL` is local. A trailing slash is accepted and normalized.
+Moving between the allowed endpoints still requires re-pairing because saved
 session bindings compare the complete MCP and Supabase endpoints.
 
 A saved session is bound to its original MCP and Supabase endpoints. Switching
 to another backend requires browser authorization; a rejected saved session is
 kept until the new pairing succeeds. Legacy sessions saved before endpoint
 binding continue to work only with the original production MCP/project pair;
-the original project URL is retained solely for that legacy-session check. Legacy
-sessions from custom/staging backends must be paired once again. For an unbound
+legacy sessions from custom/staging backends must be paired once again. For an unbound
 custom session, the CLI also refuses `remote --logout` rather than sending
 credentials to an unverified backend; revoke it from the original dashboard.
 

@@ -11,6 +11,7 @@ import path from 'node:path';
 import {
     DEFAULT_REMOTE_SERVER_URL,
     PRODUCTION_SUPABASE_ORIGIN,
+    STAGING_SUPABASE_ORIGIN,
     savedSessionMatchesContext,
     validateRemoteAuthContext,
     validateRemoteServerUrl,
@@ -41,6 +42,7 @@ async function runTests() {
     assert.equal(validateRemoteServerUrl('http://mcp.localhost:3007').origin, 'http://mcp.localhost:3007');
     assert.equal(validateRemoteServerUrl('https://staging-mcp.desktopcommander.app').origin, 'https://staging-mcp.desktopcommander.app');
 
+    const servers = [DEFAULT_REMOTE_SERVER_URL, 'https://staging-mcp.desktopcommander.app', 'http://127.0.0.1:3007'];
     for (const value of [
         'https://supabase.co.attacker.example',
         'https://evilsupabase.co',
@@ -53,16 +55,29 @@ async function runTests() {
         'https://olvbkozcufcbptfogatw.supabase.co/different-path',
         'https://olvbkozcufcbptfogatw.supabase.co?changed=1',
         'https://olvbkozcufcbptfogatw.supabase.co#fragment',
+        'https://supabase.co', 'https://another-project.supabase.co',
+        'https://auth.dev.project.supabase.co',
+        ...[PRODUCTION_SUPABASE_ORIGIN, STAGING_SUPABASE_ORIGIN].flatMap((endpoint) => [
+            `${endpoint}:8443`, `${endpoint}/rest-root/`, `${endpoint}//`,
+            `${endpoint}?changed=1`, `${endpoint}#fragment`,
+            `${endpoint}.attacker.example`, endpoint.replace('https://', 'https://sub.'),
+            endpoint.replace('https://', 'http://'), endpoint.replace('https://', 'https://user:pass@'),
+        ]),
     ]) {
-        assert.throws(() => validateRemoteAuthContext(DEFAULT_REMOTE_SERVER_URL, value), /Unsafe|Unexpected/, value);
+        for (const server of servers) {
+            assert.throws(() => validateRemoteAuthContext(server, value), /Unsafe/, `${server} must reject ${value}`);
+        }
     }
 
     for (const value of [
-        'https://supabase.co', 'https://another-project.supabase.co',
-        'https://auth.dev.project.supabase.co', 'https://STAGING.SUPABASE.CO:8443/',
+        PRODUCTION_SUPABASE_ORIGIN, STAGING_SUPABASE_ORIGIN,
+        `${PRODUCTION_SUPABASE_ORIGIN}/`, `${STAGING_SUPABASE_ORIGIN}/`,
+        `${PRODUCTION_SUPABASE_ORIGIN.toUpperCase()}:443/`,
+        `${STAGING_SUPABASE_ORIGIN.toUpperCase()}:443/`,
     ]) {
-        const expected = new URL(value).href.replace(/\/+$/, '');
-        assert.equal(validateRemoteAuthContext(DEFAULT_REMOTE_SERVER_URL, value).supabaseUrl, expected);
+        for (const server of servers) {
+            assert.equal(validateRemoteAuthContext(server, value).supabaseUrl, new URL(value).origin);
+        }
     }
 
     for (const value of [
@@ -71,17 +86,17 @@ async function runTests() {
         'https://localhost:54321', 'https://127.0.0.1:54321',
         'https://[::1]:54321', 'https://mcp.localhost:54321',
     ]) {
-        for (const server of [DEFAULT_REMOTE_SERVER_URL, 'https://staging-mcp.desktopcommander.app', 'http://127.0.0.1:3007']) {
+        for (const server of servers) {
             assert.throws(() => validateRemoteAuthContext(server, value), /Unsafe Supabase URL/, `${server} must reject ${value}`);
         }
     }
 
-    const custom = validateRemoteAuthContext('https://staging-mcp.desktopcommander.app', 'https://staging-project.supabase.co/rest-root/');
-    assert.equal(custom.supabaseUrl, 'https://staging-project.supabase.co/rest-root');
+    const custom = validateRemoteAuthContext('https://staging-mcp.desktopcommander.app', STAGING_SUPABASE_ORIGIN);
+    assert.equal(custom.supabaseUrl, STAGING_SUPABASE_ORIGIN);
     assert.throws(
         () => validateRemoteAuthContext(custom.serverOrigin, 'https://custom-supabase.example'),
         /Unsafe Supabase URL/,
-        'staging must enforce the same Supabase domain restriction',
+        'staging must enforce the same Supabase project restriction',
     );
     assert.equal(validateRemoteAuthContext('http://127.0.0.1:3007', PRODUCTION_SUPABASE_ORIGIN).supabaseUrl, PRODUCTION_SUPABASE_ORIGIN);
     assert.equal(savedSessionMatchesContext(undefined, production), true, 'legacy production session must keep working');
@@ -91,8 +106,8 @@ async function runTests() {
     assert.equal(savedSessionMatchesContext(production, custom), false);
     assert.equal(savedSessionMatchesContext({...custom, supabaseUrl: 'https://other.example'}, custom), false);
     assert.equal(savedSessionMatchesContext({...custom, serverOrigin: 'https://other.example'}, custom), false);
-    const anotherProject = validateRemoteAuthContext(DEFAULT_REMOTE_SERVER_URL, 'https://another-project.supabase.co');
-    assert.equal(savedSessionMatchesContext(undefined, anotherProject), false, 'domain membership cannot attribute a legacy session');
+    const anotherProject = validateRemoteAuthContext(DEFAULT_REMOTE_SERVER_URL, STAGING_SUPABASE_ORIGIN);
+    assert.equal(savedSessionMatchesContext(undefined, anotherProject), false, 'staging cannot receive legacy production credentials');
     assert.equal(savedSessionMatchesContext(production, anotherProject), false, 'another allowed project must not receive saved production tokens');
 
     const originalFetch = globalThis.fetch;
@@ -141,13 +156,23 @@ async function runTests() {
         await fs.writeFile(configPath, JSON.stringify({deviceId: 'device-1', session}));
         assert.deepEqual(await device.loadPersistedConfig(), session, 'legacy production session still loads');
 
-        // A project can pass the temporary domain check without owning these credentials.
+        // Reject an unlisted project even after previously accepting a valid configuration.
+        globalThis.fetch = async () => ({
+            ok: true, headers: new Headers(),
+            json: async () => ({supabaseUrl: 'https://another-project.supabase.co', supabasePublishableKey: 'test-key'}),
+        });
+        await assert.rejects(device.fetchSupabaseConfig(), /Unsafe Supabase URL/);
+        assert.equal(device.trustedAuthContext, null);
+        assert.equal(await device.loadPersistedConfig(), null, 'an unlisted project must not receive saved credentials');
+        assert.deepEqual(JSON.parse(await fs.readFile(configPath, 'utf8')).session, session);
+
+        // Even the allowed staging project must not receive saved production credentials.
         globalThis.fetch = async () => ({
             ok: true, headers: new Headers(),
             json: async () => ({supabaseUrl: anotherProject.supabaseUrl, supabasePublishableKey: 'test-key'}),
         });
         await device.fetchSupabaseConfig();
-        assert.deepEqual(device.trustedAuthContext, anotherProject, 'domain validation accepts another Supabase project');
+        assert.deepEqual(device.trustedAuthContext, anotherProject, 'endpoint validation accepts the staging project');
         assert.equal(await device.loadPersistedConfig(), null, 'legacy production credentials must not follow another allowed project');
         assert.equal(device.deviceId, undefined);
         await fs.writeFile(configPath, JSON.stringify({deviceId: 'device-1', session, authContext: production}));

@@ -3,12 +3,9 @@ import path from "node:path";
 
 /** This is the hosted MCP API, not a value learned from /api/mcp-info. */
 export const DEFAULT_REMOTE_SERVER_URL = "https://mcp.desktopcommander.app";
-/** Only for attributing legacy saved sessions; new configuration uses the domain check below. */
+/** Trusted project endpoints; never learned from /api/mcp-info. */
 export const PRODUCTION_SUPABASE_ORIGIN = "https://olvbkozcufcbptfogatw.supabase.co";
-// TODO: Replace "supabase.co" with "desktopcommander.app" once all Supabase
-// environments use our custom domains. The shared supabase.co domain does not
-// establish project ownership; exact saved-session bindings remain necessary.
-const SUPABASE_DOMAIN = "supabase.co";
+export const STAGING_SUPABASE_ORIGIN = "https://xnalhwxchxhthlmzkhal.supabase.co";
 
 export interface RemoteAuthContext {
     serverOrigin: string;
@@ -66,26 +63,20 @@ export function validateRemoteServerUrl(value: string): URL {
 
 /**
  * Validate the Supabase endpoint BEFORE setSession() can send persisted tokens.
- * Accept only HTTPS endpoints under the configured Supabase domain.
- * This domain check is not project verification: saved sessions are separately
- * bound to their exact MCP and Supabase endpoints before restoring credentials.
+ * Accept only our production and staging project endpoints. Saved sessions are
+ * separately bound to their exact MCP and Supabase endpoints before restoration.
  */
 export function validateRemoteAuthContext(serverUrl: string, supabaseUrl: unknown): RemoteAuthContext {
     const server = validateRemoteServerUrl(serverUrl);
     const auth = parseTrustedEndpoint(supabaseUrl, "Supabase URL");
-    // Match a complete DNS label, rejecting evilsupabase.co and supabase.co.example.com.
-    const isSupabaseHost = auth.hostname === SUPABASE_DOMAIN ||
-        auth.hostname.endsWith(`.${SUPABASE_DOMAIN}`);
-    if (auth.protocol !== "https:" || !isSupabaseHost) {
-        throw new Error(`Unsafe Supabase URL: HTTPS on ${SUPABASE_DOMAIN} or one of its subdomains is required`);
-    }
-    if (server.origin === DEFAULT_REMOTE_SERVER_URL && auth.pathname !== "/") {
-        throw new Error("Unsafe Supabase URL: paths are not supported for Desktop Commander production");
+    // Compare the complete origin, including scheme and port; paths are never endpoints.
+    if ((auth.origin !== PRODUCTION_SUPABASE_ORIGIN && auth.origin !== STAGING_SUPABASE_ORIGIN) ||
+        auth.pathname !== "/") {
+        throw new Error("Unsafe Supabase URL: only the production and staging project URLs are allowed, without paths");
     }
     return {
         serverOrigin: server.origin,
-        // Normalize a trailing slash, but preserve paths used by self-hosted gateways.
-        supabaseUrl: auth.href.replace(/\/+$/, ""),
+        supabaseUrl: auth.origin,
     };
 }
 

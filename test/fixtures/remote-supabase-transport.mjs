@@ -1,13 +1,16 @@
 // Test-only transport routing: production still validates the advertised HTTPS
-// Supabase URL. Only this fixture hostname reaches the loopback stand-in.
+// Supabase URL. Requests for the staging project reach only the loopback stand-in.
 function localTransportUrl(input) {
   const url = new URL(input);
-  if (url.hostname !== 'remote-stand-in.supabase.co') return url.href;
-  if (!url.port || !['https:', 'wss:'].includes(url.protocol)) {
-    throw new Error('The Supabase stand-in requires HTTPS/WSS and an explicit test port');
+  if (url.hostname !== 'xnalhwxchxhthlmzkhal.supabase.co') return url.href;
+  const local = new URL(process.env.MCP_SERVER_URL);
+  if (local.protocol !== 'http:' || local.hostname !== '127.0.0.1' || !local.port ||
+      url.port || !['https:', 'wss:'].includes(url.protocol)) {
+    throw new Error('The Supabase stand-in requires a local MCP test server and the pinned HTTPS/WSS endpoint');
   }
   url.protocol = url.protocol === 'https:' ? 'http:' : 'ws:';
   url.hostname = '127.0.0.1';
+  url.port = local.port;
   return url.href;
 }
 
