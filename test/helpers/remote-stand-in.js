@@ -59,6 +59,7 @@ const base64url = (value) => Buffer.from(JSON.stringify(value)).toString('base64
 
 export async function startRemoteStandIn({
   accessTtlSec = 3600, reuseIntervalSec = 0, serverAheadSec = 0, diagnostics = false, realtime = false, channel = false,
+  hostedSupabase = false,
 } = {}) {
   const deviceId = 'b6f0a1c2-0000-4000-8000-000000000695';
   const anonKey = 'stand-in-anon-key';
@@ -416,6 +417,9 @@ export async function startRemoteStandIn({
 
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   standIn.url = `http://127.0.0.1:${server.address().port}`;
+  // Device startup validates a hosted Supabase URL; the test-only transport
+  // preload routes this exact hostname to this server without changing validation.
+  if (hostedSupabase) standIn.supabaseUrl = 'https://xnalhwxchxhthlmzkhal.supabase.co';
   if (diagnostics) standIn.diagnosticsUrl = `${standIn.url}/diagnostics`;
   return standIn;
 }

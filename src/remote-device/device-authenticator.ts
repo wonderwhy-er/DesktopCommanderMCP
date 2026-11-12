@@ -90,6 +90,7 @@ export class DeviceAuthenticator {
         try {
             response = await this.fetchFn(`${this.baseServerUrl}/device/start`, {
                 method: 'POST',
+                redirect: 'error',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     client_id: CLIENT_ID,
@@ -174,6 +175,7 @@ export class DeviceAuthenticator {
             try {
                 response = await this.fetchFn(`${this.baseServerUrl}/device/poll`, {
                     method: 'POST',
+                    redirect: 'error',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         device_code: deviceAuth.device_code,

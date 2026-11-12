@@ -202,7 +202,7 @@ export function observeServerDate(dateHeader: string | null): void {
 }
 
 async function clockAwareFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
-    const response = await fetch(input, init);
+    const response = await fetch(input, { ...init, redirect: 'error' });
     observeServerDate(response.headers.get('date'));
     return response;
 }
