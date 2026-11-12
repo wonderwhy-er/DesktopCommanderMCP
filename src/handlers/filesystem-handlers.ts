@@ -304,6 +304,19 @@ export async function handleReadMultipleFiles(args: unknown, stillLoadingError?:
         }
     }
 
+    // Some MCP clients only surface the first text content block to the model.
+    // Preserve image/PDF responses exactly because their block boundaries carry
+    // file/page association, but make plain-text batches self-contained in one block.
+    const hasMediaResult = fileResults.some(result => result.isImage || result.isPdf);
+    if (!hasMediaResult && contentItems.every(item => item.type === "text")) {
+        return {
+            content: [{
+                type: "text",
+                text: contentItems.map(item => item.text ?? "").join("")
+            }]
+        };
+    }
+
     return { content: contentItems };
 }
 
