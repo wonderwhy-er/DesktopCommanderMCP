@@ -1,5 +1,5 @@
-// Test-only transport routing: production still validates the advertised HTTPS
-// Supabase URL. Requests for the staging project reach only the loopback stand-in.
+// Test-only transport routing: the device still validates the advertised HTTPS
+// Supabase URL. Requests for the supabase2 project reach only the loopback stand-in.
 function localTransportUrl(input) {
   const url = new URL(input);
   if (url.hostname !== 'xnalhwxchxhthlmzkhal.supabase.co') return url.href;

@@ -4,8 +4,8 @@ import path from "node:path";
 /** This is the hosted MCP API, not a value learned from /api/mcp-info. */
 export const DEFAULT_REMOTE_SERVER_URL = "https://mcp.desktopcommander.app";
 /** Trusted project endpoints; never learned from /api/mcp-info. */
-export const PRODUCTION_SUPABASE_ORIGIN = "https://olvbkozcufcbptfogatw.supabase.co";
-export const STAGING_SUPABASE_ORIGIN = "https://xnalhwxchxhthlmzkhal.supabase.co";
+export const SUPABASE1_ORIGIN = "https://olvbkozcufcbptfogatw.supabase.co";
+export const SUPABASE2_ORIGIN = "https://xnalhwxchxhthlmzkhal.supabase.co";
 
 export interface RemoteAuthContext {
     serverOrigin: string;
@@ -63,16 +63,16 @@ export function validateRemoteServerUrl(value: string): URL {
 
 /**
  * Validate the Supabase endpoint BEFORE setSession() can send persisted tokens.
- * Accept only our production and staging project endpoints. Saved sessions are
+ * Accept only the supabase1 and supabase2 project endpoints. Saved sessions are
  * separately bound to their exact MCP and Supabase endpoints before restoration.
  */
 export function validateRemoteAuthContext(serverUrl: string, supabaseUrl: unknown): RemoteAuthContext {
     const server = validateRemoteServerUrl(serverUrl);
     const auth = parseTrustedEndpoint(supabaseUrl, "Supabase URL");
     // Compare the complete origin, including scheme and port; paths are never endpoints.
-    if ((auth.origin !== PRODUCTION_SUPABASE_ORIGIN && auth.origin !== STAGING_SUPABASE_ORIGIN) ||
+    if ((auth.origin !== SUPABASE1_ORIGIN && auth.origin !== SUPABASE2_ORIGIN) ||
         auth.pathname !== "/") {
-        throw new Error("Unsafe Supabase URL: only the production and staging project URLs are allowed, without paths");
+        throw new Error("Unsafe Supabase URL: only the supabase1 and supabase2 project URLs are allowed, without paths");
     }
     return {
         serverOrigin: server.origin,
@@ -80,11 +80,11 @@ export function validateRemoteAuthContext(serverUrl: string, supabaseUrl: unknow
     };
 }
 
-/** Legacy unbound sessions may be restored ONLY against their known original production pair. */
+/** Legacy unbound sessions may be restored ONLY against the original default MCP/supabase1 pair. */
 export function savedSessionMatchesContext(saved: unknown, expected: RemoteAuthContext): boolean {
     if (saved === undefined) {
         return expected.serverOrigin === DEFAULT_REMOTE_SERVER_URL &&
-            expected.supabaseUrl === PRODUCTION_SUPABASE_ORIGIN;
+            expected.supabaseUrl === SUPABASE1_ORIGIN;
     }
     if (!saved || typeof saved !== "object" || Array.isArray(saved)) return false;
     const previous = saved as Partial<RemoteAuthContext>;
