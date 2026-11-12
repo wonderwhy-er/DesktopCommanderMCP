@@ -210,6 +210,26 @@ npx @wonderwhy-er/desktop-commander@latest remote --logout
 
 Successful logout also revokes the old device and its MQTT certificates; pair again on the next start.
 
+### Linux: systemctl fails inside an isolated execution child
+
+The Remote Device executes tools in the local MCP child process context. Some
+deployments additionally launch that child inside a bubblewrap (`bwrap`) sandbox
+or another container/namespace. This is a property of the deployment, not a
+claim that Desktop Commander automatically enables bubblewrap.
+
+If the child sees `bwrap` as PID 1, it is not in the host's systemd init
+namespace. Running `systemctl` there may report
+`System has not been booted with systemd as init system (PID 1)` even while
+host services are healthy. This is **not** evidence that the host's systemd
+service is stopped or that the Remote Device is offline.
+
+To distinguish execution contexts, inspect the child with `ps -p 1 -o comm=`
+and check whether `/run/systemd/system` is visible. Neither observation
+proves host service health. Use a **separately authorized host-level interface**
+to inspect or manage host services, preserving the container/sandbox boundary.
+Do not bind-mount the host systemd D-Bus socket, disable the sandbox, or run
+unrestricted privileged commands merely to make `systemctl` work.
+
 ### I need more diagnostic output
 
 Start with verbose logging:
