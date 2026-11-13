@@ -11,9 +11,9 @@
  *   so Claude can drill into specific sections when the outline isn't enough.
  *
  * EDIT (old_string/new_string): Find/replace on the pretty-printed XML, then
- *   compact and repack into valid DOCX. Works exactly like text file editing.
+ *   repack into valid DOCX. Works exactly like text file editing.
  *
- * Round-trip: DOCX → unzip → pretty-print → [outline or raw] → edit → compact → repack
+ * Round-trip: DOCX → unzip → pretty-print → [outline or raw] → edit → repack
  */
 
 import fs from 'fs/promises';
@@ -23,43 +23,40 @@ import { LazyPackage } from '../lazy-package.js';
 import { FileHandler, FileResult, FileInfo, ReadOptions, EditResult } from './base.js';
 
 // ════════════════════════════════════════════════════════════════
-// XML Pretty-Print / Compact
+// XML Pretty-Print
 // ════════════════════════════════════════════════════════════════
 
 /**
  * Pretty-print XML: split tags onto separate lines with indentation.
- * Preserves text node content exactly. compact→pretty→compact is lossless.
+ * Preserves text node content exactly.
  */
 function prettyPrintXml(xml: string): string {
-    const parts = xml.split(/(?<=>)(?=<)/);
-    const lines: string[] = [];
+    // Tokenize markup separately: a '>' in text is not the end of a tag.
+    const parts = xml.match(/<!--[\s\S]*?-->|<!\[CDATA\[[\s\S]*?\]\]>|<(?:[^"'<>]|"[^"]*"|'[^']*')*>|[^<]+/g) ?? [];
+    let pretty = '';
     let depth = 0;
+    let previousTag = false;
+    let previousOpening = false;
 
     for (const part of parts) {
-        const trimmed = part.trim();
-        if (!trimmed) continue;
-
-        const isClosing = trimmed.startsWith('</');
-        const isSelfClosing = trimmed.endsWith('/>');
-        const isProcessingInstruction = trimmed.startsWith('<?');
-        const isInline = !isClosing && !isSelfClosing && trimmed.includes('</');
+        const isTag = part.startsWith('<') && !part.startsWith('<!');
+        const isClosing = isTag && part.startsWith('</');
+        const isOpening = isTag && !isClosing && !part.endsWith('/>') && !part.startsWith('<?');
 
         if (isClosing) depth = Math.max(0, depth - 1);
 
-        lines.push('  '.repeat(depth) + trimmed);
+        // Do not introduce content between an empty element's opening and closing tags.
+        if (isTag && previousTag && !(previousOpening && isClosing)) {
+            pretty += '\n' + '  '.repeat(depth);
+        }
+        pretty += part;
 
-        if (!isClosing && !isSelfClosing && !isInline && !isProcessingInstruction) depth++;
+        if (isOpening) depth++;
+        previousTag = isTag;
+        previousOpening = isOpening;
     }
 
-    return lines.join('\n');
-}
-
-/**
- * Compact pretty-printed XML back — strip leading indentation, join lines.
- * Does NOT touch whitespace inside <w:t> text nodes.
- */
-function compactXml(prettyXml: string): string {
-    return prettyXml.split('\n').map(l => l.trimStart()).join('');
+    return pretty;
 }
 
 // ════════════════════════════════════════════════════════════════
@@ -630,7 +627,7 @@ export class DocxFileHandler implements FileHandler {
      *
      * Works on the same representation that read() returns when using offset/length,
      * so XML fragments copied from read output work as search strings.
-     * After editing, XML is compacted and repacked into the DOCX.
+     * After editing, XML is repacked into the DOCX without stripping text whitespace.
      */
     async editRange(
         path: string,
@@ -724,9 +721,8 @@ export class DocxFileHandler implements FileHandler {
                 edited = edited.split(oldStr).join(newStr);
             }
 
-            // Compact and repack
-            const compacted = compactXml(edited);
-            zip.file(targetFile, compacted);
+            // Keep line breaks and indentation inside text and field-instruction nodes intact.
+            zip.file(targetFile, edited);
 
             const outBuf = zip.generate({
                 type: 'nodebuffer',
