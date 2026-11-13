@@ -575,7 +575,7 @@ The server provides a comprehensive set of tools organized into several categori
 | Category | Tool | Description |
 |----------|------|-------------|
 | **Configuration** | `get_config` | Get the complete server configuration as JSON (includes blockedCommands, defaultShell, allowedDirectories, fileReadLineLimit, fileWriteLineLimit, telemetryEnabled) |
-| | `set_config_value` | Set a specific configuration value by key. Available settings: <br>• `blockedCommands`: Array of shell commands that cannot be executed<br>• `defaultShell`: Shell to use for commands (e.g., bash, zsh, powershell)<br>• `allowedDirectories`: Array of filesystem paths the server can access for file operations (⚠️ terminal commands can still access files outside these directories)<br>• `fileReadLineLimit`: Maximum lines to read at once (default: 1000)<br>• `fileWriteLineLimit`: Maximum lines to write at once (default: 50)<br>• `telemetryEnabled`: Enable/disable telemetry (boolean) |
+| | `set_config_value` | Set a specific configuration value by key. Available settings: <br>• `blockedCommands`: Array of shell commands that cannot be executed<br>• `defaultShell`: Shell to use for commands (e.g., bash, zsh, powershell)<br>• `allowedDirectories`: Array of filesystem paths the server can access for file operations (⚠️ terminal commands can still access files outside these directories)<br>• `fileReadLineLimit`: Maximum lines to read at once (default: 1000)<br>• `fileWriteLineLimit`: Advisory line threshold used for write content and text edit blocks; operations above it are still allowed (default: 50)<br>• `telemetryEnabled`: Enable/disable telemetry (boolean) |
 | **Terminal** | `start_process` | Start programs with smart detection of when they're ready for input |
 | | `interact_with_process` | Send commands to running programs and get responses |
 | | `read_process_output` | Read output from running processes |
@@ -857,18 +857,18 @@ The configuration is saved to `config.json` in the server's working directory an
 
 #### Understanding fileWriteLineLimit
 
-The `fileWriteLineLimit` setting controls how many lines can be written in a single `write_file` operation (default: 50 lines). This limit exists for several important reasons:
+The `fileWriteLineLimit` setting is an advisory line-count threshold used for `write_file` content and text `edit_block` search/replacement blocks (default: 50 lines). It is not a hard rejection limit: `write_file` calls above the threshold still succeed and receive a performance/chunking tip, and text edits are not rejected solely for exceeding the threshold.
 
-**Why the limit exists:**
-- **AIs are wasteful with tokens**: Instead of doing two small edits in a file, AIs may decide to rewrite the whole thing. We're trying to force AIs to do things in smaller changes as it saves time and tokens
+**Why the threshold exists:**
+- **AIs are wasteful with tokens**: Instead of doing two small edits in a file, AIs may decide to rewrite the whole thing. We're trying to encourage AIs to do things in smaller changes as it saves time and tokens
 - **Claude UX message limits**: There are limits within one message and hitting "Continue" does not really work. What we're trying here is to make AI work in smaller chunks so when you hit that limit, multiple chunks have succeeded and that work is not lost - it just needs to restart from the last chunk
 
-**Setting the limit:**
+**Setting the threshold:**
 ```javascript
 // You can set it to thousands if you want
 set_config_value({ "key": "fileWriteLineLimit", "value": 1000 })
 
-// Or keep it smaller to force more efficient behavior
+// Or keep it smaller to encourage smaller operations
 set_config_value({ "key": "fileWriteLineLimit", "value": 25 })
 ```
 
@@ -876,7 +876,7 @@ set_config_value({ "key": "fileWriteLineLimit", "value": 25 })
 
 **Best practices**:
 - Keep the default (50) to encourage efficient AI behavior and avoid token waste
-- The system automatically suggests chunking when limits are exceeded
+- `write_file` automatically suggests chunking when its content exceeds the threshold; text `edit_block` operations are still allowed but do not currently return the same automatic chunking tip
 - Smaller chunks mean less work lost when Claude hits message limits
 
 ### Best Practices

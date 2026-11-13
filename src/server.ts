@@ -319,7 +319,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         - defaultShell (shell to use for commands)
                         - allowedDirectories (paths the server can access)
                         - fileReadLineLimit (max lines for read_file, default 1000)
-                        - fileWriteLineLimit (max lines per write_file call, default 50)
+                        - fileWriteLineLimit (advisory line threshold for write content/edit blocks; operations above it are still allowed, default 50)
                         - telemetryEnabled (boolean for telemetry opt-in/out)
                         - currentClient (information about the currently connected MCP client)
                         - clientHistory (history of all clients that have connected)
@@ -348,7 +348,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         - defaultShell (string)
                         - allowedDirectories (array of paths)
                         - fileReadLineLimit (number, max lines for read_file)
-                        - fileWriteLineLimit (number, max lines per write_file call)
+                        - fileWriteLineLimit (number, advisory line threshold for write content/edit blocks; operations above it are still allowed)
                         - telemetryEnabled (boolean)
                         
                         IMPORTANT: Setting allowedDirectories to an empty array ([]) allows full access 
@@ -855,9 +855,9 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         When a close but non-exact match is found, a character-level diff is shown in the format:
                         common_prefix{-removed-}{+added+}common_suffix to help you identify what's different.
 
-                        Similar to write_file, there is a configurable line limit (fileWriteLineLimit) that warns
-                        if the edited file exceeds this limit. If this happens, consider breaking your edits into
-                        smaller, more focused changes.
+                        For text replacements, fileWriteLineLimit is an advisory threshold applied to the
+                        search/replacement block size. Exceeding it does not block the edit; smaller, focused
+                        edits are still recommended.
 
                         ${PATH_GUIDANCE}
                         ${CMD_PREFIX_DESCRIPTION}`,
