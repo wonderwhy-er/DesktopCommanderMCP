@@ -590,6 +590,7 @@ The server provides a comprehensive set of tools organized into several categori
 | | `create_directory` | Create a new directory or ensure it exists |
 | | `list_directory` | Get detailed recursive listing of files and directories (supports depth parameter, default depth=2) |
 | | `move_file` | Move or rename files and directories |
+| | `copy_file` | Copy a regular file without removing its source; never overwrites an existing destination |
 | | `start_search` | Start streaming search for files by name or content patterns (searches text files and Excel content) |
 | | `get_more_search_results` | Get paginated results from active search with offset support |
 | | `stop_search` | Stop an active search gracefully |
