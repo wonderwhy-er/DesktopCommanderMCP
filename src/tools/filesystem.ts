@@ -14,6 +14,25 @@ import { parsePdfToMarkdown, editPdf, insertRenderOptions, PdfOperations, PdfMet
 import { isBinaryFile } from 'isbinaryfile';
 import { movePath } from '../utils/rename.js';
 
+
+/**
+ * Detect a UTF-16 BOM at the start of a buffer.
+ * - 0xFF 0xFE -> UTF-16 LE (what Windows shell redirection writes by default)
+ * - 0xFE 0xFF -> UTF-16 BE
+ */
+function detectUtf16Bom(buffer: Buffer): 'utf-16le' | 'utf-16be' | null {
+    if (buffer.length >= 2) {
+        if (buffer[0] === 0xFF && buffer[1] === 0xFE) return 'utf-16le';
+        if (buffer[0] === 0xFE && buffer[1] === 0xFF) return 'utf-16be';
+    }
+    return null;
+}
+
+/** Decode UTF-16 and drop the BOM character the decoder leaves at the start. */
+function decodeUtf16(buffer: Buffer, encoding: 'utf-16le' | 'utf-16be'): string {
+    const decoded = new TextDecoder(encoding).decode(buffer);
+    return decoded.charCodeAt(0) === 0xFEFF ? decoded.slice(1) : decoded;
+}
 // CONSTANTS SECTION - Consolidate all timeouts and thresholds
 const FILE_OPERATION_TIMEOUTS = {
     PATH_VALIDATION: 10000,    // 10 seconds
@@ -583,6 +602,44 @@ export async function readFileFromDisk(
         // If we can't stat the file, continue anyway and let the read operation handle errors
     }
 
+    // Sniff the first two bytes for a UTF-16 BOM before handing the file to the
+    // text handler, which assumes UTF-8.
+    //
+    // Only the head is read. Pulling the whole file in just to look at two bytes
+    // would load it into memory on every read, and would do so before the
+    // abortable timeout below can cancel, which is the wrong trade for a two-byte
+    // check on a large file sitting on a stalled mount.
+    try {
+        const head = Buffer.alloc(2);
+        const handle = await fs.open(validPath, 'r');
+        let bytesRead = 0;
+        try {
+            ({ bytesRead } = await handle.read(head, 0, 2, 0));
+        } finally {
+            await handle.close();
+        }
+
+        const utf16Encoding = bytesRead === 2 ? detectUtf16Bom(head) : null;
+        if (utf16Encoding) {
+            // The BOM is real, so the full read is worth paying for now.
+            const rawBuffer = await fs.readFile(validPath);
+            const decoded = decodeUtf16(rawBuffer, utf16Encoding);
+
+            // Apply offset/length in terms of lines, consistent with the text handler
+            const lines = TextFileHandler.splitLinesPreservingEndings(decoded);
+            const selectedLines = lines.slice(offset, offset + length);
+
+            return {
+                content: selectedLines.join(''),
+                mimeType: 'text/plain',
+                metadata: {}
+            };
+        }
+    } catch (error) {
+        // If BOM detection fails, fall through to the normal handler path
+        console.error('UTF-16 BOM detection failed, falling back to default handler:', error);
+    }
+
     // Read under an abortable timeout so a hung/stalled read is cancelled
     // (fd/thread freed) rather than leaked until the OS call returns.
     const readOperation = async (signal: AbortSignal) => {
@@ -693,11 +750,21 @@ export async function readFileInternal(filePath: string, offset: number = 0, len
     // Read entire file content preserving line endings, under a 3-minute,
     // cancellable timeout so an edit on a stalled/cloud path can't hang forever
     // (previously this read had no timeout at all).
-    const content = await runWithAbortableTimeout(
-        (signal) => fs.readFile(validPath, { encoding: 'utf8', signal }),
+    //
+    // Kept as a Buffer so the BOM can be inspected first: PS 5.1 on Windows
+    // writes UTF-16 LE by default under redirection (`echo hi > file.txt`), and
+    // decoding those bytes as UTF-8 leaves NULs between every character, which
+    // then gets written back on edit.
+    const rawBuffer: Buffer = await runWithAbortableTimeout(
+        (signal) => fs.readFile(validPath, { signal }),
         READ_OPERATION_TIMEOUT_MS,
         `Internal read for ${filePath}`
     );
+
+    const utf16Encoding = detectUtf16Bom(rawBuffer);
+    const content = utf16Encoding
+        ? decodeUtf16(rawBuffer, utf16Encoding)
+        : rawBuffer.toString('utf8');
 
     // If we need to apply offset/length, do it while preserving line endings
     if (offset === 0 && length >= Number.MAX_SAFE_INTEGER) {
