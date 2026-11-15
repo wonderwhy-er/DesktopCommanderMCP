@@ -5,6 +5,8 @@ import assert from 'assert';
 
 import { server } from '../dist/server.js';
 import { buildTrackUiEventCapturePayload } from '../dist/handlers/history-handlers.js';
+import { createToolBridge } from '../dist/ui/shared/tool-bridge.js';
+import { createUiEventTracker } from '../dist/ui/shared/ui-event-tracker.js';
 import { runIfMain } from './helpers/run-if-main.js';
 
 function getRequestHandler(method) {
@@ -55,10 +57,144 @@ async function testTrackUiEventPayloadCollisionProtection() {
   console.log('✓ track_ui_event payload collision protection works');
 }
 
+async function testConcurrentWidgetCallsAreCoalesced() {
+  console.log('\n--- Test: identical concurrent widget calls are coalesced ---');
+  let calls = 0;
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const bridge = createToolBridge({
+    host: {
+      openai: {
+        callTool: async () => {
+          calls++;
+          await gate;
+          return { content: [{ type: 'text', text: 'ok' }] };
+        },
+      },
+    },
+  });
+
+  const first = bridge.callTool('read_file', { path: 'same.txt', options: { offset: 0 } });
+  const second = bridge.callTool('read_file', { options: { offset: 0 }, path: 'same.txt' });
+  release();
+  const [a, b] = await Promise.all([first, second]);
+
+  assert.strictEqual(calls, 1, 'equivalent in-flight requests should share one host call');
+  assert.deepStrictEqual(a, b);
+  console.log('✓ identical concurrent calls share one request');
+}
+
+async function testSequentialWidgetCallsRunAgain() {
+  console.log('\n--- Test: sequential widget calls are not suppressed ---');
+  let calls = 0;
+  const bridge = createToolBridge({
+    host: { openai: { callTool: async () => ({ call: ++calls }) } },
+  });
+
+  await bridge.callTool('get_config', {});
+  await bridge.callTool('get_config', {});
+  assert.strictEqual(calls, 2, 'request should run again after the prior call settles');
+  console.log('✓ sequential calls execute normally');
+}
+
+async function testCanonicalWidgetCallKeys() {
+  console.log('\n--- Test: canonical widget keys preserve distinct values ---');
+  let calls = 0;
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const bridge = createToolBridge({
+    host: { openai: { callTool: async () => { calls++; await gate; return {}; } } },
+  });
+
+  const reorderedA = bridge.callTool('read_file', { options: { offset: 0, length: 1 } });
+  const reorderedB = bridge.callTool('read_file', { options: { length: 1, offset: 0 } });
+  const nanCall = bridge.callTool('read_file', { value: Number.NaN });
+  const nullCall = bridge.callTool('read_file', { value: null });
+  release();
+  await Promise.all([reorderedA, reorderedB, nanCall, nullCall]);
+
+  assert.strictEqual(calls, 3, 'reordered keys coalesce, while NaN and null remain distinct');
+  console.log('✓ canonical keys coalesce only equivalent requests');
+}
+
+async function testDuplicateUiEventsAreSuppressed() {
+  console.log('\n--- Test: immediate duplicate UI events are suppressed ---');
+  const calls = [];
+  const track = createUiEventTracker(
+    async (name, args) => { calls.push({ name, args }); return {}; },
+    { component: 'test-widget' },
+  );
+
+  track('click', { target: 'refresh' });
+  track('click', { target: 'refresh' });
+  track('click', { target: 'other' });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.strictEqual(calls.length, 2, 'duplicate should collapse while distinct event remains');
+  console.log('✓ duplicate event collapsed without suppressing distinct event');
+}
+
+async function testUiEventCacheStaysBounded() {
+  console.log('\n--- Test: UI event cache stays bounded ---');
+  const originalNow = Date.now;
+  Date.now = () => 1_000;
+  try {
+    const calls = [];
+    const track = createUiEventTracker(
+      async (_name, args) => { calls.push(args); return {}; },
+      { component: 'test-widget' },
+    );
+
+    for (let index = 0; index < 101; index++) track('click', { index });
+    track('click', { index: 0 });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    assert.strictEqual(calls.length, 102, 'oldest unique event should be evicted once the cache exceeds 100');
+  } finally {
+    Date.now = originalNow;
+  }
+  console.log('✓ unique-event bursts retain at most 100 dedupe keys');
+}
+
+async function testRefreshedUiEventRetainsRecency() {
+  console.log('\n--- Test: refreshed UI event retains cache recency ---');
+  const originalNow = Date.now;
+  let now = 1_000;
+  const calls = [];
+  Date.now = () => now;
+  try {
+    const track = createUiEventTracker(
+      async (_name, args) => { calls.push(args); return {}; },
+      { component: 'test-widget' },
+    );
+
+    // The oldest key expires before any of the other 99 entries.
+    // After refreshing it, a 101st entry must evict an older key instead.
+    track('click', { index: 0 }); // t=1000
+    now = 1_100;
+    for (let index = 1; index < 100; index++) track('click', { index });
+    now = 1_251; // key 0 expired; keys 1-99 are still within the window
+    track('click', { index: 0 }); // refresh accepted, now should be newest
+    track('click', { index: 100 }); // capacity eviction must spare key 0
+    const acceptedCalls = calls.length;
+    track('click', { index: 0 }); // immediate duplicate of refreshed entry
+    assert.strictEqual(calls.length, acceptedCalls, 'recently refreshed event must remain suppressed');
+  } finally {
+    Date.now = originalNow;
+  }
+  console.log('✓ renewed cache keys retain their recency during eviction');
+}
+
 export default async function runTests() {
   try {
     await testTrackUiEventCall();
     await testTrackUiEventPayloadCollisionProtection();
+    await testConcurrentWidgetCallsAreCoalesced();
+    await testSequentialWidgetCallsRunAgain();
+    await testCanonicalWidgetCallKeys();
+    await testDuplicateUiEventsAreSuppressed();
+    await testUiEventCacheStaysBounded();
+    await testRefreshedUiEventRetainsRecency();
     console.log('\n✅ UI event tracking tests passed!');
     return true;
   } catch (error) {
