@@ -343,9 +343,35 @@ Add to `~/.codeium/windsurf/mcp_config.json`. See [Windsurf MCP docs](https://do
 <details>
 <summary><b>VS Code / GitHub Copilot</b></summary>
 
-Add to `.vscode/mcp.json` in your project or VS Code User Settings (JSON). Make sure MCP is enabled under Chat > MCP. Works in Agent mode.
+For the current GitHub Copilot harness, put the standard `mcpServers` configuration above in a workspace-root `.mcp.json`. For VS Code, use its `.vscode/mcp.json` or user-profile `mcp.json` format:
 
-See [VS Code MCP docs](https://code.visualstudio.com/docs/copilot/chat/mcp-servers) for more info.
+```json
+{
+  "servers": {
+    "desktop-commander": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@wonderwhy-er/desktop-commander@latest"]
+    }
+  }
+}
+```
+
+The portable `.mcp.json` format uses `mcpServers`; the VS Code format uses `servers` and requires `type: "stdio"` for a local stdio server.
+
+The MCP configuration starts Desktop Commander; it does not automatically set Desktop Commander's file-tool scope to the currently open workspace. That scope is configured separately with the persistent `allowedDirectories` guardrail. An empty array (`[]`) leaves file tools unrestricted, and terminal commands are not restricted by `allowedDirectories`.
+
+To restrict file tools to a Windows workspace, change the setting in a separate configuration chat and verify it before continuing work:
+
+```javascript
+get_config({})
+set_config_value({ "key": "allowedDirectories", "value": ["C:\\Users\\username\\source\\my-project"] })
+get_config({})
+```
+
+Use absolute paths. The setting persists across server restarts and is not derived from the VS Code workspace MCP configuration.
+
+See [VS Code MCP docs](https://code.visualstudio.com/docs/agent-customization/mcp-servers) and the [MCP configuration reference](https://code.visualstudio.com/docs/agents/reference/mcp-configuration) for more info.
 
 </details>
 
@@ -853,7 +879,7 @@ set_config_value({ "key": "defaultShell", "value": "/bin/bash" })
 set_config_value({ "key": "allowedDirectories", "value": ["/Users/username/projects"] })
 ```
 
-The configuration is saved to `config.json` in the server's working directory and persists between server restarts.
+The configuration is saved to `~/.claude-server-commander/config.json` (on Windows, `%USERPROFILE%\.claude-server-commander\config.json`) and persists between server restarts.
 
 #### Understanding fileWriteLineLimit
 
