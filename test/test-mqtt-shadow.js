@@ -5,6 +5,8 @@ import { EventEmitter } from 'node:events';
 for (const key of Object.keys(process.env)) if (key.startsWith('MQTT_')) delete process.env[key];
 process.env.DESKTOP_COMMANDER_DISABLE_TELEMETRY = '1';
 const { RemoteChannel } = await import('../dist/remote-device/remote-channel.js');
+const { rolloutManager } = await import('../dist/remote-device/rollouts.js');
+rolloutManager.update({ MQTT_TRANSPORT_ENABLED: true });
 const { MqttTransport } = await import('../dist/remote-device/mqtt/mqtt-transport.js');
 const { observeTransport } = await import('../dist/remote-device/transport-telemetry.js');
 const settle = async () => { for (let i = 0; i < 20; i++) await Promise.resolve(); };
@@ -40,6 +42,7 @@ function fixture() {
     assert.equal(mqtt, 1, 'MQTT starts exactly once');
     assert.equal(enrollments, 1);
     assert.equal(f.broadcasts(), 1);
+    await f.channel.unsubscribe();
 }
 // A transient initial Broadcast join failure must not permanently skip shadow startup.
 {
@@ -51,6 +54,7 @@ function fixture() {
     await assert.rejects(f.channel.registerDevice({}, 'device', 'fixture', () => {}), /Broadcast join failed/);
     await settle();
     assert.equal(mqtt, 1);
+    await f.channel.unsubscribe();
 }
 for (const failAt of ['enrollment', 'broker']) {
     const f = fixture();
@@ -59,6 +63,7 @@ for (const failAt of ['enrollment', 'broker']) {
     await f.channel.registerDevice({}, 'device', 'fixture', () => {});
     await settle();
     assert.equal(f.broadcasts(), 1);
+    await f.channel.unsubscribe();
 }
 // A failed MQTT capability write must not withdraw healthy Broadcast on cleanup.
 for (const failure of ['response', 'rejection']) {

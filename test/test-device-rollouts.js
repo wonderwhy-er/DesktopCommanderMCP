@@ -186,6 +186,48 @@ async function runTests() {
     await test(rule.name, () => checkRule(rule));
   }
 
+  await test('named listeners receive startup, call-row and refresh changes, and can unsubscribe', async () => {
+    rolloutManager.update({});
+    const changes = [];
+    const remove = rolloutManager.onChange('check', enabled => changes.push(enabled));
+    try {
+      mock.timers.enable({ apis: ['setInterval', 'setTimeout'] });
+      const server = fakeServer(rollouts(ON));
+      await rolloutManager.load(SERVER, async () => 'token');
+      rolloutManager.startRefresh();
+      rolloutManager.update({ check: true, other: true });
+      rolloutManager.update({ check: 'invalid' });
+      rolloutManager.update({ check: false });
+      rolloutManager.update({});
+      server.answer = rollouts(ON);
+      await wait(30 * MINUTE);
+      server.answer = status(500);
+      await wait(30 * MINUTE);
+      rolloutManager.update({});
+      assert.deepStrictEqual(changes, [true, false, true, false]);
+      remove();
+      rolloutManager.update(ON);
+      assert.deepStrictEqual(changes, [true, false, true, false], 'a removed listener is not called');
+    } finally {
+      remove();
+    }
+  });
+
+  await test('a failing listener does not prevent other listeners or a rollout update', async () => {
+    rolloutManager.update({});
+    const changes = [];
+    const removeFailing = rolloutManager.onChange('check', () => { throw Error('listener failed'); });
+    const removeHealthy = rolloutManager.onChange('check', enabled => changes.push(enabled));
+    try {
+      assert.doesNotThrow(() => rolloutManager.update(ON));
+      assert.deepStrictEqual(changes, [true]);
+      assert.strictEqual(rolloutManager.get('check'), true);
+    } finally {
+      removeFailing();
+      removeHealthy();
+    }
+  });
+
   await test('the device asks again every 30 minutes, not sooner, until the refresh is stopped', async () => {
     mock.timers.enable({ apis: ['setInterval', 'setTimeout'] });
     const server = fakeServer(rollouts(ON));

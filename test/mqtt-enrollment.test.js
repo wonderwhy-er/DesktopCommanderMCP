@@ -14,6 +14,8 @@ process.env.DESKTOP_COMMANDER_DISABLE_TELEMETRY = '1';
 const { enrollMqttDevice } = await import('../dist/remote-device/mqtt/mqtt-enrollment.js');
 const { getRemoteDeviceConfigDirectory } = await import('../dist/remote-device/remote-utils.js');
 const { RemoteChannel } = await import('../dist/remote-device/remote-channel.js');
+const { rolloutManager } = await import('../dist/remote-device/rollouts.js');
+rolloutManager.update({ MQTT_TRANSPORT_ENABLED: true });
 const USER_ID = '11111111-1111-4111-8111-111111111111';
 const DEVICE_ID = '22222222-2222-4222-8222-222222222222';
 const SKIPPED_REVOCATION_DEBUG = '[MQTT] Previous credentials cannot be identified on this backend; continuing with fresh enrollment. The old certificate may remain active.';
@@ -670,7 +672,7 @@ try {
         });
         const startMqtt = channel.startMqtt.bind(channel);
         let mqttStartup;
-        channel.startMqtt = assertCurrent => (mqttStartup = startMqtt(assertCurrent));
+        channel.startMqtt = () => (mqttStartup = startMqtt());
         await channel.registerDevice({}, deviceId, 'test', () => {});
         assert.deepEqual(order, ['broadcast']);
         await mqttStartup;
@@ -696,7 +698,7 @@ try {
     });
     const startMqtt = channel.startMqtt.bind(channel);
     let mqttStartup;
-    channel.startMqtt = assertCurrent => (mqttStartup = startMqtt(assertCurrent));
+    channel.startMqtt = () => (mqttStartup = startMqtt());
     await channel.registerDevice({}, DEVICE_ID, 'test', () => {});
     await assert.rejects(mqttStartup, /connection failure/);
     assert.equal(stopped, 1);
@@ -717,7 +719,7 @@ try {
     });
     const startMqtt = channel.startMqtt.bind(channel);
     let mqttStartup;
-    channel.startMqtt = assertCurrent => (mqttStartup = startMqtt(assertCurrent));
+    channel.startMqtt = () => (mqttStartup = startMqtt());
     await withFetch(async () => new Response('{}', { status: 404 }), async () => {
       await channel.registerDevice({}, DEVICE_ID, 'test', () => {});
       assert.equal(broadcasts, 1);
@@ -739,7 +741,7 @@ try {
     });
     const startMqtt = channel.startMqtt.bind(channel);
     let mqttStartup;
-    channel.startMqtt = assertCurrent => (mqttStartup = startMqtt(assertCurrent));
+    channel.startMqtt = () => (mqttStartup = startMqtt());
     await withFetch(async (_url, request) => {
       const certificate = issue(JSON.parse(request.body).csr);
       await channel.unsubscribe();
