@@ -27,6 +27,7 @@ type Rollouts = Record<string, boolean>;
  */
 class RolloutManager {
     private rollouts: Rollouts = {};
+    private listeners = new Set<{ name: string; callback: (enabled: boolean) => void }>();
     private serverUrl = '';
     private getToken: () => Promise<string | null> = async () => null;
     private refreshInterval: NodeJS.Timeout | null = null;
@@ -73,6 +74,13 @@ class RolloutManager {
         return { ...this.rollouts };
     }
 
+    /** Listen for a named rollout changing; a missing rollout is off. Returns a cleanup function. */
+    onChange(name: string, callback: (enabled: boolean) => void): () => void {
+        const listener = { name, callback };
+        this.listeners.add(listener);
+        return () => { this.listeners.delete(listener); };
+    }
+
     private async refresh(): Promise<void> {
         const callRowUpdatesBefore = this.callRowUpdates;
         const rollouts = await this.request();
@@ -100,8 +108,18 @@ class RolloutManager {
 
     private replace(rollouts: Rollouts): void {
         if (JSON.stringify(rollouts) === JSON.stringify(this.rollouts)) return;
+        const previous = this.rollouts;
         this.rollouts = { ...rollouts };
         console.debug('Rollouts:', this.getAll());
+        for (const { name, callback } of this.listeners) {
+            const enabled = this.rollouts[name] ?? false;
+            if (enabled === (previous[name] ?? false)) continue;
+            try {
+                callback(enabled);
+            } catch {
+                console.debug('[Rollouts] Change listener failed:', name);
+            }
+        }
     }
 }
 
