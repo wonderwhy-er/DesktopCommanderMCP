@@ -212,7 +212,9 @@ export const StartSearchArgsSchema = z.object({
   contextLines: wholeNumber('contextLines', 0).optional().default(5),
   timeout_ms: wholeNumber('timeout_ms', 0).optional(), // Match process naming convention; 0: no time limit
   earlyTermination: z.boolean().optional(), // Stop search early when exact filename match is found (default: true for files, false for content)
-  literalSearch: z.boolean().optional().default(false), // Force literal string matching (-F flag) instead of regex
+  // Content text: fixed-string (-F) instead of regex. File names: treat glob metacharacters literally.
+  // Excel/DOCX content is always literal substring matching regardless of this flag.
+  literalSearch: z.boolean().optional().default(false),
   // 'ui' marks widget-fired calls (e.g. markdown link-target search);
   // excluded from tool-call telemetry (see isUiOriginCall in server.ts).
   origin: z.enum(['ui', 'llm']).optional(),
