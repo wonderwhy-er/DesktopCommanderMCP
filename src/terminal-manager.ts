@@ -191,6 +191,7 @@ export class TerminalManager {
     // Spawn the process with appropriate arguments
     const childProcess = spawn(spawnConfig.executable, spawnConfig.args, spawnOptions);
     let output = '';
+    let waitOutputTruncated = false;
 
     // spawn() reports failure asynchronously via an 'error' event; it does not
     // throw. Node rethrows an 'error' that has no listener as an uncaught
@@ -269,6 +270,9 @@ export class TerminalManager {
         // the exit leaves no session behind, so the text it returns is judged.
         const result: ProcessStartResult = {
           ...waitResult,
+          output: waitOutputTruncated
+            ? '[Earlier output was truncated. Use read_process_output to retrieve buffered output; some earlier output may no longer be retained.]\n' + waitResult.output
+            : waitResult.output,
           processState: this.getProcessState(childProcess.pid!) ?? analyzeProcessState(waitResult.output)
         };
 
@@ -325,6 +329,7 @@ export class TerminalManager {
           output += text;
           if (output.length > MAX_WAIT_OUTPUT_CHARS) {
             output = output.slice(-Math.floor(MAX_WAIT_OUTPUT_CHARS / 2));
+            waitOutputTruncated = true;
           }
         }
         this.recordOutput(session, 'stdout', text);
@@ -367,6 +372,7 @@ export class TerminalManager {
           output += text;
           if (output.length > MAX_WAIT_OUTPUT_CHARS) {
             output = output.slice(-Math.floor(MAX_WAIT_OUTPUT_CHARS / 2));
+            waitOutputTruncated = true;
           }
         }
         this.recordOutput(session, 'stderr', text);
