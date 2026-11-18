@@ -303,6 +303,7 @@ function shouldIncludeTool(toolName: string): boolean {
     return true;
 }
 
+/** Advertise the available tools and their settings so clients can form valid requests. */
 server.setRequestHandler(ListToolsRequestSchema, async () => {
     try {
         // logToStderr('debug', 'Generating tools list...');
@@ -321,6 +322,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         - fileReadLineLimit (max lines for read_file, default 1000)
                         - fileWriteLineLimit (max lines per write_file call, default 50)
                         - telemetryEnabled (boolean for telemetry opt-in/out)
+                        - toolCallAuditLogEnabled (boolean for writing tool calls to claude_tool_call.log and tool-history.jsonl, default true)
                         - currentClient (information about the currently connected MCP client)
                         - clientHistory (history of all clients that have connected)
                         - version (version of the DesktopCommander)
@@ -350,6 +352,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         - fileReadLineLimit (number, max lines for read_file)
                         - fileWriteLineLimit (number, max lines per write_file call)
                         - telemetryEnabled (boolean)
+                        - toolCallAuditLogEnabled (boolean, writes tool calls to claude_tool_call.log and tool-history.jsonl)
                         
                         IMPORTANT: Setting allowedDirectories to an empty array ([]) allows full access 
                         to the entire file system, regardless of the operating system.
@@ -1107,7 +1110,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         - Debugging tool call sequences
                         
                         Note: Does not track its own calls or track_ui_event.
-                        History is persisted locally in tool-history.jsonl, keeps up to the last 1000
+                        History is persisted locally in tool-history.jsonl (not while toolCallAuditLogEnabled is false), keeps up to the last 1000
                         calls in memory, and trims older on-disk history. Stored outputs over 4 KiB
                         are replaced with an omission marker.
                         
@@ -1438,7 +1441,10 @@ async function handleCallToolRequest(request: CallToolRequest): Promise<ServerRe
         ];
 
         if (!EXCLUDED_TOOLS.includes(name)) {
-            toolHistory.addCall(name, args, result, duration);
+            // A failed audit-setting read must not reject an otherwise successful tool call.
+            void toolHistory.addCall(name, args, result, duration).catch((error) => {
+                console.error('Error recording tool call history:', error);
+            });
         }
 
         // Track success or failure based on result
