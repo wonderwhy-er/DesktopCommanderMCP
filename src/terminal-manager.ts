@@ -4,7 +4,7 @@ import { DEFAULT_COMMAND_TIMEOUT, MAX_PROCESS_WAIT_MS } from './config.js';
 import { configManager, type ServerConfig } from './config-manager.js';
 import {capture} from "./utils/capture.js";
 import { analyzeProcessState, STATE_DETECTION_TAIL_CHARS, type ProcessState } from './utils/process-detection.js';
-import { getCommandShell, getShellEnvironment, getShellSpawnArgs, type ShellSpawnConfig } from './utils/shell.js';
+import { getCommandShell, getInputShell, getShellEnvironment, getShellSpawnArgs, type ShellSpawnConfig } from './utils/shell.js';
 import { terminateProcessTree } from './utils/process-tree.js';
 
 /** A child process's output pipes. */
@@ -26,6 +26,7 @@ function newStreamTails(): StreamTails {
 /** An active session plus the per-stream tails that state detection reads. */
 interface ManagedSession extends TerminalSession {
   streams: StreamTails;
+  inputShell: string;  // The shell that reads input sent to the process (see getInputShell)
   termination?: Promise<boolean>;  // The forceTerminate in progress (or done); calls meanwhile await it, a failed one is dropped
 }
 
@@ -116,6 +117,11 @@ export class TerminalManager {
   private completedSessions: Map<number, CompletedSession> = new Map();
   private deliveryTurn = 0;
   private deliveryTurnOpen = false;
+
+  /** The shell that reads input sent to a running process, if it is one this manager started */
+  getInputShell(pid: number): string | undefined {
+    return this.sessions.get(pid)?.inputShell;
+  }
 
   /**
    * Send input to a running process
@@ -236,7 +242,8 @@ export class TerminalManager {
       bufferedChars: 0,
       evictedLines: 0,
       evictedChars: 0,
-      streams: newStreamTails()
+      streams: newStreamTails(),
+      inputShell: getInputShell(command, shellToUse)
     };
 
     this.sessions.set(childProcess.pid, session);
