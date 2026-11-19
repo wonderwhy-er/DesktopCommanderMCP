@@ -52,6 +52,7 @@ This document provides answers to the most commonly asked questions about Claude
 
 - [Troubleshooting](#troubleshooting)
   - [Claude says it doesn't have permission to access my files/directories](#claude-says-it-doesnt-have-permission-to-access-my-filesdirectories)
+  - [XML tags look changed when read in Claude Desktop](#xml-tags-look-changed-when-read-in-claude-desktop)
   - [Claude keeps hitting token/output limits](#claude-keeps-hitting-tokenoutput-limits)
   - [Installation fails on my system](#installation-fails-on-my-system)
 
@@ -484,6 +485,12 @@ Recent updates have removed directory restrictions. If you're still experiencing
 2. Restart Claude Desktop completely
 3. When Claude asks for permission to use tools, approve for the entire chat
 4. Check if there are any specific permission issues with the directory in question (file permissions, etc.)
+
+### XML tags look changed when read in Claude Desktop
+
+Issue #272 reports a case where an XML `<Name>` element appeared as `<n>` after being read through Desktop Commander in Claude Desktop. A direct MCP stdio check against current Desktop Commander preserves `<Name>` unchanged in the `read_file` tool result, so the reported transformation has not been reproduced in the server response itself.
+
+If exact XML spelling matters, verify the raw file before writing changes. A byte-safe representation such as hex or base64 can also help distinguish file contents from how a client renders or presents tool output. When reporting a similar case, include the Desktop Commander version, MCP client/version, and the smallest non-sensitive XML example. If your MCP client exposes the raw tool result, also note whether that result differs from the client/model-visible text.
 
 ### Claude keeps hitting token/output limits
 
