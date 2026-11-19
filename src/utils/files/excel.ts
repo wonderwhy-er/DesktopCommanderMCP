@@ -63,13 +63,16 @@ export class ExcelFileHandler implements FileHandler {
             options?.length
         );
 
-        // Format output with sheet info header, usage hint, and JSON data.
-        // No rows while there are some means the offset starts past the end.
-        const paginationInfo = totalRows <= returnedRows
-            ? ''
-            : returnedRows > 0
-            ? `\n[Showing rows ${firstRow}-${firstRow + returnedRows - 1} of ${totalRows} total. Use offset/length to paginate.]`
-            : `\n[No rows returned: row ${firstRow} is past the end (${totalRows} rows total). Use offset/length to paginate.]`;
+        let paginationInfo = '';
+        if (totalRows > returnedRows) {
+            let paginationStatus = `No rows returned (${totalRows} rows total)`;
+            if (returnedRows > 0) {
+                paginationStatus = `Showing rows ${firstRow}-${firstRow + returnedRows - 1} of ${totalRows} total`;
+            } else if (firstRow > totalRows) {
+                paginationStatus = `No rows returned: row ${firstRow} is past the end (${totalRows} rows total)`;
+            }
+            paginationInfo = `\n[${paginationStatus}. Use offset/length to paginate.]`;
+        }
 
         const sheetHasSpace = /\s/.test(sheetName);
         const exampleSheet = sheetHasSpace ? sheetName : 'Sheet1';
@@ -443,7 +446,7 @@ ${JSON.stringify(data)}`;
         }
 
         // Apply length limit (only for positive offset or no offset)
-        if (length !== undefined && length > 0 && (offset === undefined || offset >= 0)) {
+        if (length !== undefined && length >= 0 && (offset === undefined || offset >= 0)) {
             endRow = Math.min(endRow, startRow + length - 1);
         }
 
