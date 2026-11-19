@@ -129,6 +129,15 @@ export function getCommandEnvironment(): NodeJS.ProcessEnv {
     if (!process.env.ProgramData && drive) {
       env.ProgramData = path.win32.join(drive, '\\', 'ProgramData');
     }
+    // Older MCP SDK Windows stdio safelists can omit WINDIR while retaining
+    // SystemRoot (#623). Restore only that upstream-known gap when the inherited
+    // value is unusable, keeping one canonical key in the child environment.
+    if (!process.env.WINDIR && process.env.SystemRoot) {
+      for (const key of Object.keys(env)) {
+        if (key.toUpperCase() === 'WINDIR') delete env[key];
+      }
+      env.WINDIR = process.env.SystemRoot;
+    }
   }
   return env;
 }
