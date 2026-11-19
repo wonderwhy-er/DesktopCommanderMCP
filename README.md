@@ -1142,7 +1142,11 @@ Desktop Commander collects limited, pseudonymous telemetry to improve the tool. 
 
 This is separate from the [local tool history and audit logs](#local-tool-history-and-audit-logs), which stay on the machine running Desktop Commander and may contain tool arguments and bounded result previews.
 
-**Opt-out:** Ask Claude to "disable Desktop Commander telemetry" or set `"telemetryEnabled": false` in your config.
+**Opt-out:** Ask Claude to "disable Desktop Commander telemetry" or set `"telemetryEnabled": false` in your config. This disables telemetry events, but not non-telemetry operational network requests.
+
+**Operational network requests:** These are separate from telemetry and still occur when `telemetryEnabled` is `false`:
+- By default, Desktop Commander fetches a public feature-flag document from `https://desktopcommander.app/flags/v2/production.json` during startup and refreshes it periodically. The endpoint can be overridden with `DC_FLAG_URL`. The application request does not include file contents, file paths, command arguments, or the telemetry client ID.
+- After MCP initialization, Desktop Commander checks for a compatible Chrome installation used by `write_pdf`. If no compatible cached or system Chrome is found, it resolves and downloads a stable Chrome build in the background through `@puppeteer/browsers`.
 
 For complete details, see our [Privacy Policy](PRIVACY.md).
 
