@@ -9,6 +9,7 @@ export interface UiChromeState {
 export interface ConnectWithSharedHostContextOptions {
     app: App;
     chrome: UiChromeState;
+    alreadyConnected?: boolean;
     onContextApplied?: () => void;
     onConnected?: () => void | Promise<void>;
 }
@@ -65,7 +66,7 @@ export async function connectWithSharedHostContext(options: ConnectWithSharedHos
         onContextApplied?.();
     };
 
-    await app.connect();
+    if (!options.alreadyConnected) await app.connect();
 
     const hostContext = app.getHostContext();
     if (hostContext) {
