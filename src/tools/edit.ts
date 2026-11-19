@@ -158,36 +158,66 @@ export async function performSearchReplace(filePath: string, block: SearchReplac
     // Detect file's line ending style
     const fileLineEnding = detectLineEnding(content);
     
-    // Normalize search string to match file's line endings
+    // Prefer the caller's bytes when they already match the requested count.
+    // In mixed-line-ending files, global normalization can hide a real exact
+    // match. If the raw form has the wrong occurrence count, fall back to the
+    // historical normalized-match path instead.
     const normalizedSearch = normalizeLineEndings(block.search, fileLineEnding);
-    
-    // First try exact match
-    let tempContent = content;
-    let count = 0;
-    let pos = tempContent.indexOf(normalizedSearch);
-    
-    // Count the matches a replacement changes: they can't overlap, so the next
-    // search starts after this match (split/join below replaces the same ones)
-    while (pos !== -1) {
-        count++;
-        pos = tempContent.indexOf(normalizedSearch, pos + normalizedSearch.length);
+    const analyzeOccurrences = (search: string): { positions: number[]; totalCount: number; splitsCrlf: boolean } => {
+        if (search.length === 0) return { positions: [], totalCount: 0, splitsCrlf: false };
+        const positions: number[] = [];
+        let totalCount = 0;
+        let splitsCrlf = false;
+        let pos = content.indexOf(search);
+        while (pos !== -1) {
+            totalCount++;
+            const end = pos + search.length;
+            const startsInsideCrlf = pos > 0 && content[pos - 1] === '\r' && content[pos] === '\n';
+            const endsInsideCrlf = end < content.length && content[end - 1] === '\r' && content[end] === '\n';
+            if (startsInsideCrlf || endsInsideCrlf) {
+                splitsCrlf = true;
+            } else {
+                positions.push(pos);
+            }
+            pos = content.indexOf(search, end);
+        }
+        return { positions, totalCount, splitsCrlf };
+    };
+
+    const rawAnalysis = analyzeOccurrences(block.search);
+    let exactSearch = block.search;
+    let exactPositions = rawAnalysis.positions;
+
+    // The raw form is safe only when it satisfies the requested count without
+    // starting or ending inside a CRLF pair. Otherwise keep the historical
+    // normalized path, but retain only normalized matches that are themselves
+    // CRLF-safe so fallback normalization cannot split a pair either.
+    if ((rawAnalysis.totalCount !== expectedReplacements || rawAnalysis.splitsCrlf)
+        && normalizedSearch !== block.search) {
+        exactSearch = normalizedSearch;
+        exactPositions = analyzeOccurrences(normalizedSearch).positions;
+    } else if (rawAnalysis.splitsCrlf) {
+        // No distinct normalized form exists, so do not perform a raw exact edit
+        // that would corrupt a CRLF pair. Let the existing fuzzy path decide.
+        exactPositions = [];
     }
+    const count = exactPositions.length;
+
+    const replacementLineEnding = /[\r\n]/.test(exactSearch)
+        ? detectLineEnding(exactSearch)
+        : fileLineEnding;
     
     // If exact match found and count matches expected replacements, proceed with exact replacement
     if (count > 0 && count === expectedReplacements) {
-        // Replace all occurrences
+        // Replace only the CRLF-safe occurrences selected above. Work backwards so
+        // earlier recorded positions remain valid even when replacement length changes.
         let newContent = content;
-        
-        // If we're only replacing one occurrence, replace it directly
-        if (expectedReplacements === 1) {
-            const searchIndex = newContent.indexOf(normalizedSearch);
-            newContent = 
-                newContent.substring(0, searchIndex) + 
-                normalizeLineEndings(block.replace, fileLineEnding) + 
-                newContent.substring(searchIndex + normalizedSearch.length);
-        } else {
-            // Replace all occurrences using split and join for multiple replacements
-            newContent = newContent.split(normalizedSearch).join(normalizeLineEndings(block.replace, fileLineEnding));
+        const normalizedReplacement = normalizeLineEndings(block.replace, replacementLineEnding);
+        for (const searchIndex of [...exactPositions].reverse()) {
+            newContent =
+                newContent.substring(0, searchIndex) +
+                normalizedReplacement +
+                newContent.substring(searchIndex + exactSearch.length);
         }
         
         // Check if search or replace text has too many lines
@@ -210,7 +240,7 @@ RECOMMENDATION: For large search/replace operations, consider breaking them into
         // Show a partial preview centered on the edited area
         const newLines = newContent.split('\n');
         const totalLines = newLines.length;
-        const changePos = content.indexOf(normalizedSearch);
+        const changePos = exactPositions[0] ?? -1;
         const changeStartLine = changePos >= 0 ? newContent.substring(0, changePos).split('\n').length - 1 : 0;
         const changeLineCount = block.replace.split('\n').length;
         const contextLines = 10;
