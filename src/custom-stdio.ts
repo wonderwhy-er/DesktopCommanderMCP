@@ -1,4 +1,5 @@
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import type { JSONRPCMessage } from "@modelcontextprotocol/sdk/types.js";
 import process from "node:process";
 
 interface LogNotification {
@@ -32,6 +33,10 @@ export class FilteredStdioServerTransport extends StdioServerTransport {
   }> = [];
   private clientName: string = 'unknown';
   private disableNotifications: boolean = false;
+  // The SDK adds one stdout 'drain' listener for every send that hits
+  // backpressure. Keep SDK transport sends ordered through a single chain so
+  // long sessions cannot accumulate many concurrent drain listeners on stdout.
+  private sendQueue: Promise<void> = Promise.resolve();
 
   constructor() {
     super();
@@ -55,6 +60,13 @@ export class FilteredStdioServerTransport extends StdioServerTransport {
     
     // Note: We defer the initialization notification until enableNotifications() is called
     // to ensure MCP protocol compliance - notifications must not be sent before initialization
+  }
+
+  override send(message: JSONRPCMessage): Promise<void> {
+    const pending = this.sendQueue.then(() => super.send(message));
+    // A failed write must reject its own caller without poisoning later sends.
+    this.sendQueue = pending.catch(() => {});
+    return pending;
   }
 
   /**
