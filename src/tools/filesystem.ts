@@ -203,8 +203,8 @@ async function probeCaseInsensitive(dir: string): Promise<boolean | null> {
  * case-sensitive APFS volume, a case-sensitive Windows directory or a
  * case-insensitive mount on Linux are all read correctly. Cached per directory
  * while its device and inode stay the same (a remount probes again).
- * When neither probe can answer, only Windows (case-insensitive by default)
- * folds case; elsewhere comparison stays exact, which can only deny access.
+ * When neither probe can answer, comparison stays exact (case-sensitive), which
+ * can only deny access, never widen it. The platform name is not used.
  */
 async function isCaseInsensitiveDir(dir: string): Promise<boolean> {
     const { dev, ino } = await fs.stat(dir, { bigint: true });
@@ -218,7 +218,7 @@ async function isCaseInsensitiveDir(dir: string): Promise<boolean> {
         insensitive: probeCaseInsensitive(dir).then((answer) => {
             if (answer !== null) return answer;
             if (caseProbes.get(dir) === probe) caseProbes.delete(dir);
-            return process.platform === 'win32';
+            return false;
         }),
     };
     caseProbes.set(dir, probe);
