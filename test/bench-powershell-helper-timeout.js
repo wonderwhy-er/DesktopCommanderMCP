@@ -25,7 +25,10 @@ if (!shell) {
 const commands = [
   { name: '100 repeated known names', script: Array(100).fill("Write-Output 'fixture'").join('\n') },
   { name: '100 distinct missing names', script: Array.from({ length: 100 }, (_, i) => `DCTestNoSuchCommand_${String(i).padStart(4, '0')}`).join('\n') },
-  { name: '150 distinct missing names', script: Array.from({ length: 150 }, (_, i) => `DCTestNoSuchCommand_${String(i).padStart(4, '0')}`).join('\n') },
+  ...[150, 300, 600, 1200].map((count) => ({
+    name: `${count} distinct missing names`,
+    script: Array.from({ length: count }, (_, i) => `DCTestNoSuchCommand_${String(i).padStart(4, '0')}`).join('\n'),
+  })),
 ];
 
 console.log(`PowerShell helper diagnostic; shell=${shell}; warm deadline=${HELPER_TIMEOUT_MS}ms`);
@@ -52,9 +55,8 @@ for (const item of commands) {
   }
 }
 console.table(results);
-const last = results.at(-1);
 if (process.argv.includes('--require-repro')) {
-  assert.match(last.outcome, /PowerShell did not answer in 5 seconds/,
-    'The 150-name case did not reproduce on this machine; this is environment-dependent');
+  assert.ok(results.some((row) => row.outcome.includes('PowerShell did not answer in 5 seconds')),
+    'None of the synthetic cases hit the five-second deadline; this is environment-dependent');
 }
 console.log('No requested command was executed; timeout still fails closed.');
