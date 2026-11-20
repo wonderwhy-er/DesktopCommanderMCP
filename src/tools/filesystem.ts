@@ -174,18 +174,13 @@ async function probeWithFile(dir: string): Promise<boolean> {
     }
 }
 
-/** Read-only fallback: looks up `dir`'s own name (or its nearest ancestor with letters) with its case swapped */
+/** Read-only fallback: looks up `dir`'s own name with its case swapped. An ancestor's name says nothing about `dir`, so without letters in its own name there is no answer */
 async function probeWithName(dir: string): Promise<boolean | null> {
-    let current = dir;
-    while (path.dirname(current) !== current) {
-        const base = path.basename(current);
-        const swapped = swapCase(base);
-        if (swapped !== base) {
-            return sameEntry(current, path.join(path.dirname(current), swapped));
-        }
-        current = path.dirname(current);
-    }
-    return null;
+    if (path.dirname(dir) === dir) return null;
+    const base = path.basename(dir);
+    const swapped = swapCase(base);
+    if (swapped === base) return null;
+    return sameEntry(dir, path.join(path.dirname(dir), swapped));
 }
 
 /** null when neither probe can answer */

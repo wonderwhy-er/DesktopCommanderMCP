@@ -35,10 +35,11 @@ function patchFs(name, wrap) {
 }
 
 /** Counts case-probe files created in `dir` */
-function countProbes(dir) {
+function countProbes(dir, realDir) {
   const counter = { count: 0 };
   counter.restore = patchFs('writeFile', (original) => (file, ...rest) => {
-    if (path.dirname(String(file)) === dir && path.basename(String(file)).startsWith(PROBE_PREFIX)) {
+    const parent = path.dirname(String(file));
+    if ((parent === dir || parent === realDir) && path.basename(String(file)).startsWith(PROBE_PREFIX)) {
       counter.count++;
     }
     return original(file, ...rest);
@@ -98,7 +99,7 @@ async function runTests() {
 
     // No regression: the exact allowed path still works
     const okPath = await validatePath(path.join(allowed, 'ok.txt'));
-    assert.ok(String(okPath).startsWith(allowed), `allowed path must still validate (got ${okPath})`);
+    assert.ok(String(okPath).startsWith(await fs.realpath(allowed)), `allowed path must still validate (got ${okPath})`);
     console.log('OK: exact-case allowed path still validates');
 
     // No probe file is left behind in the allowed directory
@@ -130,7 +131,7 @@ async function runTests() {
     await configManager.setValue('allowedDirectories', [cached]);
     const otherSpelling = path.join(root, 'cached', 'x.txt');
     const validateOtherSpelling = () => validatePath(otherSpelling).catch(() => {});
-    const probes = countProbes(cached);
+    const probes = countProbes(cached, await fs.realpath(cached));
     try {
       await validateOtherSpelling();
       assert.strictEqual(probes.count, 1, 'first check must probe the allowed directory');
