@@ -22,7 +22,11 @@ if (!shell) {
   process.exit(0);
 }
 
+const commonNames = ['Get-ChildItem', 'Where-Object', 'Write-Output', 'Join-Path', 'Test-Path'];
 const commands = [
+  { name: '20 ordinary cmdlets', script: Array.from({ length: 20 }, (_, i) => `${commonNames[i % 5]} 'fixture'`).join('\n') },
+  { name: '100 calls to 5 common cmdlets', script: Array.from({ length: 100 }, (_, i) => `${commonNames[i % 5]} 'fixture'`).join('\n') },
+  { name: '100 calls to 5 missing names', script: Array.from({ length: 100 }, (_, i) => `DCTestNoSuchCommand_${i % 5}`).join('\n') },
   { name: '100 repeated known names', script: Array(100).fill("Write-Output 'fixture'").join('\n') },
   { name: '100 distinct missing names', script: Array.from({ length: 100 }, (_, i) => `DCTestNoSuchCommand_${String(i).padStart(4, '0')}`).join('\n') },
   ...[150, 300, 600, 1200].map((count) => ({
