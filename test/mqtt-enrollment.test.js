@@ -765,6 +765,66 @@ try {
     await assert.rejects(stat(path.join(mqttFolder(), 'certificate.json')), { code: 'ENOENT' });
   });
 
+  // Certificate renewal at startup: a cached certificate that expired, or that is past two
+  // thirds of its lifetime, goes through the existing revoke-and-replace path.
+  const HOUR = 3_600_000;
+  /** Replace the cached certificate with one for the same key, valid between the two offsets from now. */
+  async function cacheCertificateValid(fromMs, toMs) {
+    const saved = await cache();
+    const publicKey = createPublicKey(saved.identity.private_key).export({ format: 'pem', type: 'spki' });
+    const certificate = forge.pki.createCertificate();
+    certificate.publicKey = forge.pki.publicKeyFromPem(publicKey);
+    certificate.serialNumber = (++certificateNumber).toString(16).padStart(2, '0');
+    certificate.validity.notBefore = new Date(Date.now() + fromMs);
+    certificate.validity.notAfter = new Date(Date.now() + toMs);
+    certificate.setSubject([{ name: 'commonName', value: `dc-device-${DEVICE_ID}` }]);
+    certificate.setIssuer([{ name: 'commonName', value: 'Local enrollment QA CA' }]);
+    certificate.setExtensions([
+      { name: 'basicConstraints', cA: false },
+      { name: 'keyUsage', digitalSignature: true },
+      { name: 'extKeyUsage', clientAuth: true },
+    ]);
+    certificate.sign(caKey, forge.md.sha256.create());
+    const replaced = { ...saved.certificate, certificate_pem: forge.pki.certificateToPem(certificate) };
+    await writeFile(path.join(saved.folder, 'certificate.json'), JSON.stringify(replaced));
+    return saved;
+  }
+  /** Enroll, age the cached certificate, start again, and return the requests the second start sent. */
+  async function restartWithCachedCertificate(fromMs, toMs) {
+    const profile = options();
+    const issueForRequest = async (_url, request) => Response.json(issue(JSON.parse(request.body).csr));
+    await withFetch(issueForRequest, async () => { await enrollMqttDevice(profile); });
+    const before = await cacheCertificateValid(fromMs, toMs);
+    const requests = [];
+    await withFetch(async (url, request) => {
+      requests.push(url.pathname);
+      if (url.pathname === '/device/mqtt/revoke') return revoked(url, request, profile);
+      return Response.json(issue(JSON.parse(request.body).csr));
+    }, async () => {
+      await enrollMqttDevice(profile);
+      // A second start reuses what the first one saved.
+      await enrollMqttDevice(profile);
+    });
+    return { before, after: await cache(), requests };
+  }
+
+  await check('an expired certificate, or one past two thirds of its lifetime, is revoked and replaced', async () => {
+    // Expired a second ago; and 20 of 24 hours used (still valid, but past the renewal point).
+    for (const [fromMs, toMs] of [[-24 * HOUR, -1_000], [-20 * HOUR, 4 * HOUR]]) {
+      const { before, after, requests } = await restartWithCachedCertificate(fromMs, toMs);
+      assert.deepEqual(requests, ['/device/mqtt/revoke', '/device/mqtt/enroll']);
+      assert.notEqual(after.identity.private_key, before.identity.private_key);
+      assert.ok(Date.parse(new X509Certificate(after.certificate.certificate_pem).validTo) > Date.now());
+    }
+  });
+
+  await check('a cached certificate before two thirds of its lifetime is reused without any request', async () => {
+    // 1 of 24 hours used.
+    const { before, after, requests } = await restartWithCachedCertificate(-1 * HOUR, 23 * HOUR);
+    assert.deepEqual(requests, []);
+    assert.equal(after.identity.private_key, before.identity.private_key);
+  });
+
   console.log(`MQTT enrollment device: ${passed} checks passed`);
 } finally {
   mock.restoreAll();

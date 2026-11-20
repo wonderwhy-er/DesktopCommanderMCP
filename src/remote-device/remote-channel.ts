@@ -120,6 +120,12 @@ const SOCKET_SETTLE_POLL_MS = 20;
 // scan so a pathological backlog cannot turn one reconnect into an unbounded
 // burst of REST claims/tool executions.
 const PENDING_RECOVERY_BATCH_SIZE = 100;
+// MQTT.js reconnects after network faults itself; these bound retrying a start that failed.
+const MQTT_RESTART_BASE_MS = 5_000;
+const MQTT_RESTART_MAX_MS = 30 * 60 * 1000;
+
+/** What made the device look at a call: a transport's doorbell, or a recovery scan. */
+type CallSource = 'mqtt' | 'broadcast' | 'recovery';
 
 function jitterAround(baseMs: number, random: () => number): number {
     const sample = Math.max(0, Math.min(1, random()));
@@ -155,6 +161,12 @@ function backoffStepMs(failures: number, baseMs: number, maxMs: number): number 
 export function presenceRecoveryDelayMs(failures: number, random: () => number = Math.random): number {
     const stepMs = backoffStepMs(failures, PRESENCE_RETRY_BASE_MS, PRESENCE_RETRY_MAX_MS);
     return Math.round(stepMs * (1 + 0.5 * Math.max(0, Math.min(1, random()))));
+}
+
+/** Wait before restarting MQTT after failed starts: between half and all of the step, so devices don't all retry together. */
+function mqttRestartDelayMs(failures: number): number {
+    const stepMs = backoffStepMs(failures, MQTT_RESTART_BASE_MS, MQTT_RESTART_MAX_MS);
+    return Math.round(stepMs * (0.5 + 0.5 * Math.random()));
 }
 
 /** Full-jitter wait before retrying the readiness write after failed ones. */
@@ -236,7 +248,8 @@ export class RemoteChannel {
     private mqttLifecycle: Promise<void> = Promise.resolve();
     private removeMqttRolloutListener: (() => void) | null = null;
     private authGeneration = 0;
-
+    private mqttRestartTimer: NodeJS.Timeout | null = null;
+    private mqttRestartFailures = 0;
 
     // Store subscription parameters for channel recreation
     private deviceId: string | null = null;
@@ -638,7 +651,8 @@ export class RemoteChannel {
             // it is not fatal, the socket watchdog keeps retrying.
             this.removeMqttRolloutListener?.();
             this.updateMqttTransport(rolloutManager.get('MQTT_TRANSPORT_ENABLED'));
-            this.removeMqttRolloutListener = rolloutManager.onChange('MQTT_TRANSPORT_ENABLED', enabled => this.updateMqttTransport(enabled));
+            this.removeMqttRolloutListener = rolloutManager.onChange('MQTT_TRANSPORT_ENABLED',
+                enabled => void this.onMqttRolloutChanged(enabled));
             await this.createChannel();
 
         } else {
@@ -648,17 +662,65 @@ export class RemoteChannel {
         }
     }
 
+    /**
+     * Runs when the MQTT flag is turned on or off while the app is running: starts or stops MQTT.
+     *
+     * Why the extra check when the flag is turned off: a call can come in right at that moment.
+     * Its Broadcast doorbell is ignored because MQTT was still in charge, and its MQTT doorbell is
+     * ignored because the flag is already off. Nobody runs the call and nobody rings for it again.
+     * So after MQTT stops, we look in the database once for calls that are still waiting and run them.
+     * This is only needed if MQTT was running calls before; otherwise Broadcast already ran them all.
+     */
+    private async onMqttRolloutChanged(enabled: boolean): Promise<void> {
+        const wasReady = this.mqttReady;
+        await this.updateMqttTransport(enabled);
+        if (!enabled && wasReady) this.recoverAfterMqttChange('after MQTT was turned off');
+    }
+
     private updateMqttTransport(enabled: boolean): Promise<void> {
         this.mqttLifecycle = this.mqttLifecycle
             .then(async () => {
                 if (enabled) {
                     await this.startMqtt();
+                    // After failed tries, report that MQTT is back. (No receiver means the flag was off and nothing started.)
+                    if (this.mqttRestartFailures > 0 && this.mqttReceiver) {
+                        captureRemote('remote_channel_mqtt_restart_succeeded', { attempts: this.mqttRestartFailures }).catch(() => {});
+                    }
+                    this.mqttRestartFailures = 0;
                 } else {
                     await this.stopMqttTransport();
                 }
             })
-            .catch(() => console.debug('[MQTT] Transport unavailable; Broadcast continues'));
+            .catch((error: any) => {
+                console.debug('[MQTT] Transport unavailable; Broadcast continues:', error?.message);
+                this.scheduleMqttRestart();
+            });
         return this.mqttLifecycle;
+    }
+
+    /**
+     * MQTT failed to start, so try again later.
+     * - Wait first. The wait gets longer after each failure: about 5 s, then 10 s, then 20 s, up to 30 min.
+     *   A short outage is fixed quickly by the first tries. If AWS stays down, longer waits mean the
+     *   device isn't trying every few seconds for hours. With many devices that would be a lot of
+     *   useless traffic, and it would hit AWS hard the moment it comes back.
+     * - Don't try if the app is closing, the user signed out, or the MQTT flag is off.
+     * - While MQTT is down, Broadcast runs the calls, so nothing is lost while we wait.
+     */
+    private scheduleMqttRestart(): void {
+        if (this.mqttRestartTimer || this.shuttingDown || this.sessionLost || this.handlingSignedOut) return;
+        if (!rolloutManager.get('MQTT_TRANSPORT_ENABLED')) return;
+        const generation = this.authGeneration;
+        this.mqttRestartFailures++;
+        const delayMs = mqttRestartDelayMs(this.mqttRestartFailures);
+        captureRemote('remote_channel_mqtt_restart_scheduled', { failures: this.mqttRestartFailures, delay_ms: delayMs }).catch(() => {});
+        this.mqttRestartTimer = setTimeout(() => {
+            this.mqttRestartTimer = null;
+            // The user signed out or in during the wait: skip, the new sign-in starts MQTT itself.
+            if (generation !== this.authGeneration) return;
+            void this.updateMqttTransport(rolloutManager.get('MQTT_TRANSPORT_ENABLED'));
+        }, delayMs);
+        this.mqttRestartTimer.unref();
     }
 
     private async startMqtt(): Promise<void> {
@@ -719,13 +781,36 @@ export class RemoteChannel {
                     return;
                 }
                 await this.setMqttReady(ready);
-            });
+                // Doorbells sent while MQTT was down are not delivered later, so look in the
+                // database for calls that are still waiting and run them.
+                if (ready) this.recoverAfterMqttChange('after MQTT connected');
+            },
+            // A message was thrown away because it isn't a valid doorbell for this device.
+            // Log it so a rejected doorbell is visible in the device log.
+            () => console.debug('[MQTT] Doorbell rejected: not a valid doorbell for this device'),
+            () => void this.onMqttReceiverFailed(receiver));
         this.mqttReceiver = receiver;
         await receiver.start();
     }
 
+    /**
+     * MQTT was working, then broke and could not fix itself (for example it did not reconnect
+     * within 10 s). Clean up the broken receiver and plan a fresh start. Without this, MQTT would
+     * stay off until the app is restarted, and Broadcast would run every call until then.
+     */
+    private async onMqttReceiverFailed(receiver: MqttTransport): Promise<void> {
+        // This is an old receiver that was already replaced by a new one: nothing to do.
+        if (this.mqttReceiver !== receiver) return;
+        console.debug('[MQTT] Receiver stopped after a reconnect; restarting');
+        await this.updateMqttTransport(false);
+        this.scheduleMqttRestart();
+    }
+
     private async stopMqttTransport(): Promise<void> {
         console.debug('[DEBUG] stopping MQTT transport');
+        // Cancel a planned restart too, so MQTT doesn't start again by itself after being stopped.
+        if (this.mqttRestartTimer) clearTimeout(this.mqttRestartTimer);
+        this.mqttRestartTimer = null;
         const receiver = this.mqttReceiver;
         this.mqttReceiver = null;
         if (receiver) {
@@ -775,11 +860,22 @@ export class RemoteChannel {
         }
     }
 
-    /** MQTT delivery hook; this branch records receipts without executing calls. */
+    /** MQTT delivery hook: with MQTT_TRANSPORT_ENABLED on, MQTT claims and runs the call. */
     private async onMqttDoorbell(payload: MqttDoorbell): Promise<void> {
         if (this.shuttingDown || this.sessionLost || this.handlingSignedOut) {
             return;
         }
+        // A doorbell can arrive while the flag is being turned off; the scan after MQTT stops covers it.
+        if (!rolloutManager.get('MQTT_TRANSPORT_ENABLED')) {
+            return;
+        }
+        await this.onDoorbell(payload, 'mqtt');
+    }
+
+    private recoverAfterMqttChange(reason: string): void {
+        this.recoverPendingCalls(reason).catch((error: any) => {
+            console.error(`[DEBUG] Pending call recovery failed (${reason}):`, error?.message);
+        });
     }
 
     private async onBroadcastDoorbell(payload: any): Promise<void> {
@@ -788,7 +884,12 @@ export class RemoteChannel {
         }
         observeTransport({ stage: 'received', payload, deviceId: this.deviceId,
             userId: this.user?.id, transport: 'broadcast' });
-        await this.onDoorbell(payload);
+        // While MQTT is ready it runs the calls; Broadcast only watches, and runs them while MQTT is down.
+        if (this.mqttReady) {
+            console.debug(`[DEBUG] Broadcast doorbell for ${payload?.call_id}: MQTT runs calls, observing only`);
+            return;
+        }
+        await this.onDoorbell(payload, 'broadcast');
     }
 
     /**
@@ -1031,8 +1132,8 @@ export class RemoteChannel {
      * The follow-up onDoorbell() call performs the existing conditional claim,
      * which makes this safe against a doorbell arriving at the same time.
      */
-    private async recoverPendingCalls(): Promise<void> {
-        if (!this.client || !this.deviceId || !this.isReachable()) return;
+    private async recoverPendingCalls(reason = 'after reconnect'): Promise<void> {
+        if (!this.client || !this.deviceId || !this.canRunCalls()) return;
 
         const { data: pending, error } = await this.client
             .from('mcp_remote_calls')
@@ -1051,7 +1152,7 @@ export class RemoteChannel {
 
         if (!pending?.length) return;
 
-        console.log(`♻️  Recovering ${pending.length} pending remote call${pending.length === 1 ? '' : 's'} after reconnect`);
+        console.log(`♻️  Recovering ${pending.length} pending remote call${pending.length === 1 ? '' : 's'} ${reason}`);
         captureRemote('remote_channel_pending_recovery', {
             pending_count: pending.length,
             batch_capped: pending.length === PENDING_RECOVERY_BATCH_SIZE,
@@ -1060,11 +1161,11 @@ export class RemoteChannel {
         // Claim quickly; dispatchToolCall() does not await tool execution, so
         // this loop serializes only the small REST claim operations.
         for (const row of pending) {
-            if (!this.isReachable()) break;
+            if (!this.canRunCalls()) break;
             await this.onDoorbell({
                 call_id: row.id,
                 device_id: row.device_id,
-            });
+            }, 'recovery');
         }
     }
 
@@ -1088,7 +1189,7 @@ export class RemoteChannel {
      * claims the row (pending -> executing) and returns it, and it is handed to
      * device.ts marked as claimed.
      */
-    private async onDoorbell(payload: any): Promise<void> {
+    private async onDoorbell(payload: any, source: CallSource = 'broadcast'): Promise<void> {
         if (this.shuttingDown || this.sessionLost || this.handlingSignedOut) return;
         const generation = this.authGeneration;
         const callId = payload?.call_id;
@@ -1100,7 +1201,7 @@ export class RemoteChannel {
 
         // Not a telemetry event on purpose: ~126k/day in prod. Transport usage
         // is already segmentable server-side via metadata.transport.
-        console.debug('[DEBUG] Doorbell received for call:', callId);
+        console.debug(`[DEBUG] Doorbell received for call: ${callId} (from ${source})`);
 
         if (!this.client) return;
 
@@ -1134,6 +1235,10 @@ export class RemoteChannel {
 
         if (generation !== this.authGeneration || this.shuttingDown || this.sessionLost || this.handlingSignedOut) return;
         if (row) {
+            // Who ran the call. Broadcast running it while the MQTT flag is on means MQTT was down: a fallback.
+            const isFallback = source === 'broadcast' && rolloutManager.get('MQTT_TRANSPORT_ENABLED');
+            observeTransport({ stage: 'call_claimed', callId, deviceId: this.deviceId, userId: this.user?.id,
+                claimedBy: source, fallback: isFallback });
             // The server writes the user's rollouts into every call row; a row
             // without them (an older server) keeps what the device has.
             rolloutManager.update(row.metadata?.rollouts);
@@ -1538,6 +1643,16 @@ export class RemoteChannel {
         return this.channel?.state === 'joined'
             && this.channelReady
             && this.localExecutorProbe();
+    }
+
+    /**
+     * Can this device run calls right now? The scan asks this before it takes waiting calls.
+     * Yes if at least one way to receive calls is working (Broadcast connected, or MQTT ready)
+     * and the part of the app that runs the tools is alive. Before MQTT only Broadcast counted,
+     * so with Broadcast down and MQTT up, waiting calls were never picked up.
+     */
+    private canRunCalls(): boolean {
+        return this.isReachable() || (this.mqttReady && this.localExecutorProbe());
     }
 
     /**
