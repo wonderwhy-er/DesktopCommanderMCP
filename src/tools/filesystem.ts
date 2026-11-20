@@ -131,18 +131,91 @@ async function getAllowedDirs(): Promise<string[]> {
     return [];
 }
 
-// Normalize all paths consistently.
-// Case-folding must match the filesystem's own case behavior: on a case-sensitive
-// filesystem (Linux, case-sensitive APFS/HFS+) two different directories can share
-// a name up to case, and folding both to lowercase would make a path OUTSIDE an
-// allowed directory compare as if it were inside it (see issue #791).
+// Normalize all paths consistently. Letter case is kept: whether two spellings
+// name the same entry depends on the volume (see isCaseInsensitiveDir), and
+// folding it everywhere let a path OUTSIDE an allowed directory compare as
+// inside it on a case-sensitive filesystem (issue #791).
 function normalizePath(p: string): string {
-    const normalized = path.normalize(expandHome(p));
-    // Only fold case where the filesystem itself folds it by default (Windows,
-    // and macOS's default case-insensitive volumes).
-    return process.platform === 'win32' || process.platform === 'darwin'
-        ? normalized.toLowerCase()
-        : normalized;
+    return path.normalize(expandHome(p));
+}
+
+const caseInsensitiveDirs = new Map<string, Promise<boolean>>();
+
+function swapCase(name: string): string {
+    return Array.from(name, (ch) => {
+        const lower = ch.toLowerCase();
+        return ch === lower ? ch.toUpperCase() : lower;
+    }).join('');
+}
+
+/** Whether both spellings exist as the same entry (same device and inode) */
+async function sameEntry(original: string, otherSpelling: string): Promise<boolean> {
+    const [a, b] = await Promise.all([
+        fs.lstat(original, { bigint: true }),
+        fs.lstat(otherSpelling, { bigint: true }).catch((error: NodeJS.ErrnoException) => {
+            if (error.code === 'ENOENT' || error.code === 'ENOTDIR') return null;
+            throw error;
+        }),
+    ]);
+    if (b === null) return false;
+    return a.dev === b.dev && a.ino === b.ino;
+}
+
+/** Whether names in `dir` are case-insensitive, by creating a probe file and looking it up with its case swapped */
+async function probeWithFile(dir: string): Promise<boolean> {
+    const name = `.dc-case-probe-${process.pid}-${Math.random().toString(36).slice(2)}`;
+    const probe = path.join(dir, name);
+    await fs.writeFile(probe, '', { flag: 'wx' });
+    try {
+        return (await sameEntry(probe, path.join(dir, swapCase(name)))) === true;
+    } finally {
+        await fs.unlink(probe).catch(() => {});
+    }
+}
+
+/** Read-only fallback: looks up `dir`'s own name (or its nearest ancestor with letters) with its case swapped */
+async function probeWithName(dir: string): Promise<boolean | null> {
+    let current = dir;
+    while (path.dirname(current) !== current) {
+        const base = path.basename(current);
+        const swapped = swapCase(base);
+        if (swapped !== base) {
+            return sameEntry(current, path.join(path.dirname(current), swapped));
+        }
+        current = path.dirname(current);
+    }
+    return null;
+}
+
+/**
+ * Whether the volume holding `dir` (a real path) treats names that differ only
+ * by letter case as the same entry. Asks the filesystem itself, so a
+ * case-sensitive APFS volume, a case-sensitive Windows directory or a
+ * case-insensitive mount on Linux are all read correctly. Cached per directory.
+ * When neither probe can answer, only Windows (case-insensitive by default)
+ * folds case; elsewhere comparison stays exact, which can only deny access.
+ */
+function isCaseInsensitiveDir(dir: string): Promise<boolean> {
+    let cached = caseInsensitiveDirs.get(dir);
+    if (!cached) {
+        cached = (async () => {
+            try {
+                return await probeWithFile(dir);
+            } catch {
+                // Read-only or not writable: fall back to a lookup without writing
+            }
+            try {
+                const answer = await probeWithName(dir);
+                if (answer !== null) return answer;
+            } catch {
+                // Fall through to the platform default
+            }
+            caseInsensitiveDirs.delete(dir);
+            return process.platform === 'win32';
+        })();
+        caseInsensitiveDirs.set(dir, cached);
+    }
+    return cached;
 }
 
 function expandHome(filepath: string): string {
@@ -271,8 +344,12 @@ async function getAllowedDirRealPath(allowedDir: string): Promise<string | null>
 /**
  * Whether a normalized path is an allowed directory or inside it
  */
-function isWithinAllowedDir(normalizedPathToCheck: string, allowedDir: string): boolean {
+function isWithinAllowedDir(normalizedPathToCheck: string, allowedDir: string, foldCase = false): boolean {
     let normalizedAllowedDir = normalizePath(allowedDir);
+    if (foldCase) {
+        normalizedPathToCheck = normalizedPathToCheck.toLowerCase();
+        normalizedAllowedDir = normalizedAllowedDir.toLowerCase();
+    }
     if (normalizedAllowedDir.slice(-1) === path.sep) {
         normalizedAllowedDir = normalizedAllowedDir.slice(0, -1);
     }
@@ -308,8 +385,8 @@ async function isPathAllowed(pathToCheck: string): Promise<boolean> {
         normalizedPathToCheck = normalizedPathToCheck.slice(0, -1);
     }
 
-    // As written first: no filesystem call, so an allowed directory on an
-    // unresponsive mount can't hold up a path inside another one
+    // As written first, exact case: no filesystem call, so an allowed directory
+    // on an unresponsive mount can't hold up a path inside another one
     if (allowedDirectories.some((allowedDir) => isWithinAllowedDir(normalizedPathToCheck, allowedDir))) {
         return true;
     }
@@ -319,9 +396,13 @@ async function isPathAllowed(pathToCheck: string): Promise<boolean> {
     return new Promise<boolean>((resolve) => {
         let pending = allowedDirectories.length;
         for (const allowedDir of allowedDirectories) {
-            void getAllowedDirRealPath(allowedDir).then((realPath) => {
-                if (realPath !== null && isWithinAllowedDir(normalizedPathToCheck, realPath)) {
-                    resolve(true);
+            void getAllowedDirRealPath(allowedDir).then(async (realPath) => {
+                // Other spellings of the same directory match only on a volume that folds case
+                if (realPath !== null) {
+                    const foldCase = await isCaseInsensitiveDir(realPath);
+                    if (isWithinAllowedDir(normalizedPathToCheck, realPath, foldCase)) {
+                        resolve(true);
+                    }
                 }
                 if (--pending === 0) {
                     resolve(false);
