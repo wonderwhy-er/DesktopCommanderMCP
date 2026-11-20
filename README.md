@@ -19,6 +19,7 @@ Work with code and text, run processes, and automate tasks, going far beyond oth
 
 ## Table of Contents
 - [Features](#features)
+- [MCP Design Philosophy](docs/MCP_DESIGN_PHILOSOPHY.md)
 - [How to install](#how-to-install)
 - [Getting Started](#getting-started)
 - [Usage](#usage)
