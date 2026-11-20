@@ -131,9 +131,18 @@ async function getAllowedDirs(): Promise<string[]> {
     return [];
 }
 
-// Normalize all paths consistently
+// Normalize all paths consistently.
+// Case-folding must match the filesystem's own case behavior: on a case-sensitive
+// filesystem (Linux, case-sensitive APFS/HFS+) two different directories can share
+// a name up to case, and folding both to lowercase would make a path OUTSIDE an
+// allowed directory compare as if it were inside it (see issue #791).
 function normalizePath(p: string): string {
-    return path.normalize(expandHome(p)).toLowerCase();
+    const normalized = path.normalize(expandHome(p));
+    // Only fold case where the filesystem itself folds it by default (Windows,
+    // and macOS's default case-insensitive volumes).
+    return process.platform === 'win32' || process.platform === 'darwin'
+        ? normalized.toLowerCase()
+        : normalized;
 }
 
 function expandHome(filepath: string): string {
