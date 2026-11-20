@@ -139,7 +139,8 @@ function normalizePath(p: string): string {
     return path.normalize(expandHome(p));
 }
 
-const caseInsensitiveDirs = new Map<string, Promise<boolean>>();
+type CaseProbe = { dev: bigint; ino: bigint; insensitive: Promise<boolean> };
+const caseProbes = new Map<string, CaseProbe>();
 
 function swapCase(name: string): string {
     return Array.from(name, (ch) => {
@@ -187,35 +188,64 @@ async function probeWithName(dir: string): Promise<boolean | null> {
     return null;
 }
 
+/** null when neither probe can answer */
+async function probeCaseInsensitive(dir: string): Promise<boolean | null> {
+    try {
+        return await probeWithFile(dir);
+    } catch {
+        // Read-only or not writable: fall back to a lookup without writing
+    }
+    try {
+        return await probeWithName(dir);
+    } catch {
+        return null;
+    }
+}
+
 /**
  * Whether the volume holding `dir` (a real path) treats names that differ only
  * by letter case as the same entry. Asks the filesystem itself, so a
  * case-sensitive APFS volume, a case-sensitive Windows directory or a
- * case-insensitive mount on Linux are all read correctly. Cached per directory.
+ * case-insensitive mount on Linux are all read correctly. Cached per directory
+ * while its device and inode stay the same (a remount probes again).
  * When neither probe can answer, only Windows (case-insensitive by default)
  * folds case; elsewhere comparison stays exact, which can only deny access.
  */
-function isCaseInsensitiveDir(dir: string): Promise<boolean> {
-    let cached = caseInsensitiveDirs.get(dir);
-    if (!cached) {
-        cached = (async () => {
-            try {
-                return await probeWithFile(dir);
-            } catch {
-                // Read-only or not writable: fall back to a lookup without writing
-            }
-            try {
-                const answer = await probeWithName(dir);
-                if (answer !== null) return answer;
-            } catch {
-                // Fall through to the platform default
-            }
-            caseInsensitiveDirs.delete(dir);
-            return process.platform === 'win32';
-        })();
-        caseInsensitiveDirs.set(dir, cached);
+async function isCaseInsensitiveDir(dir: string): Promise<boolean> {
+    const { dev, ino } = await fs.stat(dir, { bigint: true });
+    const cached = caseProbes.get(dir);
+    if (cached && cached.dev === dev && cached.ino === ino) {
+        return cached.insensitive;
     }
-    return cached;
+    const probe: CaseProbe = {
+        dev,
+        ino,
+        insensitive: probeCaseInsensitive(dir).then((answer) => {
+            if (answer !== null) return answer;
+            if (caseProbes.get(dir) === probe) caseProbes.delete(dir);
+            return process.platform === 'win32';
+        }),
+    };
+    caseProbes.set(dir, probe);
+    return probe.insensitive;
+}
+
+/** `p` itself, or its nearest ancestor that exists */
+async function nearestExisting(p: string): Promise<string> {
+    try {
+        await fs.stat(p);
+        return p;
+    } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code;
+        const parent = path.dirname(p);
+        if ((code !== 'ENOENT' && code !== 'ENOTDIR') || parent === p) throw error;
+        return nearestExisting(parent);
+    }
+}
+
+/** The leading components of `p`, as many as `like` has */
+function leadingComponents(p: string, like: string): string {
+    return p.split(path.sep).slice(0, like.split(path.sep).length).join(path.sep);
 }
 
 function expandHome(filepath: string): string {
@@ -330,14 +360,40 @@ async function resolveEntryPath(absolutePath: string): Promise<string> {
  * An allowed directory's real path, or null when it can't be read. validatePath
  * checks real paths, so an allowed directory reached through a symlink or
  * junction (macOS: /var -> /private/var) must match by its real path too.
+ * One that doesn't exist yet is resolved through its existing ancestors, as
+ * validatePath resolves the paths it checks.
  * When the real path can't be read, only the written form matches, which can
  * only deny, never widen, access.
  */
 async function getAllowedDirRealPath(allowedDir: string): Promise<string | null> {
     try {
-        return await fs.realpath(expandHome(allowedDir));
+        return await resolveRealPath(path.resolve(expandHome(allowedDir)));
     } catch {
         return null;
+    }
+}
+
+/**
+ * Whether a normalized real path is inside an allowed directory's real path,
+ * letter case folded only where the volume folds it. A fold is accepted only
+ * when the path's leading components are the same directory on disk as the
+ * allowed directory's nearest existing part: the probe reads names inside that
+ * directory, not its own name or its ancestors', which can sit on a
+ * case-sensitive parent next to a distinct twin.
+ */
+async function isWithinAllowedRealPath(normalizedPathToCheck: string, realPath: string): Promise<boolean> {
+    if (isWithinAllowedDir(normalizedPathToCheck, realPath)) {
+        return true;
+    }
+    try {
+        const anchor = await nearestExisting(realPath);
+        if (!(await isCaseInsensitiveDir(anchor)) || !isWithinAllowedDir(normalizedPathToCheck, realPath, true)) {
+            return false;
+        }
+        const root = path.parse(anchor).root;
+        return anchor === root || await sameEntry(anchor, leadingComponents(normalizedPathToCheck, anchor));
+    } catch {
+        return false;
     }
 }
 
@@ -397,12 +453,8 @@ async function isPathAllowed(pathToCheck: string): Promise<boolean> {
         let pending = allowedDirectories.length;
         for (const allowedDir of allowedDirectories) {
             void getAllowedDirRealPath(allowedDir).then(async (realPath) => {
-                // Other spellings of the same directory match only on a volume that folds case
-                if (realPath !== null) {
-                    const foldCase = await isCaseInsensitiveDir(realPath);
-                    if (isWithinAllowedDir(normalizedPathToCheck, realPath, foldCase)) {
-                        resolve(true);
-                    }
+                if (realPath !== null && await isWithinAllowedRealPath(normalizedPathToCheck, realPath)) {
+                    resolve(true);
                 }
                 if (--pending === 0) {
                     resolve(false);
