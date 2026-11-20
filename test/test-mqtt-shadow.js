@@ -125,9 +125,9 @@ for (const property of ['shuttingDown', 'sessionLost', 'authGeneration']) {
     f.channel.onDoorbell = async payload => { deliveries.push(payload); };
     const payload = { call_id: 'call', device_id: 'device', user_id: 'owner' };
     await f.channel.onMqttDoorbell(payload);
-    assert.deepEqual(deliveries, [payload], 'with the flag on, the MQTT doorbell runs the call');
+    assert.deepEqual(deliveries, [payload], 'the MQTT doorbell runs the call');
     await f.channel.onBroadcastDoorbell(payload);
-    assert.deepEqual(deliveries, [payload], 'while MQTT is ready, Broadcast only watches');
+    assert.deepEqual(deliveries, [payload, payload], 'Broadcast runs what it receives, as before');
     Object.assign(f.channel, { channel: { state: 'joined' }, channelReady: true, mqttReady: false });
     assert.equal(f.channel.isReachable(), true, 'MQTT readiness cannot withdraw healthy Broadcast');
     const observation = observeTransport({ stage: 'received', payload, deviceId: 'device', userId: 'owner', transport: 'mqtt' });

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-// With MQTT_TRANSPORT_ENABLED on, MQTT runs calls and Broadcast only watches while MQTT is ready.
-// While MQTT is down, or with the flag off, Broadcast runs calls as before.
+// The backend sends each call over MQTT (MQTT_TRANSPORT_ENABLED on) or over Broadcast (off), never
+// both. An MQTT doorbell runs the call like a Broadcast doorbell; the database claim stops a second run.
 import assert from 'node:assert/strict';
 import { test, afterEach } from 'node:test';
 import { EventEmitter } from 'node:events';
@@ -25,7 +25,7 @@ test('an MQTT doorbell claims the call and runs it', async () => {
     assert.equal(fixture.rows[0].status, 'executing');
 });
 
-test('MQTT and Broadcast ringing together run the call once; the database claim lets one win', async () => {
+test('if MQTT and Broadcast ever both ring, the call runs once; the database claim lets one win', async () => {
     setMqttTransport(true);
     const fixture = makeChannel(RemoteChannel, ['call-both']);
     await Promise.all([
@@ -41,43 +41,6 @@ test('a fresh MQTT subscription scans for calls missed while MQTT was down', asy
     fixture.channel.recoverAfterMqttChange('after MQTT connected');
     await waitUntil(() => fixture.delivered.length === 2, 10_000, 'both missed calls are delivered');
     assert.deepEqual(fixture.delivered, ['missed-1', 'missed-2']);
-});
-
-test('with MQTT ready, a Broadcast doorbell only watches', async () => {
-    setMqttTransport(true);
-    const fixture = makeChannel(RemoteChannel, ['call-broadcast']);
-    fixture.channel.mqttReady = true;
-    await fixture.channel.onBroadcastDoorbell(doorbell('call-broadcast'));
-    assert.deepEqual(fixture.table.claimRequests, []);
-    assert.equal(fixture.rows[0].status, 'pending');
-});
-
-test('with the flag on but MQTT not ready, Broadcast runs the call (fallback)', async () => {
-    setMqttTransport(true);
-    const fixture = makeChannel(RemoteChannel, ['call-fallback']);
-    await fixture.channel.onBroadcastDoorbell(doorbell('call-fallback'));
-    assert.deepEqual(fixture.delivered, ['call-fallback']);
-});
-
-test('with the flag off, an MQTT doorbell claims nothing', async () => {
-    setMqttTransport(false);
-    const fixture = makeChannel(RemoteChannel, ['call-off']);
-    await fixture.channel.onMqttDoorbell(doorbell('call-off'));
-    assert.deepEqual(fixture.table.claimRequests, []);
-});
-
-// A call that comes in right as the flag turns off can be ignored by both doorbells,
-// so turning the flag off scans once, but only if MQTT was running calls.
-test('turning the flag off scans once if MQTT was ready, and not at all if it was not', async () => {
-    setMqttTransport(false);
-    for (const wasReady of [true, false]) {
-        const fixture = makeChannel(RemoteChannel, ['waiting-off']);
-        fixture.channel.updateMqttTransport = async enabled => { fixture.channel.mqttReady = enabled; };
-        fixture.channel.mqttReady = wasReady;
-        await fixture.channel.onMqttRolloutChanged(false);
-        if (wasReady) await waitUntil(() => fixture.delivered.length === 1, 10_000, 'the waiting call is delivered');
-        assert.equal(fixture.table.scans.length, wasReady ? 1 : 0);
-    }
 });
 
 test('a failed MQTT start is tried again while the flag is on, and not once it is off', async () => {

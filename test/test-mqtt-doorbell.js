@@ -26,9 +26,9 @@ const until = async (condition) => {
     }
 };
 const events = [];
-/** The call_claimed telemetry sent for one call: who claimed it and whether it was a fallback. */
+/** Who claimed one call, from its call_claimed telemetry. */
 const claims = id => events.filter(event => event.name === 'call_claimed' && event.params.call_id === id)
-    .map(({ params }) => ({ claimed_by: params.claimed_by, fallback: params.fallback }));
+    .map(({ params }) => params.claimed_by);
 const originalRequest = https.request;
 const originalGetValue = configManager.getValue;
 const originalGetId = configManager.getOrCreateClientId;
@@ -168,9 +168,9 @@ try {
     });
     await publisher.subscribeAsync(resultTopic, { qos: 1 });
 
-    // With the flag on, an MQTT doorbell runs the call. Two copies of one packet run it once, the
-    // backend's legacy IS_MQTT_EXECUTION_ENABLED field has no effect, and a later Broadcast
-    // doorbell for the same call only watches.
+    // An MQTT doorbell runs the call. Two copies of one packet run it once, the backend's legacy
+    // IS_MQTT_EXECUTION_ENABLED field has no effect, and a later Broadcast doorbell for the same
+    // call finds it already claimed.
     for (const enabled of [undefined, false, true]) {
         const id = `mqtt-${enabled}`;
         f.add(id);
@@ -193,7 +193,7 @@ try {
         });
         await f.channel.onBroadcastDoorbell(payload);
         assert.equal(f.executed.length, executionsBefore + 1, 'the call runs once');
-        assert.deepEqual(claims(id), [{ claimed_by: 'mqtt', fallback: false }]);
+        assert.deepEqual(claims(id), ['mqtt']);
     }
 
     f.add('old-metadata', 'mqtt_v1');
@@ -310,15 +310,14 @@ try {
     await f.channel.onBroadcastDoorbell(bell('while-mqtt-disconnected'));
     await until(() => f.rows.get('while-mqtt-disconnected').status === 'completed');
     await until(() => claims('while-mqtt-disconnected').length === 1);
-    assert.deepEqual(claims('while-mqtt-disconnected'), [{ claimed_by: 'broadcast', fallback: true }],
-        'Broadcast covering for MQTT is recorded as a fallback');
+    assert.deepEqual(claims('while-mqtt-disconnected'), ['broadcast']);
     f.add('missed-while-disconnected');
     await until(() => f.channel.mqttReady);
     await until(() => f.capabilities.at(-1).transport_mqtt_v1 === true);
-    // A clean MQTT session replays nothing, so the reconnect scans for calls missed meanwhile.
+    // Doorbells sent while MQTT was down are not delivered later, so the reconnect scans for waiting calls.
     await until(() => f.rows.get('missed-while-disconnected').status === 'completed');
     await until(() => claims('missed-while-disconnected').length === 1);
-    assert.deepEqual(claims('missed-while-disconnected'), [{ claimed_by: 'recovery', fallback: false }]);
+    assert.deepEqual(claims('missed-while-disconnected'), ['recovery']);
     f.add('reconnected');
     await send(bell('reconnected'));
     await until(() => f.rows.get('reconnected').status === 'completed');
