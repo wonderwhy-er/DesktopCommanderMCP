@@ -21,7 +21,34 @@
  */
 function getObjectShape(schema: any): Record<string, unknown> | null {
   let current = schema;
-  for (let i = 0; current && current._def && i < 10; i++) {
+  for (let i = 0; current && i < 10; i++) {
+    // Zod 4 schemas expose `_zod.def`
+    const z4Def = current._zod?.def;
+    if (z4Def) {
+      if (z4Def.type === 'object') {
+        const shape = typeof current.shape === 'function' ? current.shape() : current.shape;
+        return shape ?? null;
+      }
+      if (z4Def.type === 'pipe') {
+        current = z4Def.in;
+        continue;
+      }
+      if (
+        z4Def.type === 'optional' ||
+        z4Def.type === 'nullable' ||
+        z4Def.type === 'default' ||
+        z4Def.type === 'prefault' ||
+        z4Def.type === 'catch' ||
+        z4Def.type === 'readonly'
+      ) {
+        current = z4Def.innerType;
+        continue;
+      }
+      return null;
+    }
+
+    // Zod 3 schemas expose `_def.typeName`
+    if (!current._def) return null;
     const typeName = current._def.typeName;
     if (typeName === 'ZodObject') {
       const shape = typeof current.shape === 'function' ? current.shape() : current.shape;
