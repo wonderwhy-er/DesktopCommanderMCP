@@ -1,4 +1,6 @@
 import { z } from "zod";
+import { toJSONSchema as z4ToJSONSchema } from "zod/v4";
+import { zodToJsonSchema } from "zod-to-json-schema";
 
 // Config tools schemas
 export const GetConfigArgsSchema = z.object({
@@ -63,7 +65,7 @@ export const ReadFileArgsSchema = z.object({
   length: z.number().optional().default(1000),
   sheet: z.string().optional(),  // String only for MCP client compatibility (Cursor doesn't support union types in JSON Schema)
   range: z.string().optional(),
-  options: z.record(z.any()).optional(),
+  options: z.record(z.string(), z.any()).optional(),
   // Whether the call came from the file-preview UI (refresh/navigation) or the
   // LLM. 'ui' calls are excluded from tool-call telemetry; see isUiOriginCall
   // in server.ts.
@@ -157,7 +159,7 @@ export const EditBlockArgsSchema = z.object({
   // Structured file range rewrite (Excel, etc.)
   range: z.string().optional(),
   content: z.any().optional(),
-  options: z.record(z.any()).optional(),
+  options: z.record(z.string(), z.any()).optional(),
   // 'ui' when fired by the file-preview UI, else 'llm'. 'ui' calls are
   // excluded from tool-call telemetry; see isUiOriginCall in server.ts.
   origin: z.enum(['ui', 'llm']).optional(),
@@ -240,7 +242,7 @@ export const GetRecentToolCallsArgsSchema = z.object({
 export const TrackUiEventArgsSchema = z.object({
   event: z.string().min(1).max(80),
   component: z.string().optional().default('file_preview'),
-  params: z.record(z.union([z.string(), z.number(), z.boolean(), z.null()])).optional().default({}),
+  params: z.record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()])).optional().default({}),
 });
 
 /**
@@ -276,3 +278,55 @@ export const toolArgSchemas: Record<string, z.ZodTypeAny> = {
   give_feedback_to_desktop_commander: GiveFeedbackArgsSchema,
   track_ui_event: TrackUiEventArgsSchema,
 };
+
+export interface McpToolInputSchema {
+  type: "object";
+  properties?: Record<string, unknown>;
+  required?: string[];
+  additionalProperties?: boolean;
+  $schema?: string;
+  [key: string]: unknown;
+}
+
+function isZod4Schema(schema: unknown): boolean {
+  return typeof schema === "object" && schema !== null && "_zod" in schema;
+}
+
+/**
+ * Convert a Zod 3 or Zod 4 tool argument schema into a JSON Schema object
+ * suitable for MCP `tools/list` registration.
+ *
+ * `zod-to-json-schema` only understands Zod 3's `_def.typeName` structure and
+ * silently returns `{ $schema }` without `type: "object"` when given a Zod 4
+ * schema, which fails `@modelcontextprotocol/sdk`'s `ListToolsResultSchema`
+ * check on startup. Routing Zod 4 schemas through Zod 4's native `toJSONSchema`
+ * and asserting `type === "object"` prevents silent schema degradation.
+ */
+export function toToolInputSchema(schema: unknown): McpToolInputSchema {
+  let jsonSchema: Record<string, unknown>;
+
+  if (isZod4Schema(schema)) {
+    const nativeToJsonSchema =
+      typeof (z as { toJSONSchema?: unknown }).toJSONSchema === "function"
+        ? (z as unknown as { toJSONSchema: typeof z4ToJSONSchema }).toJSONSchema
+        : z4ToJSONSchema;
+    jsonSchema = nativeToJsonSchema(
+      schema as Parameters<typeof z4ToJSONSchema>[0],
+      {
+        target: "draft-7",
+        io: "input",
+        unrepresentable: "any",
+      },
+    ) as Record<string, unknown>;
+  } else {
+    jsonSchema = zodToJsonSchema(schema as z.ZodTypeAny) as Record<string, unknown>;
+  }
+
+  if (!jsonSchema || jsonSchema.type !== "object") {
+    throw new Error(
+      `MCP tool inputSchema must have top-level type "object", got ${JSON.stringify(jsonSchema?.type)}`,
+    );
+  }
+
+  return jsonSchema as McpToolInputSchema;
+}
