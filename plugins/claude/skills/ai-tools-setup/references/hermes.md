@@ -16,17 +16,35 @@ commands, fetch the docs (there's also `/docs/llms.txt` for a compact index).
 
 ## Install
 
+> **ASK BEFORE INSTALLING — do not run any command in this section unasked.**
+> Both CLI options below (`curl ... | bash` and `iex (irm ...)`) fetch a script
+> from `hermes-agent.nousresearch.com` and execute it directly with the user's
+> privileges. Before running either installer, ask the user for explicit
+> confirmation (using `AskUserQuestion` where available):
+>
+> - Prompt: "Installing Hermes Agent runs an install script fetched from
+>   `hermes-agent.nousresearch.com`. That executes remote code on your machine.
+>   Install it?"
+> - Options:
+>   1. "Yes, run the CLI installer"
+>   2. "No — I'll install it myself from https://hermes-agent.nousresearch.com/"
+>   3. "Cancel"
+>
+> Only after an explicit yes should you run the command or hand it to the user.
+> If the user declines, stop here and do not offer a workaround that reaches
+> the same place by another route.
+
 **Desktop app (Windows/macOS):** download the Hermes Desktop installer from
 https://hermes-agent.nousresearch.com/ and run it (installs CLI + desktop app).
 
-**CLI only:**
+**CLI only (run only after explicit user confirmation):**
 
-```bash
+```text
 # Linux / macOS / WSL2 / Android (Termux)
 curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash
 ```
 
-```powershell
+```text
 # Windows (native), in PowerShell
 iex (irm https://hermes-agent.nousresearch.com/install.ps1)
 ```
