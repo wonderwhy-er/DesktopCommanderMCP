@@ -10,6 +10,7 @@ import { configManager } from '../config-manager.js';
 import { getCommandEnvironment, getCommandShell } from '../utils/shell.js';
 import { terminateProcessTree } from '../utils/process-tree.js';
 import { MAX_PROCESS_WAIT_MS } from '../config.js';
+import { validatePath } from './filesystem.js';
 import { spawn } from 'child_process';
 import fs from 'fs/promises';
 import path from 'path';
@@ -21,8 +22,30 @@ const __dirname = path.dirname(__filename);
 const mcpRoot = path.resolve(__dirname, '..', '..');
 
 // Track virtual Node sessions (PIDs that are actually Node fallback sessions)
-const virtualNodeSessions = new Map<number, { timeout_ms: number }>();
+const virtualNodeSessions = new Map<number, { timeout_ms: number; cwd?: string }>();
 let virtualPidCounter = -1000; // Use negative PIDs for virtual sessions
+
+/** Validate and resolve an optional working directory for start_process. */
+async function resolveWorkingDirectory(cwd: string): Promise<string> {
+  if (cwd.trim().length === 0) {
+    throw new Error('Working directory (cwd) cannot be empty.');
+  }
+  const validatedPath = await validatePath(cwd);
+  let stats;
+  try {
+    stats = await fs.stat(validatedPath);
+  } catch (error) {
+    const err = error as NodeJS.ErrnoException;
+    if (err.code === 'ENOENT') {
+      throw new Error(`Working directory does not exist: ${cwd}`);
+    }
+    throw new Error(`Cannot access working directory "${cwd}": ${err.message}`);
+  }
+  if (!stats.isDirectory()) {
+    throw new Error(`Working directory is not a directory: ${cwd}`);
+  }
+  return validatedPath;
+}
 
 /** How long a node:local script's output pipes may stay open after its timeout ended its tree */
 const PIPES_CLOSE_WAIT_MS = 1000;
@@ -39,7 +62,7 @@ export function terminationFailedResult(pid: number): ServerResult {
  * Execute Node.js code via temp file (fallback when Python unavailable)
  * Creates temp .mjs file in MCP directory for ES module import access
  */
-async function executeNodeCode(code: string, timeout_ms: number = 30000, sessionPid: number): Promise<ServerResult> {
+async function executeNodeCode(code: string, timeout_ms: number = 30000, sessionPid: number, cwd?: string): Promise<ServerResult> {
   const tempFile = path.join(mcpRoot, `.mcp-exec-${Date.now()}-${Math.random().toString(36).slice(2)}.mjs`);
 
   try {
@@ -47,7 +70,7 @@ async function executeNodeCode(code: string, timeout_ms: number = 30000, session
 
     const result = await new Promise<{ stdout: string; stderr: string; exitCode: number; treeSurvived?: boolean }>((resolve) => {
       const proc = spawn(process.execPath, [tempFile], {
-        cwd: mcpRoot,
+        cwd: cwd ?? mcpRoot,
         env: getCommandEnvironment(),
         windowsHide: true  // Prevent visible console windows on Windows
       });
@@ -172,8 +195,21 @@ export async function startProcess(args: unknown, maxWaitMs: number = MAX_PROCES
 
   const commandToRun = parsed.data.command;
 
+  let resolvedCwd: string | undefined;
+  if (parsed.data.cwd !== undefined) {
+    try {
+      resolvedCwd = await resolveWorkingDirectory(parsed.data.cwd);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return {
+        content: [{ type: "text", text: `Error: ${message}` }],
+        isError: true,
+      };
+    }
+  }
+
   if (commandToRun.trim() === 'node:local') {
-    return startNodeSession(parsed.data.timeout_ms);
+    return startNodeSession(parsed.data.timeout_ms, resolvedCwd);
   }
 
   const result = await terminalManager.executeCommand(
@@ -181,7 +217,8 @@ export async function startProcess(args: unknown, maxWaitMs: number = MAX_PROCES
     parsed.data.timeout_ms,
     shellUsed,
     parsed.data.verbose_timing || false,
-    maxWaitMs
+    maxWaitMs,
+    resolvedCwd
   );
 
   if (result.pid === -1) {
@@ -213,9 +250,9 @@ function captureProcessCommand(command: string): void {
 }
 
 /** Virtual PIDs retain the same interaction/termination routing without spawning an OS process. */
-function startNodeSession(timeoutMs: number | undefined): ServerResult {
+function startNodeSession(timeoutMs: number | undefined, cwd?: string): ServerResult {
   const virtualPid = virtualPidCounter--;
-  virtualNodeSessions.set(virtualPid, { timeout_ms: timeoutMs || 30000 });
+  virtualNodeSessions.set(virtualPid, { timeout_ms: timeoutMs || 30000, cwd });
 
   return {
     content: [{
@@ -530,7 +567,7 @@ export async function interactWithProcess(args: unknown, maxWaitMs: number = MAX
     // (parsed.data's: timeout_ms above already holds the 8000ms default for processes),
     // within the process wait ceiling: the call answers only once the script ends
     const effectiveTimeout = Math.min(parsed.data.timeout_ms ?? session.timeout_ms, waitLimit.capMs);
-    return executeNodeCode(input, effectiveTimeout, pid);
+    return executeNodeCode(input, effectiveTimeout, pid, session.cwd);
   }
 
   // Timing telemetry

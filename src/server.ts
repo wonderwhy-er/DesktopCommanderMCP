@@ -887,6 +887,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         • start_process("node -i") → Start an interactive Node.js REPL
                         • start_process("node:local") → Run stateless Node.js code on the MCP server
                         • start_process("wc -l /path/file.csv") → Run a one-shot shell command
+                        • start_process("python build.py", timeout_ms: 30000, cwd: "/path/to/project") → Run in a specific working directory
 
                         Interactive process sessions support follow-up input after they are started.
                         Long-running process sessions expose newly available output while they remain active.
