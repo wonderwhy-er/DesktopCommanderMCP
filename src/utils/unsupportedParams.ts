@@ -30,7 +30,7 @@ function getObjectShape(schema: any): Record<string, unknown> | null {
         return shape ?? null;
       }
       if (z4Def.type === 'pipe') {
-        current = z4Def.in;
+        current = z4Def.in?._zod?.def?.type === 'transform' ? z4Def.out : z4Def.in;
         continue;
       }
       if (

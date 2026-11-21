@@ -130,7 +130,14 @@ async function runTests() {
   const z4RefinedObj = z4.object({ path: z4.string(), offset: z4.number().optional() }).refine(() => true);
   assert.deepEqual(getSupportedParams(z4RefinedObj), ['path', 'offset']);
   assert.deepEqual(detectUnsupportedParams({ path: 'a.txt', view_range: [1, 2] }, z4RefinedObj), ['view_range']);
-  console.log('   ✓ Unsupported-parameter detection works for Zod 4 schemas');
+
+  const z4PreprocessedObj = z4.preprocess((v) => v, z4.object({ path: z4.string() }));
+  assert.deepEqual(getSupportedParams(z4PreprocessedObj), ['path']);
+  assert.deepEqual(detectUnsupportedParams({ path: 'a.txt', view_range: [1, 2] }, z4PreprocessedObj), ['view_range']);
+
+  const z4TransformedObj = z4.object({ path: z4.string() }).transform((v) => v);
+  assert.deepEqual(getSupportedParams(z4TransformedObj), ['path']);
+  console.log('   ✓ Unsupported-parameter detection works for Zod 4 schemas (refine, preprocess, transform)');
 
   // 6. Live MCP server tools/list must pass ListToolsResultSchema for every advertised tool
   const client = await connectToServer('schema-validation-test');
