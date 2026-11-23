@@ -35,6 +35,16 @@ export interface ToolBridgeOptions {
 
 const DEFAULT_TIMEOUT_MS = 5000;
 
+// Only side-effect-free file/config reads are safe to share across callers.
+// Session cursors, command execution, editing, writing, and telemetry are not.
+const COALESCIBLE_READ_TOOLS = new Set([
+    'read_file',
+    'read_multiple_files',
+    'list_directory',
+    'get_file_info',
+    'get_config',
+]);
+
 function getDefaultTargetOrigin(): string {
     if (typeof document === 'undefined') {
         return '*';
@@ -194,6 +204,12 @@ export function createToolBridge(options: ToolBridgeOptions = {}) {
 
     async function callTool(name: string, args?: ToolArgs): Promise<unknown> {
         const normalizedArgs = normalizeToolArgs(args);
+        if (!COALESCIBLE_READ_TOOLS.has(name)) {
+            // A non-read operation can change the state observed by pending reads.
+            // Never suppress intentional duplicate writes or cursor advances.
+            inFlight.clear();
+            return callToolOnce(name, normalizedArgs);
+        }
         const key = `${name}:${canonicalRequestKey(normalizedArgs)}`;
         const existing = inFlight.get(key);
         if (existing) {

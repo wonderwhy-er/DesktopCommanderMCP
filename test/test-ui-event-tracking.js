@@ -117,6 +117,59 @@ async function testCanonicalWidgetCallKeys() {
   console.log('✓ canonical keys coalesce only equivalent requests');
 }
 
+async function testMutatingAndCursorCallsAreNotCoalesced() {
+  console.log('\n--- Test: concurrent mutating/cursor calls remain independent ---');
+  for (const name of ['edit_block', 'write_file', 'start_process', 'start_search', 'get_more_search_results', 'read_process_output', 'track_ui_event']) {
+    let calls = 0;
+    let release;
+    const gate = new Promise((resolve) => { release = resolve; });
+    const bridge = createToolBridge({
+      host: {
+        openai: {
+          callTool: async () => {
+            const id = ++calls;
+            await gate;
+            return { id };
+          },
+        },
+      },
+    });
+    const first = bridge.callTool(name, { path: 'same.txt' });
+    const second = bridge.callTool(name, { path: 'same.txt' });
+    assert.strictEqual(calls, 2, name + ' must not suppress a second operation');
+    release();
+    const [a, b] = await Promise.all([first, second]);
+    assert.notDeepStrictEqual(a, b, name + ' must return independent results');
+  }
+  console.log('✓ mutating and cursor-advancing tool calls are never coalesced');
+}
+
+async function testNonReadInvalidatesPendingReads() {
+  console.log('\n--- Test: a write prevents sharing an older in-flight read ---');
+  let readCount = 0;
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const bridge = createToolBridge({
+    host: {
+      openai: {
+        callTool: async (name) => {
+          if (name !== 'read_file') return { written: true };
+          const id = ++readCount;
+          await gate;
+          return { id };
+        },
+      },
+    },
+  });
+  const before = bridge.callTool('read_file', { path: 'same.txt' });
+  await bridge.callTool('write_file', { path: 'same.txt', content: 'changed' });
+  const after = bridge.callTool('read_file', { path: 'same.txt' });
+  assert.strictEqual(readCount, 2, 'a write must invalidate the read-only coalescing map');
+  release();
+  assert.notDeepStrictEqual(await before, await after);
+  console.log('✓ reads after mutation are not attached to stale in-flight reads');
+}
+
 async function testDuplicateUiEventsAreSuppressed() {
   console.log('\n--- Test: immediate duplicate UI events are suppressed ---');
   const calls = [];
@@ -192,6 +245,8 @@ export default async function runTests() {
     await testConcurrentWidgetCallsAreCoalesced();
     await testSequentialWidgetCallsRunAgain();
     await testCanonicalWidgetCallKeys();
+    await testMutatingAndCursorCallsAreNotCoalesced();
+    await testNonReadInvalidatesPendingReads();
     await testDuplicateUiEventsAreSuppressed();
     await testUiEventCacheStaysBounded();
     await testRefreshedUiEventRetainsRecency();
