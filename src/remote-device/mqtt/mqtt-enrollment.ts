@@ -17,17 +17,6 @@ const generateRsaKeyPair = promisify(generateKeyPair);
 const ID = /^[A-Za-z0-9_-]{1,128}$/;
 // Leave network headroom above the backend's 20-second AWS setup deadline.
 const ENROLLMENT_TIMEOUT_MS = 30_000;
-// Renew once two thirds of the lifetime are used, so a backend outage still leaves
-// a third of the lifetime to retry before the certificate really expires.
-const RENEW_AT_LIFETIME_FRACTION = 2 / 3;
-
-/** When a certificate should be replaced, in epoch milliseconds; NaN when its dates cannot be read. */
-export function certificateRenewAt(certificatePem: string): number {
-	const certificate = new X509Certificate(certificatePem);
-	const validFrom = Date.parse(certificate.validFrom);
-	const validTo = Date.parse(certificate.validTo);
-	return validFrom + (validTo - validFrom) * RENEW_AT_LIFETIME_FRACTION;
-}
 
 interface EnrollmentOptions {
 	serverUrl: string;
@@ -202,19 +191,7 @@ export async function enrollMqttDevice(
 				certificate = await readCache(certificateFile);
 				if (certificate) {
 					try {
-						// Two checks decide if the saved certificate can be used again:
-						// 1. keyMatches: the certificate belongs to the saved private key (the original check).
-						// 2. dueForRenewal: the certificate is expired or close to it. Without this, an expired
-						//    certificate was reused on every start, AWS refused it, and MQTT never connected.
-						//    It renews at 2/3 of the lifetime, so if the backend is down at that moment
-						//    there is still a third of the lifetime left to try again.
-						// If either check fails, the existing revoke-and-enroll path below gets a new one.
-						const keyMatches = new X509Certificate(certificate.certificate_pem).checkPrivateKey(key);
-						const renewAt = certificateRenewAt(certificate.certificate_pem);
-						// A date that can't be read gives NaN, and "now >= NaN" is always false, which would
-						// mean "never renew". So NaN counts as due, and the certificate is replaced.
-						const dueForRenewal = Number.isNaN(renewAt) || Date.now() >= renewAt;
-						replaceIdentity = !keyMatches || dueForRenewal;
+						replaceIdentity = !new X509Certificate(certificate.certificate_pem).checkPrivateKey(key);
 					} catch {
 						throw new Error(
 							"MQTT cached certificate is invalid; inspect the profile MQTT folder before restarting",
