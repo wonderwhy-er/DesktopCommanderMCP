@@ -6,7 +6,12 @@ const PROCESS_ID = randomUUID();
 
 type TransportObservation = (
     | { stage: 'received'; payload: any; deviceId: string | null }
-    | { stage: string; callId: string; deviceId: string | null | undefined; toolName?: string; operation?: string; operationId?: string }
+    | {
+        stage: string; callId: string; deviceId: string | null | undefined; toolName?: string;
+        operation?: string; operationId?: string;
+        /** Who claimed the call (call_claimed): MQTT, Broadcast, or the scan for waiting calls. */
+        claimedBy?: 'mqtt' | 'broadcast' | 'recovery';
+    }
 ) & { userId: string | undefined; transport?: 'broadcast' | 'mqtt' };
 
 /** Record a device transport checkpoint without affecting command handling. */
@@ -41,6 +46,7 @@ export function observeTransport(input: TransportObservation) {
                 input.toolName.length <= 128 ? { tool_name: input.toolName } : {}),
             ...(!receipt && typeof input.operation === 'string' && input.operation ? { operation: input.operation } : {}),
             ...(typeof operationId === 'string' && operationId ? { operation_id: operationId } : {}),
+            ...(!receipt && input.claimedBy ? { claimed_by: input.claimedBy } : {}),
             observation_id: observationId,
             source_process_id: PROCESS_ID,
             schema_version: 1,
