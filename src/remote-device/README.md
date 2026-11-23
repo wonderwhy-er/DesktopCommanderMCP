@@ -35,11 +35,15 @@ On first run, Desktop Commander starts an OAuth device-authorization flow:
 
 If the browser does not open, use the verification URL and code printed in the terminal.
 
-By default, the authenticated device session is saved to:
+The authenticated device session is saved to:
 
 ```text
 ~/.desktop-commander-device/device.json
 ```
+
+In this release, `DC_ENV=staging` and `DC_ENV=development` do **not** yet select
+separate session folders. The file records the trusted MCP server and Supabase
+endpoint so credentials cannot silently be reused when switching backends.
 
 On POSIX systems, the file is created with mode `0600` (read/write for the owning user only). On Windows, this code does not set a custom owner-only ACL; access is governed by the Windows filesystem permissions for the user profile. Restarting the Remote Device normally reuses this saved session, so browser authorization is not required on every start.
 
@@ -67,7 +71,34 @@ The Remote MCP service forwards tool calls to the connected device. The local De
 
 ## Session persistence
 
-Session persistence is enabled by default. To require browser authorization on every start, run:
+Session persistence is enabled by default. `MCP_SERVER_URL` must use HTTPS and
+point to `desktopcommander.app` or any depth of subdomain, such as
+`staging-mcp.desktopcommander.app` or `mcp.dev.desktopcommander.app`. Local
+development also permits HTTP or HTTPS on `localhost`, `127.0.0.1`, `[::1]`, and
+`mcp.localhost`. Unrelated domains, embedded credentials, paths, queries, and
+fragments are rejected.
+
+Authentication requests refuse HTTP redirects. Supabase configuration accepts
+only these HTTPS project endpoints:
+
+- supabase1: `https://olvbkozcufcbptfogatw.supabase.co`
+- supabase2: `https://xnalhwxchxhthlmzkhal.supabase.co`
+- supabase3: `https://example.supabase.co`
+
+Other projects, subdomains, non-default ports, paths, and local hosts are rejected,
+including when `MCP_SERVER_URL` is local. A trailing slash is accepted and normalized.
+Moving between the allowed endpoints still requires re-pairing because saved
+session bindings compare the complete MCP and Supabase endpoints.
+
+A saved session is bound to its original MCP and Supabase endpoints. Switching
+to another backend requires browser authorization; a rejected saved session is
+kept until the new pairing succeeds. Legacy sessions saved before endpoint
+binding continue to work only with the original default MCP/supabase1 pair;
+legacy sessions from custom/staging backends must be paired once again. For an unbound
+custom session, the CLI also refuses `remote --logout` rather than sending
+credentials to an unverified backend; revoke it from the original dashboard.
+
+To require browser authorization on every start, run:
 
 ```bash
 npx @wonderwhy-er/desktop-commander@latest remote --no-persist-session
@@ -80,11 +111,11 @@ These actions affect different parts of the Remote MCP connection:
 | Action | What it does | Saved local credentials | Server-side device authorization |
 | --- | --- | --- | --- |
 | Press `Ctrl+C` | Takes this computer offline until you start the Remote Device again | Kept | Kept |
-| `remote --logout` | Removes saved Remote MCP credentials from this computer | Removed | Kept |
+| `remote --logout` | Revokes this device and its MQTT certificates, then removes saved credentials | Removed after server confirmation | Revoked |
 | **Revoke** the device in the Remote MCP dashboard | Invalidates that device authorization on the server | May still exist locally | Revoked |
 | Disconnect/remove the Remote MCP connector in your AI client | Removes that AI client's connection to Remote MCP | Kept | Device authorization is unchanged |
 
-### Log out locally
+### Log out and remove this device
 
 Run:
 
@@ -92,9 +123,22 @@ Run:
 npx @wonderwhy-er/desktop-commander@latest remote --logout
 ```
 
-This removes `~/.desktop-commander-device/device.json`. It does **not** revoke the device in the Remote MCP dashboard.
+Logout calls `POST /device/revoke` using the saved session. The backend revokes the
+AWS MQTT certificates and device session, asks an online connector to stop, and deletes
+the device registration. Once the backend confirms completion, logout removes
+`device.json`, `.mqtt/identity.json` (the private key), and `.mqtt/certificate.json`.
+The next start requires device identification and browser pairing from scratch, then
+generates a new MQTT key and certificate. Normal restarts reuse the saved credentials.
 
-For a completely clean authorization reset, revoke the device in the dashboard, log out locally, then start `remote` and pair again.
+Use the same `MCP_SERVER_URL` and profile as the running device. Logout waits for
+in-flight enrollment and saves under their existing locks. The backend requests
+shutdown for an online connector; stop an offline or still-starting connector manually.
+
+Logout needs backend connectivity. A failed or unconfirmed revoke returns an error
+and keeps credentials for retry. If the saved session is expired, logout refreshes it
+once. If it is missing or invalid, revoke the device in the dashboard before manually
+removing its local files. The backend must support the `mqtt_revoked: true` confirmation
+before this version of the desktop logout is released.
 
 ## CLI reference
 
@@ -108,7 +152,7 @@ The `-h` alias is also supported.
 
 | Option | Purpose |
 | --- | --- |
-| `--logout` | Remove saved local Remote MCP credentials and exit |
+| `--logout` | Revoke this device and its MQTT certificates, then remove local credentials |
 | `--no-persist-session` | Do not reuse or save authentication for this run |
 | `--disable-no-sleep` | Do not prevent sleep while the Remote Device is running |
 | `--debug` | Enable verbose debug logging |
@@ -128,7 +172,7 @@ npx @wonderwhy-er/desktop-commander@latest remote --debug
 # Start without saving/reusing the session
 npx @wonderwhy-er/desktop-commander@latest remote --no-persist-session
 
-# Remove saved local credentials
+# Revoke this device and remove saved credentials
 npx @wonderwhy-er/desktop-commander@latest remote --logout
 ```
 
@@ -158,13 +202,13 @@ A normal restart reuses saved credentials. If the device authorization was revok
 
 ### I want to switch accounts or start with fresh authentication
 
-For a local re-authentication, remove the saved credentials:
+Revoke this device and remove its saved credentials:
 
 ```bash
 npx @wonderwhy-er/desktop-commander@latest remote --logout
 ```
 
-For a complete reset, also revoke the old device from the Remote MCP dashboard before pairing again.
+Successful logout also revokes the old device and its MQTT certificates; pair again on the next start.
 
 ### I need more diagnostic output
 

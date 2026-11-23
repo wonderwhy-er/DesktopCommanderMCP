@@ -10,7 +10,7 @@
  *   installed with --install-links so the bundle holds real files, not a link.
  *
  * Reads package.json and build-mcpb.cjs only: no build, no network.
- * test/repro/test-release-packages-ship-contract.js builds both packages.
+ * test/repro/test-release-packages-load-telemetry.js builds both packages.
  */
 import assert from 'assert';
 import fs from 'fs';

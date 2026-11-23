@@ -7,18 +7,18 @@
 
 import assert from 'assert';
 import fs from 'fs';
-import os from 'os';
 import path from 'path';
 import { searchManager } from '../dist/search-manager.js';
 import { configManager } from '../dist/config-manager.js';
 import { searchUntilDone } from './helpers/search.js';
 import { runIfMain } from './helpers/run-if-main.js';
+import { createTempDir } from './helpers/test-env.js';
 
 const FILES = 50;
 const LINES = 20;
 
 export default async function runTests() {
-  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'dc-search-long-timeout-')));
+  const dir = createTempDir('dc-search-long-timeout-');
   for (let i = 0; i < FILES; i++) fs.writeFileSync(path.join(dir, `f${i}.txt`), 'abc\n'.repeat(LINES));
   const originalConfig = await configManager.getConfig();
   await configManager.setValue('allowedDirectories', [dir]);

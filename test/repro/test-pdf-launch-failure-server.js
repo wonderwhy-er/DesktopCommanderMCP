@@ -15,17 +15,15 @@
 // Run: node test/repro/run-repro.js test-pdf-launch-failure-server.js
 // Exit code: 1 if the server died or the profile folder was left behind.
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { LoggingMessageNotificationSchema } from '@modelcontextprotocol/sdk/types.js';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { fileURLToPath } from 'url';
 import { closeClient } from '../helpers/close-client.js';
+import { serverTransport } from '../helpers/mcp-server.js';
 import { callToolOnceLoaded } from '../helpers/heavy-packages.js';
 import { exitProcess } from '../../dist/utils/exit-process.js';
 
-const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const WAIT_LIMIT_MS = 30_000;
 /** Chrome profile folders: Desktop Commander's own, or one Puppeteer creates itself */
 const PROFILE_PREFIXES = ['desktop-commander-chrome-profile-', 'puppeteer_dev_chrome_profile-'];
@@ -36,13 +34,7 @@ const log = (m) => console.log(`[${Date.now() - T0}ms] ${m}`);
 // The server (and the Chrome it starts) keep their temporary files here
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dc-repro-pdf-launch-failure-'));
 
-const transport = new StdioClientTransport({
-  command: process.execPath,
-  args: [path.join(PROJECT_ROOT, 'dist/index.js'), '--no-onboarding'],
-  cwd: PROJECT_ROOT,
-  stderr: 'pipe',
-  env: { ...process.env, TEMP: tempDir, TMP: tempDir, TMPDIR: tempDir },
-});
+const transport = serverTransport({ env: { ...process.env, TEMP: tempDir, TMP: tempDir, TMPDIR: tempDir } });
 let serverStderr = '';
 transport.stderr?.on('data', (chunk) => { serverStderr += chunk; });
 let serverClosedAt = null;

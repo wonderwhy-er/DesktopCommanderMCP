@@ -15,8 +15,8 @@ import { performance } from 'perf_hooks';
 import { exitProcess } from '../../dist/utils/exit-process.js';
 
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { callToolOnceLoaded } from '../helpers/heavy-packages.js';
+import { serverTransport } from '../helpers/mcp-server.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -45,12 +45,14 @@ const RESPONSIVENESS_MAX_LATENCY_MS = 5000;
 
 // Fuzzy-scan event-loop regression: a deliberately slow fuzzy fallback (large
 // file, large absent old_string) must not block concurrent pings. The general
-// responsiveness probe above is too loose for this (5s limit); a synchronous
-// scan blocks for ~3-4s and would slip under it, so this scenario pings on a
-// tight interval with a strict latency ceiling.
-const FUZZY_SCAN_FILE_MB = 2;
+// responsiveness probe above is too loose for this (5s limit), so this scenario
+// pings on a tight interval with a strict latency ceiling. The scan takes ~1s
+// here, so a synchronous one would block past the ceiling; a bigger one isn't
+// needed and would pass the product's own 30s fuzzy limit (FUZZY_SEARCH_TIMEOUT_MS)
+// on a slow machine under coverage, which slows the scan about five times.
+const FUZZY_SCAN_FILE_MB = 0.5;
 const FUZZY_SCAN_QUERY_KB = 8;
-const FUZZY_SCAN_PING_INTERVAL_MS = 200;
+const FUZZY_SCAN_PING_INTERVAL_MS = 100;
 const FUZZY_SCAN_MIN_PING_COUNT = 5;
 const FUZZY_SCAN_MAX_PING_LATENCY_MS = 500;
 
@@ -759,16 +761,8 @@ async function runResponsivenessProbe(client, stopProbe) {
 }
 
 async function createMcpClient() {
-  const transport = new StdioClientTransport({
-    command: process.execPath,
-    args: [path.join(PROJECT_ROOT, 'dist/index.js'), '--no-onboarding'],
-    cwd: PROJECT_ROOT,
-    stderr: 'pipe',
-    env: {
-      ...process.env,
-      DESKTOP_COMMANDER_DISABLE_TELEMETRY: 'true',
-    },
-  });
+  // Telemetry off also when this file runs directly, without the runner's environment
+  const transport = serverTransport({ env: { ...process.env, DESKTOP_COMMANDER_DISABLE_TELEMETRY: 'true' } });
 
   const stderrChunks = [];
   transport.stderr?.on('data', (chunk) => {

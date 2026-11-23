@@ -3,14 +3,13 @@ import os from 'os';
 import path from 'path';
 import { fileURLToPath, pathToFileURL } from 'url';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { LoggingMessageNotificationSchema } from '@modelcontextprotocol/sdk/types.js';
 import { isTestHome } from './test-env.js';
 import { closeClient } from './close-client.js';
+import { serverTransport } from './mcp-server.js';
 import { hookArgs } from './module-hooks.js';
 
 const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
-const SERVER = path.join(PROJECT_ROOT, 'dist/index.js');
 const PRELOAD = pathToFileURL(path.join(PROJECT_ROOT, 'test/fixtures/record-modules-preload.mjs')).href;
 /** Records the server's imports; the preload records its requires */
 const HOOKS = pathToFileURL(path.join(PROJECT_ROOT, 'test/fixtures/record-modules-hooks.mjs')).href;
@@ -91,21 +90,18 @@ export async function startServerRecordingModules({ holdPackage, failPackageOnce
   const failedMarker = path.join(os.homedir(), `failed-${process.pid}-${Date.now()}`);
   fs.writeFileSync(logFile, '');
 
-  const transport = new StdioClientTransport({
-    command: process.execPath,
-    args: [
+  const transport = serverTransport({
+    nodeArgs: [
       ...(holdPackage || failPackageOnce ? hookArgs(PACKAGE_LOAD_HOOKS) : []),
       ...(failPackageOnce && failOnly !== 'import' ? ['--import', PACKAGE_LOAD_PRELOAD] : []),
-      ...hookArgs(HOOKS), '--import', PRELOAD, SERVER, '--no-onboarding',
+      ...hookArgs(HOOKS), '--import', PRELOAD,
     ],
-    cwd: PROJECT_ROOT,
     env: {
       ...process.env,
       DC_TEST_MODULE_LOG: logFile,
       ...(holdPackage ? { DC_TEST_HOLD_PACKAGE: holdPackage, DC_TEST_HOLD_RELEASE: releaseFile } : {}),
       ...(failPackageOnce ? { DC_TEST_FAIL_PACKAGE_ONCE: failPackageOnce, DC_TEST_FAILED_MARKER: failedMarker, DC_TEST_FAIL_ONLY: failOnly ?? '' } : {}),
     },
-    stderr: 'pipe',
   });
   // The moment the initialize answer arrives, seen before the client acts on it
   let initializedAt;

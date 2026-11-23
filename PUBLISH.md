@@ -5,8 +5,8 @@ Releases are published by CI (`.github/workflows/release.yml`). A release goes t
 
 1. **npm** — `@wonderwhy-er/desktop-commander`
 2. **GitHub release** — with the `desktop-commander-<version>.mcpb` asset attached
-3. **Claude directory** — Anthropic's scanner picks the `.mcpb` off the GitHub
-   release automatically (validation on their side takes a few days)
+3. **Claude directory** — GitHub releases expose the MCPB asset for Anthropic's
+   directory pipeline; actual ingestion depends on Anthropic and must be verified
 4. **MCP Registry** — `io.github.wonderwhy-er/desktop-commander`
 
 **Who can release:** anyone with write (push) access to this repository. Both the
@@ -43,16 +43,24 @@ the tag push hands off to CI. Watch the run at
 https://github.com/wonderwhy-er/DesktopCommanderMCP/actions/workflows/release.yml
 
 Requirements: on `main`, clean working tree, tests passing. `--yes` skips the
-prompt, `--skip-tests` builds without the test suite.
+prompt. `npm run release -- --skip-tests` dispatches CI with the test-suite
+skip checkbox set; CI still builds and verifies the MCPB before publishing.
 
 ## Normal release (GitHub UI — no local setup at all)
 
-1. Actions → **Release** → **Run workflow**
+1. Actions → **Release** → **Run workflow** (from `main`)
 2. Pick `bump` = patch / minor / major
-3. Run
+3. Optionally select **Skip tests** if the candidate has already passed testing
+4. Run
 
-CI runs the tests, bumps the version, commits and tags `main`, then publishes
-everywhere — identical result to the terminal flow.
+By default CI runs the full tests, bumps the version, commits and tags `main`,
+then publishes everywhere. **Skip tests** bypasses only the full test suite;
+dependency installation, MCPB build, version consistency and bundle validation
+remain mandatory. Skipped tests are recorded as a warning in the workflow log.
+
+When the current version is an alpha such as `0.3.2-alpha.3`, **patch**
+promotes it directly to `0.3.2`, not `0.3.3`. Minor and major still
+advance to `0.4.0` and `1.0.0` respectively.
 
 ---
 
@@ -127,10 +135,39 @@ npm run release:alpha    # 0.2.47 → 0.2.48-alpha.0 → npm only, under the alp
 
 Alphas are the one flow that still publishes from your machine (needs
 `npm login`). No git tag, no CI, no GitHub release, no registry — CI
-intentionally refuses pre-release tags. After alpha testing, reset the version
-files to a stable version before the next regular release.
+intentionally refuses publishing pre-release tags. After alpha testing,
+choose `bump=patch` in the GitHub Actions release workflow to promote
+`0.3.2-alpha.N` directly to stable `0.3.2`.
 
 Install an alpha with: `npm install -g @wonderwhy-er/desktop-commander@alpha`
+
+## Repository-root MCPB manifest (discovery experiment)
+
+The repository includes [`manifest.json`](manifest.json) at its root to make
+**the most recently published stable MCPB metadata** discoverable without downloading
+an archive. This mirrors the layout used by some other MCPB projects but is an
+**experiment**, not a documented Claude directory-update trigger.
+
+- `manifest.template.json` remains the source of truth for MCPB metadata.
+- `npm run sync-version` (and `npm run bump`) regenerates the root manifest
+  when `package.json` contains a stable `X.Y.Z` version. The release scripts
+  include the regenerated file in the release commit.
+- While the working tree is on an alpha/beta version, the root manifest deliberately
+  stays at the last stable release. Never advertise prerelease metadata to
+  an unknown external directory crawler.
+- The root copy omits `$schema` because its relative path is valid only for
+  the bundle build directory. The actual `.mcpb` is still assembled from the
+  template by `scripts/build-mcpb.cjs`.
+- Release CI checks that the root manifest and the bundled manifest match
+  (ignoring the bundle-only `$schema`) before publishing.
+
+**Important:** The [official MCPB spec](https://github.com/modelcontextprotocol/mcpb/blob/main/MANIFEST.md)
+requires `manifest.json` *inside the bundle*, not at the GitHub root.
+There is no verified documentation that a root manifest or an npm update causes
+Anthropic to refresh a directory listing. Directory publishing and the existing
+Anthropic escalation remain separate operational steps.
+
+---
 
 ## Release notes
 

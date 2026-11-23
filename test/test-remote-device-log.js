@@ -34,6 +34,7 @@ import path from 'node:path';
 import { createTempDir } from './helpers/test-env.js';
 import { runIfMain } from './helpers/run-if-main.js';
 import { startTerminalTimestamps } from '../dist/utils/terminal-timestamps.js';
+import { getRemoteDeviceConfigPath } from '../dist/remote-device/remote-utils.js';
 
 const MB = 1024 * 1024;
 const TIMESTAMP = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ {2}/;
@@ -86,8 +87,8 @@ async function runTests() {
     }
 
     try {
-        await test('the log folder defaults to ~/.desktop-commander-device', () => {
-            assert.strictEqual(getDeviceLogDir(), path.join(os.homedir(), '.desktop-commander-device'));
+        await test('the log folder follows the selected device profile directory', () => {
+            assert.strictEqual(getDeviceLogDir(), path.dirname(getRemoteDeviceConfigPath()));
         });
 
         await test('lines are kept, one per line, with a UTC timestamp and without the leading emoji', () => {

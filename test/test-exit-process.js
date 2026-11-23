@@ -10,7 +10,8 @@
  * on its own and only forces the exit after EXIT_GRACE_MS.
  *
  * Each case runs in its own Node process:
- *   - nothing keeps the process alive: it exits with the code, before the grace period
+ *   - nothing keeps the process alive: it exits with the code on its own ('beforeExit'
+ *     runs), not through the grace period's process.exit()
  *   - a handle keeps it alive: it exits with the code once the grace period is over
  *   - a second call does not change the code
  *   - stdout written before the call arrives in full
@@ -27,8 +28,12 @@ import { EXIT_GRACE_MS } from '../dist/utils/exit-process.js';
 import { runIfMain } from './helpers/run-if-main.js';
 
 const HELPER_URL = pathToFileURL(path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'dist', 'utils', 'exit-process.js')).href;
-/** Slack for a loaded machine on top of the grace period */
-const TIMING_SLACK_MS = 2000;
+/**
+ * Slack for a loaded machine on top of the grace period, where the grace timer
+ * can fire seconds late. A process the grace period doesn't end runs on far
+ * past this (the test's interval repeats)
+ */
+const TIMING_SLACK_MS = 10_000;
 /**
  * libuv counts timer time in whole milliseconds, so the grace timer can fire
  * before EXIT_GRACE_MS have fully passed (measured down to 999.35 ms), and
@@ -40,14 +45,18 @@ const FETCH_RUNS = 10;
 /**
  * Runs `body` as an ES module in a new Node process with exitProcess imported.
  * Resolves with the process's exit code, its stdout, and what its 'exit'
- * listener saw: the code and how long after the start of `body` it ran.
+ * listener saw: the code, how long after the start of `body` it ran, and
+ * whether the process ended on its own ('beforeExit' runs then, and not when
+ * process.exit() ends it).
  */
 function runChild(body, env = {}) {
     const source = [
         `import fs from 'fs';`,
         `import { exitProcess } from ${JSON.stringify(HELPER_URL)};`,
         `const started = Date.now();`,
-        `process.on('exit', (code) => fs.writeSync(1, '\\n' + JSON.stringify({ code, ms: Date.now() - started })));`,
+        `let onItsOwn = false;`,
+        `process.on('beforeExit', () => { onItsOwn = true; });`,
+        `process.on('exit', (code) => fs.writeSync(1, '\\n' + JSON.stringify({ code, ms: Date.now() - started, onItsOwn })));`,
         body,
     ].join('\n');
     return new Promise((resolve, reject) => {
@@ -77,8 +86,11 @@ async function testExitsOnItsOwn() {
     const run = await runChild('exitProcess(3);');
     assert.strictEqual(run.code, 3, `exit code, stderr: ${run.stderr}`);
     assert.strictEqual(run.exitListener?.code, 3, "the 'exit' listener should see the code");
-    assert.ok(run.exitListener.ms < EXIT_GRACE_MS,
-        `with nothing left to do the process should exit before the ${EXIT_GRACE_MS}ms grace period, took ${run.exitListener.ms}ms`);
+    // Not a time: a loaded machine can take a second to exit either way. A grace
+    // timer that keeps the process alive, or an exitProcess() that calls
+    // process.exit() at once, ends it without 'beforeExit'
+    assert.ok(run.exitListener.onItsOwn,
+        `with nothing left to do the process should exit on its own, not through process.exit() (it took ${run.exitListener.ms}ms)`);
     console.log(`✓ nothing keeps it alive: exit 3 after ${run.exitListener.ms}ms`);
 }
 
