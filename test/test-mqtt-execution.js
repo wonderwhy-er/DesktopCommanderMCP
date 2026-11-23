@@ -1,6 +1,7 @@
 #!/usr/bin/env node
-// The backend sends each call over MQTT (MQTT_TRANSPORT_ENABLED on) or over Broadcast (off), never
-// both. An MQTT doorbell runs the call like a Broadcast doorbell; the database claim stops a second run.
+// Three modes, set by two rollouts. Transport off: Broadcast only. Transport on, execution off:
+// Broadcast runs the call and MQTT only observes. Transport and execution on: MQTT runs the call and
+// Broadcast only observes (no takeover when MQTT is down).
 import assert from 'node:assert/strict';
 import { test, afterEach } from 'node:test';
 import { EventEmitter } from 'node:events';
@@ -17,16 +18,53 @@ const { configManager } = await import('../dist/config-manager.js');
 const setMqttTransport = enabled => rolloutManager.update({ MQTT_TRANSPORT_ENABLED: enabled });
 afterEach(() => rolloutManager.update({}));
 
-test('an MQTT doorbell claims the call and runs it', async () => {
-    setMqttTransport(true);
+const setFlags = (transport, execution) =>
+    rolloutManager.update({ MQTT_TRANSPORT_ENABLED: transport, MQTT_EXECUTION_ENABLED: execution });
+
+test('execution off: an MQTT doorbell is only observed and Broadcast runs the call', async () => {
+    setFlags(true, false);
+    const fixture = makeChannel(RemoteChannel, ['call-off']);
+    await fixture.channel.onMqttDoorbell(doorbell('call-off'));
+    assert.deepEqual(fixture.table.claimRequests, [], 'MQTT does not claim');
+    await fixture.channel.onBroadcastDoorbell(doorbell('call-off'));
+    assert.deepEqual(fixture.delivered, ['call-off']);
+});
+
+test('execution on: a Broadcast doorbell is only observed and MQTT runs the call', async () => {
+    setFlags(true, true);
     const fixture = makeChannel(RemoteChannel, ['call-on']);
+    await fixture.channel.onBroadcastDoorbell(doorbell('call-on'));
+    assert.deepEqual(fixture.table.claimRequests, [], 'Broadcast does not claim');
+    assert.equal(fixture.rows[0].status, 'pending');
     await fixture.channel.onMqttDoorbell(doorbell('call-on'));
     assert.deepEqual(fixture.delivered, ['call-on']);
     assert.equal(fixture.rows[0].status, 'executing');
 });
 
-test('if MQTT and Broadcast ever both ring, the call runs once; the database claim lets one win', async () => {
-    setMqttTransport(true);
+test('execution on, MQTT down: Broadcast still only observes (no takeover)', async () => {
+    setFlags(true, true);
+    const fixture = makeChannel(RemoteChannel, ['call-mqtt-down']);
+    fixture.channel.mqttReady = false;
+    await fixture.channel.onBroadcastDoorbell(doorbell('call-mqtt-down'));
+    assert.deepEqual(fixture.table.claimRequests, []);
+});
+
+test('execution on with transport off: Broadcast keeps running calls', async () => {
+    setFlags(false, true);
+    const fixture = makeChannel(RemoteChannel, ['call-transport-off']);
+    await fixture.channel.onBroadcastDoorbell(doorbell('call-transport-off'));
+    assert.deepEqual(fixture.delivered, ['call-transport-off']);
+});
+
+test('execution on: the doorbell field cannot override the rollout', async () => {
+    setFlags(true, false);
+    const fixture = makeChannel(RemoteChannel, ['call-field']);
+    await fixture.channel.onMqttDoorbell({ ...doorbell('call-field'), IS_MQTT_EXECUTION_ENABLED: true });
+    assert.deepEqual(fixture.table.claimRequests, []);
+});
+
+test('if MQTT and Broadcast both ring with execution on, MQTT runs the call once', async () => {
+    setFlags(true, true);
     const fixture = makeChannel(RemoteChannel, ['call-both']);
     await Promise.all([
         fixture.channel.onMqttDoorbell(doorbell('call-both')),

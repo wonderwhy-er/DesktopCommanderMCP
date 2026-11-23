@@ -14,6 +14,8 @@ process.env.DESKTOP_COMMANDER_DISABLE_TELEMETRY = '1';
 const { RemoteChannel } = await import('../dist/remote-device/remote-channel.js');
 const { rolloutManager } = await import('../dist/remote-device/rollouts.js');
 rolloutManager.update({ MQTT_TRANSPORT_ENABLED: true });
+/** Transport on; execution on means MQTT runs calls and Broadcast only observes. */
+const setExecution = on => rolloutManager.update({ MQTT_TRANSPORT_ENABLED: true, MQTT_EXECUTION_ENABLED: on });
 const { MCPDevice } = await import('../dist/remote-device/device.js');
 const { MqttTransport, createMqttConfig, mqttDoorbellTopic } = await import('../dist/remote-device/mqtt/mqtt-transport.js');
 const { configManager } = await import('../dist/config-manager.js');
@@ -168,15 +170,16 @@ try {
     });
     await publisher.subscribeAsync(resultTopic, { qos: 1 });
 
-    // An MQTT doorbell runs the call. Two copies of one packet run it once, the backend's legacy
-    // IS_MQTT_EXECUTION_ENABLED field has no effect, and a later Broadcast doorbell for the same
-    // call finds it already claimed.
-    for (const enabled of [undefined, false, true]) {
-        const id = `mqtt-${enabled}`;
+    // Execution off: MQTT only observes and Broadcast runs the call. Execution on: MQTT runs it and
+    // Broadcast only observes. The rollout decides; a doorbell field saying the opposite is ignored.
+    // Two copies of one packet run the call once, and the "result ready" message goes out over MQTT.
+    for (const [execution, field] of [[false, undefined], [false, true], [true, undefined], [true, false]]) {
+        setExecution(execution);
+        const id = `mqtt-${execution}-${field}`;
         f.add(id);
         f.rows.get(id).metadata.origin_instance = 'backend';
         const payload = bell(id);
-        if (enabled !== undefined) payload.IS_MQTT_EXECUTION_ENABLED = enabled;
+        if (field !== undefined) payload.IS_MQTT_EXECUTION_ENABLED = field;
         const executionsBefore = f.executed.length;
         await Promise.all([send(payload), send(payload)]);
         await until(() => events.filter(event => event.params.call_id === id && event.name === 'received_from_backend').length === 2);
@@ -186,15 +189,22 @@ try {
             assert.equal('IS_MQTT_EXECUTION_ENABLED' in event.params, false);
             assert.ok(Number.isFinite(Date.parse(event.params.timestamp_utc)));
         }
+        if (!execution) {
+            // Time is the behaviour: give a wrongly started MQTT claim the chance to reach the fake table.
+            await new Promise(resolve => setTimeout(resolve, 50));
+            assert.equal(f.rows.get(id).status, 'pending', 'execution off: MQTT does not claim the call');
+        }
+        await f.channel.onBroadcastDoorbell(payload);
         await until(() => f.rows.get(id).status === 'completed');
         await until(() => resultPackets.some(packet => packet.body.call_id === id));
         assert.deepEqual(resultPackets.find(packet => packet.body.call_id === id), {
             body: { call_id: id }, qos: 1, retain: false,
         });
-        await f.channel.onBroadcastDoorbell(payload);
         assert.equal(f.executed.length, executionsBefore + 1, 'the call runs once');
-        assert.deepEqual(claims(id), ['mqtt']);
+        assert.deepEqual(claims(id), [execution ? 'mqtt' : 'broadcast']);
     }
+
+    setExecution(true);
 
     f.add('old-metadata', 'mqtt_v1');
     await send(bell('old-metadata'));
@@ -306,6 +316,7 @@ try {
     }
     await until(() => !f.channel.mqttReady);
     assert.equal(f.channel.isReachable(), true, 'an MQTT outage does not withdraw healthy Broadcast');
+    setExecution(false);
     f.add('while-mqtt-disconnected');
     await f.channel.onBroadcastDoorbell(bell('while-mqtt-disconnected'));
     await until(() => f.rows.get('while-mqtt-disconnected').status === 'completed');
@@ -318,6 +329,7 @@ try {
     await until(() => f.rows.get('missed-while-disconnected').status === 'completed');
     await until(() => claims('missed-while-disconnected').length === 1);
     assert.deepEqual(claims('missed-while-disconnected'), ['recovery']);
+    setExecution(true);
     f.add('reconnected');
     await send(bell('reconnected'));
     await until(() => f.rows.get('reconnected').status === 'completed');

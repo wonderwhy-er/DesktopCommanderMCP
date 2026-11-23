@@ -844,13 +844,17 @@ export class RemoteChannel {
         }
     }
 
-    /**
-     * A doorbell arrived over MQTT: claim the call and run it, like a Broadcast doorbell.
-     * The backend sends each call over one of them only: MQTT while MQTT_TRANSPORT_ENABLED is on,
-     * Broadcast while it is off. The database claim still makes sure a call never runs twice.
-     */
+    /** Transport and execution on: MQTT runs calls and Broadcast only observes. */
+    private mqttRunsCalls(): boolean {
+        return rolloutManager.get('MQTT_TRANSPORT_ENABLED') && rolloutManager.get('MQTT_EXECUTION_ENABLED');
+    }
+
     private async onMqttDoorbell(payload: MqttDoorbell): Promise<void> {
         if (this.shuttingDown || this.sessionLost || this.handlingSignedOut) {
+            return;
+        }
+        if (!this.mqttRunsCalls()) {
+            console.debug(`[MQTT] Doorbell for call ${payload.call_id} observed only; execution is off`);
             return;
         }
         await this.onDoorbell(payload, 'mqtt');
@@ -868,6 +872,10 @@ export class RemoteChannel {
         }
         observeTransport({ stage: 'received', payload, deviceId: this.deviceId,
             userId: this.user?.id, transport: 'broadcast' });
+        if (this.mqttRunsCalls()) {
+            console.debug(`[DEBUG] Broadcast doorbell for call ${payload?.call_id} observed only; MQTT runs calls`);
+            return;
+        }
         await this.onDoorbell(payload, 'broadcast');
     }
 
