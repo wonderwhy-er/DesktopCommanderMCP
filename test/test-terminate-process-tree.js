@@ -28,6 +28,31 @@ import {
   createPidDir, processTreeCommand, readTreePids, readWrittenPids, waitForExit, cleanUpProcesses, processGroupOf
 } from './helpers/process-tree.js';
 
+// How long the test waits for a tree's processes to report their PIDs, or to
+// be gone. Either takes a second or two; the waits return then, so only a
+// failing run waits this out, and a loaded machine still meets it
+const PROCESS_WAIT_MS = 30_000;
+
+// A node:local call answers about a second after its timeout (the tree's end,
+// then up to 1 s for the pipes to close); one that waits for pipes a survivor
+// holds never answers. Past the answer by this much, even on a loaded machine
+const RETURN_MARGIN_MS = 60_000;
+
+// How long starting a tree took in this run (start_process until every level
+// reported its PID), measured by the first force_terminate case
+let treeStartMs;
+
+/**
+ * The timeout_ms the node:local cases give their script: its tree must be
+ * running before the timeout ends it. 5 times what starting a tree took in
+ * this run, so a busy machine that starts processes slowly gives it as much
+ * more time; at least the 1.5 s these cases used to give, 10 s if nothing was
+ * measured.
+ */
+function nodeLocalTimeoutMs() {
+  return treeStartMs === undefined ? 10_000 : Math.max(1500, 5 * treeStartMs);
+}
+
 /**
  * start_process a tree of `levels` processes under the shell, force_terminate
  * it, and assert the shell and every level are gone.
@@ -36,14 +61,16 @@ async function assertForceTerminateEndsTree(levels, ...flags) {
   const dir = createPidDir();
   let shellPid;
   try {
+    const startedAt = Date.now();
     const started = await startProcess({ command: processTreeCommand(dir, levels, ...flags), timeout_ms: 500 });
     shellPid = started.structuredContent?.pid;
     assert(shellPid > 0, `start_process should start the tree: ${started.content[0].text}`);
-    const treePids = await readTreePids(dir, levels);
+    const treePids = await readTreePids(dir, levels, PROCESS_WAIT_MS);
+    treeStartMs ??= Date.now() - startedAt;
 
     const terminated = await forceTerminate({ pid: shellPid });
     assert(!terminated.isError, `force_terminate should succeed: ${terminated.content[0].text}`);
-    const stillRunning = await waitForExit([shellPid, ...treePids]);
+    const stillRunning = await waitForExit([shellPid, ...treePids], PROCESS_WAIT_MS);
     assert.deepStrictEqual(stillRunning, [],
       `force_terminate should end the shell ${shellPid} and all ${levels} processes under it (${treePids.join(', ')}); still running: ${stillRunning.join(', ')}`);
     assert.strictEqual(terminated.content[0].text, `Successfully initiated termination of session ${shellPid}`);
@@ -97,11 +124,11 @@ async function testForceTerminateEndsChildrenStartedDuringGrace() {
     const started = await startProcess({ command: processTreeCommand(dir, 2, 'ignore-sigterm', 'spawn-on-sigterm'), timeout_ms: 500 });
     shellPid = started.structuredContent?.pid;
     assert(shellPid > 0, `start_process should start the tree: ${started.content[0].text}`);
-    const treePids = await readTreePids(dir, 2);
+    const treePids = await readTreePids(dir, 2, PROCESS_WAIT_MS);
 
     const terminated = await forceTerminate({ pid: shellPid });
     const late = readLatePids(dir);
-    const stillRunning = await waitForExit([shellPid, ...treePids, ...late.all]);
+    const stillRunning = await waitForExit([shellPid, ...treePids, ...late.all], PROCESS_WAIT_MS);
     assert.deepStrictEqual(stillRunning, [],
       `force_terminate should end the tree (${treePids.join(', ')}) and the children it started during the grace period (${late.all.join(', ')}); still running: ${stillRunning.join(', ')}`);
     // Otherwise the case above was not exercised
@@ -123,8 +150,8 @@ async function testForceTerminateEndsChildrenStartedDuringGrace() {
  */
 async function testNodeLocalTimeoutEndsTree() {
   console.log('\nTest: node:local timeout ends the script and the processes it started');
-  const TIMEOUT_MS = 1500;
-  const RETURN_LIMIT_MS = TIMEOUT_MS + 8000;
+  const TIMEOUT_MS = nodeLocalTimeoutMs();
+  const RETURN_LIMIT_MS = TIMEOUT_MS + RETURN_MARGIN_MS;
   const session = await startProcess({ command: 'node:local', timeout_ms: 30000 });
   const virtualPid = Number(/PID (-\d+)/.exec(session.content[0].text)?.[1]);
   assert(virtualPid < 0, `node:local should start a virtual session: ${session.content[0].text}`);
@@ -149,7 +176,7 @@ async function testNodeLocalTimeoutEndsTree() {
     clearTimeout(limit);
     const treePids = readWrittenPids(dir);
     assert.strictEqual(treePids.length, 2, `The script should have started 2 processes, found PIDs: ${treePids.join(', ')}`);
-    const stillRunning = await waitForExit([...scriptPid(), ...treePids]);
+    const stillRunning = await waitForExit([...scriptPid(), ...treePids], PROCESS_WAIT_MS);
     assert.deepStrictEqual(stillRunning, [],
       `The timeout should end the script ${scriptPid()[0]} and the processes it started (${treePids.join(', ')}); still running: ${stillRunning.join(', ')}`);
     assert(result, `interact_with_process should return after its ${TIMEOUT_MS}ms timeout, but had not returned after ${RETURN_LIMIT_MS}ms`);
@@ -171,8 +198,8 @@ async function testNodeLocalTimeoutEndsTree() {
  */
 async function testNodeLocalTimeoutAnswersWhenTreeSurvives() {
   console.log('\nTest: node:local timeout answers when part of the tree survives');
-  const TIMEOUT_MS = 1500;
-  const RETURN_LIMIT_MS = TIMEOUT_MS + 8000;
+  const TIMEOUT_MS = nodeLocalTimeoutMs();
+  const RETURN_LIMIT_MS = TIMEOUT_MS + RETURN_MARGIN_MS;
   const session = await startProcess({ command: 'node:local', timeout_ms: 30000 });
   const virtualPid = Number(/PID (-\d+)/.exec(session.content[0].text)?.[1]);
   assert(virtualPid < 0, `node:local should start a virtual session: ${session.content[0].text}`);
@@ -197,7 +224,7 @@ async function testNodeLocalTimeoutAnswersWhenTreeSurvives() {
   try {
     let limit;
     const call = interactWithProcess({ pid: virtualPid, input: script, timeout_ms: TIMEOUT_MS });
-    await readTreePids(dir, 2);
+    await readTreePids(dir, 2, PROCESS_WAIT_MS);
     // Once the tree runs, make the tree-finding tool impossible to start, so the timeout ends only the script
     if (process.platform === 'win32') {
       process.env.SystemRoot = path.join(dir, 'no-windows');
@@ -237,15 +264,16 @@ async function testNodeLocalTimeoutAnswersWhenTreeSurvives() {
  */
 async function testNodeLocalTimeoutAnswersWhenAProcessLeftTheTree() {
   console.log('\nTest: node:local timeout answers when a process that left the tree holds the pipes');
-  const TIMEOUT_MS = 1500;
-  const RETURN_LIMIT_MS = TIMEOUT_MS + 8000;
+  const TIMEOUT_MS = nodeLocalTimeoutMs();
+  const RETURN_LIMIT_MS = TIMEOUT_MS + RETURN_MARGIN_MS;
   const session = await startProcess({ command: 'node:local', timeout_ms: 30000 });
   const virtualPid = Number(/PID (-\d+)/.exec(session.content[0].text)?.[1]);
   assert(virtualPid < 0, `node:local should start a virtual session: ${session.content[0].text}`);
   const dir = createPidDir();
   const scriptPidFile = path.join(dir, 'script.pid.txt');
   const grandchildPidFile = path.join(dir, 'grandchild.pid.txt');
-  const grandchildCode = `require('fs').writeFileSync(${JSON.stringify(grandchildPidFile)}, String(process.pid)); setTimeout(() => {}, 60000);`;
+  // Holds the pipes far past RETURN_LIMIT_MS, so a call that waits for them can't answer in time; the cleanup kills it
+  const grandchildCode = `require('fs').writeFileSync(${JSON.stringify(grandchildPidFile)}, String(process.pid)); setTimeout(() => {}, 300000);`;
   const childCode = `require('child_process').spawn(process.execPath, ['-e', ${JSON.stringify(grandchildCode)}], { stdio: 'inherit', detached: true, windowsHide: true }).unref();`;
   const script = `
     import { spawn } from 'child_process';
@@ -293,7 +321,7 @@ async function testTerminationFailureIsReported() {
     const started = await startProcess({ command: processTreeCommand(dir, 2), timeout_ms: 500 });
     shellPid = started.structuredContent?.pid;
     assert(shellPid > 0, `start_process should start the tree: ${started.content[0].text}`);
-    await readTreePids(dir, 2);
+    await readTreePids(dir, 2, PROCESS_WAIT_MS);
 
     // Make the tree-finding tool impossible to start, and collect what the server logs (to stdout, without a transport)
     let expectedReason;
@@ -321,7 +349,7 @@ async function testTerminationFailureIsReported() {
     const messages = logged.join('').split('\n').filter(Boolean).map((line) => JSON.parse(line).params?.data);
     assert.deepStrictEqual(messages, [`Could not end every process of PID ${shellPid}: ${expectedReason}`],
       'The log should give the reason');
-    assert.deepStrictEqual(await waitForExit([shellPid]), [], `The shell ${shellPid} itself should still be killed`);
+    assert.deepStrictEqual(await waitForExit([shellPid], PROCESS_WAIT_MS), [], `The shell ${shellPid} itself should still be killed`);
     console.log(`✓ Reported as an error, logged "${expectedReason}", and the shell was killed`);
   } finally {
     process.stdout.write = stdoutWrite;
@@ -352,7 +380,7 @@ async function testFailedTerminationIsRetried() {
     const started = await startProcess({ command: processTreeCommand(dir, 1), timeout_ms: 500 });
     shellPid = started.structuredContent?.pid;
     assert(shellPid > 0, `start_process should start the tree: ${started.content[0].text}`);
-    await readTreePids(dir, 1);
+    await readTreePids(dir, 1, PROCESS_WAIT_MS);
 
     // The first attempt fails and leaves the shell running: the tree-finding
     // tool can't start, and the shell's own fallback kill does nothing
@@ -376,7 +404,7 @@ async function testFailedTerminationIsRetried() {
     // Everything works again: a second force_terminate must end the tree
     const second = await forceTerminate({ pid: shellPid });
     assert(!second.isError, `A second force_terminate should try again and end the tree, got: ${second.content[0].text}`);
-    assert.deepStrictEqual(await waitForExit([shellPid, ...readWrittenPids(dir)]), [], 'The second force_terminate should end the shell and its tree');
+    assert.deepStrictEqual(await waitForExit([shellPid, ...readWrittenPids(dir)], PROCESS_WAIT_MS), [], 'The second force_terminate should end the shell and its tree');
     console.log('✓ The second force_terminate tried again and ended the tree');
   } finally {
     process.stdout.write = stdoutWrite;
@@ -405,7 +433,7 @@ async function testSessionsStayInServerProcessGroup() {
     const started = await startProcess({ command: processTreeCommand(dir, 2), timeout_ms: 500 });
     shellPid = started.structuredContent?.pid;
     assert(shellPid > 0, `start_process should start the tree: ${started.content[0].text}`);
-    const pids = [shellPid, ...await readTreePids(dir, 2)];
+    const pids = [shellPid, ...await readTreePids(dir, 2, PROCESS_WAIT_MS)];
     const serverGroup = processGroupOf(process.pid);
     const elsewhere = pids.map((pid) => ({ pid, group: processGroupOf(pid) })).filter(({ group }) => group !== serverGroup);
     assert.deepStrictEqual(elsewhere, [],

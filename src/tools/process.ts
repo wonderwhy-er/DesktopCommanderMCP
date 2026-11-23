@@ -5,6 +5,8 @@ import { ProcessInfo, ServerResult } from '../types.js';
 import { KillProcessArgsSchema } from './schemas.js';
 import { resolveProgramPath } from '../utils/shell.js';
 import { terminatePid } from '../utils/process-tree.js';
+import { terminalManager } from '../terminal-manager.js';
+import { terminationFailedResult } from './improved-process-tools.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -83,11 +85,15 @@ export async function killProcess(args: unknown): Promise<ServerResult> {
     };
   }
 
+  const pid = parsed.data.pid;
+  // A start_process session ends with every process its command started, as with force_terminate
+  const outcome = await terminalManager.forceTerminate(pid);
+  if (outcome === 'failed') return terminationFailedResult(pid);
   try {
     // Returns once the process is gone, so a success means it no longer runs
-    await terminatePid(parsed.data.pid);
+    if (outcome === 'not_found') await terminatePid(pid);
     return {
-      content: [{ type: "text", text: `Successfully terminated process ${parsed.data.pid}` }],
+      content: [{ type: "text", text: `Successfully terminated process ${pid}` }],
     };
   } catch (error) {
     return {

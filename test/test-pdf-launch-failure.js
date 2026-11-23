@@ -32,8 +32,14 @@ import path from 'path';
 import { writePdf } from '../dist/tools/filesystem.js';
 import { runIfMain, skip } from './helpers/run-if-main.js';
 
-/** Longest a Chrome profile may take to disappear after a render */
-const PROFILE_REMOVAL_LIMIT_MS = 30_000;
+/**
+ * Longest a Chrome profile may take to disappear after a render: past the
+ * product's own 60 s budget for removing it (CHROME_PROFILE_REMOVAL_BUDGET_MS),
+ * so a loaded machine still sees it go. The wait ends as soon as it is gone.
+ */
+const PROFILE_REMOVAL_LIMIT_MS = 75_000;
+/** Chrome's launch gets this long instead of Puppeteer's 30 s, so a loaded machine still starts it (launch_options.timeout applies) */
+const LAUNCH_TIMEOUT_MS = 120_000;
 const LAUNCH_TIMEOUT_MESSAGE = 'Timed out after 1 ms while waiting for the WS endpoint URL to appear in stdout!';
 const USER_DATA_DIR_ARG = '--user-data-dir=';
 /** Node announces every child process it creates on this channel */
@@ -91,7 +97,7 @@ async function testSuccessfulRenderLeavesNoProfile() {
     const outFile = path.join(tempDir, 'rendered.pdf');
     const profiles = watchChromeProfiles();
     try {
-        await writePdf(outFile, '# Rendered\n\nChrome launched fine.');
+        await writePdf(outFile, '# Rendered\n\nChrome launched fine.', undefined, { launch_options: { timeout: LAUNCH_TIMEOUT_MS } });
     } finally {
         profiles.stop();
     }

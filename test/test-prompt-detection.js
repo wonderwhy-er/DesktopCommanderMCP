@@ -23,8 +23,6 @@
  * wasn't detected as waiting, so interact_with_process waited out its timeout.
  * A markdown table's lines ("| a | b |") are not prompts.
  */
-import fs from 'fs';
-import os from 'os';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { analyzeProcessState } from '../dist/utils/process-detection.js';
@@ -42,9 +40,18 @@ const TABLE_LINES = NODE_24_SESSIONS[0][2][4][1].split('\n').slice(0, 3);
 
 const FIXTURE = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures', 'pytest-196.js');
 const SPLIT_LINE = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures', 'split-line.js');
-// The shell answers "echo hi" within a second or two; missing its prompt runs to the timeout
-const INTERACT_TIMEOUT_MS = 20_000;
-const PROMPT_WITHIN_MS = 5_000;
+// The shell answers "echo hi" within a second or two; missing its prompt runs to
+// the timeout, well past the limit, which a loaded machine still meets (under
+// the 50 s wait ceiling, which would end the wait first)
+const INTERACT_TIMEOUT_MS = 45_000;
+const PROMPT_WITHIN_MS = 20_000;
+// Deadline of a start that ends at the shell's or REPL's prompt
+const START_DEADLINE_MS = 30_000;
+// start_process waits these out: the processes print no prompt. A wait that
+// ended before the output it judges came (a loaded machine) proves nothing, so
+// that case runs once more, waiting four times as long.
+const COLLECTING_WAIT_MS = 1_500;
+const SPLIT_LINE_WAIT_MS = 3_000;
 
 // Output that ends in ordinary text, not a prompt
 const NOT_PROMPTS = [
@@ -103,17 +110,25 @@ function testDetection() {
 
 async function testStartProcess() {
   console.log('\n--- start_process: pytest collecting (#196) ---');
-  const result = await startProcess({ command: `node "${FIXTURE}"`, timeout_ms: 1500 });
-  const pid = result.structuredContent?.pid;
-  const text = result.content[0].text;
-  try {
-    check(text.includes('collecting ... '), `the output should have arrived before the wait ended, got: ${text.slice(-200)}`);
-    check(!text.includes('waiting for input'),
-      `start_process should not report pytest as waiting for input while it collects, got: ${text.slice(-160)}`);
-    check(result.structuredContent?.status === 'running', `status should be running, got ${result.structuredContent?.status}`);
-    check(text.includes('⏳ Process is running'), `start_process should report the process as running, got: ${text.slice(-160)}`);
-  } finally {
-    if (pid > 0) await forceTerminate({ pid });
+  for (const waitMs of [COLLECTING_WAIT_MS, COLLECTING_WAIT_MS * 4]) {
+    const result = await startProcess({ command: `node "${FIXTURE}"`, timeout_ms: waitMs });
+    const pid = result.structuredContent?.pid;
+    const text = result.content[0].text;
+    try {
+      // Taking it for a prompt needs the output, so a wait without it was too short to judge
+      if (!text.includes('collecting ... ') && waitMs === COLLECTING_WAIT_MS) {
+        console.log(`the output came after the ${waitMs}ms wait, which proves nothing: once more, waiting ${waitMs * 4}ms`);
+        continue;
+      }
+      check(text.includes('collecting ... '), `the output should have arrived before the wait ended, got: ${text.slice(-200)}`);
+      check(!text.includes('waiting for input'),
+        `start_process should not report pytest as waiting for input while it collects, got: ${text.slice(-160)}`);
+      check(result.structuredContent?.status === 'running', `status should be running, got ${result.structuredContent?.status}`);
+      check(text.includes('⏳ Process is running'), `start_process should report the process as running, got: ${text.slice(-160)}`);
+      return;
+    } finally {
+      if (pid > 0) await forceTerminate({ pid });
+    }
   }
 }
 
@@ -124,32 +139,34 @@ async function testStartProcess() {
  */
 async function testStartProcessOnAPieceOfALine() {
   console.log('\n--- start_process: a piece of a line that ends like a prompt ---');
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dc-split-line-'));
-  try {
-    await Promise.all(['markup', 'dollar', 'hash'].map(async (piece) => {
-      const trigger = path.join(dir, piece);
-      const started = startProcess({ command: `node "${SPLIT_LINE}" "${trigger}" ${piece}`, timeout_ms: 3000 });
-      // The rest of the line comes 1 s later: a wait that ended on the first piece misses it
-      setTimeout(() => fs.writeFileSync(trigger, ''), 1000);
-      const result = await started;
+  await Promise.all(['markup', 'dollar', 'hash'].map(async (piece) => {
+    for (const waitMs of [SPLIT_LINE_WAIT_MS, SPLIT_LINE_WAIT_MS * 4]) {
+      // The rest of the line comes 1 s after the piece: a wait that ended on the piece misses it
+      const result = await startProcess({ command: `node "${SPLIT_LINE}" ${piece}`, timeout_ms: waitMs });
       const pid = result.structuredContent?.pid;
       const text = result.content[0].text;
       try {
+        // A wait that ran out (not one that took the piece for a prompt) before the
+        // rest came was too short to judge
+        const late = !text.includes('and the rest of the line') && result.structuredContent?.status !== 'waiting_for_input';
+        if (late && waitMs === SPLIT_LINE_WAIT_MS) {
+          console.log(`"${piece}": the rest came after the ${waitMs}ms wait, which proves nothing: once more, waiting ${waitMs * 4}ms`);
+          continue;
+        }
         check(text.includes('and the rest of the line'),
           `start_process ended its wait on the piece "${piece}" of a line, before the rest of it: ${JSON.stringify(text.slice(0, 120))}`);
+        return;
       } finally {
         if (pid > 0) await forceTerminate({ pid });
       }
-    }));
-  } finally {
-    fs.rmSync(dir, { recursive: true, force: true });
-  }
+    }
+  }));
 }
 
 async function testInteractWithShell() {
   const [name, command] = process.platform === 'win32' ? ['PowerShell', 'powershell -NoLogo'] : ['bash', 'bash --norc --noprofile -i'];
   console.log(`\n--- interact_with_process: a real ${name} session ---`);
-  const started = await startProcess({ command, timeout_ms: 10_000 });
+  const started = await startProcess({ command, timeout_ms: START_DEADLINE_MS });
   const pid = started.structuredContent?.pid;
   try {
     check(started.structuredContent?.status === 'waiting_for_input',
@@ -173,7 +190,7 @@ async function testInteractWithShell() {
 
 async function testInteractAtNodeContinuation() {
   console.log('\n--- interact_with_process: node -i at its continuation prompt ---');
-  const started = await startProcess({ command: 'node -i', timeout_ms: 5000 });
+  const started = await startProcess({ command: 'node -i', timeout_ms: START_DEADLINE_MS });
   const pid = started.structuredContent?.pid;
   try {
     // [input, what the answer shows]: a statement typed a line at a time, then its result

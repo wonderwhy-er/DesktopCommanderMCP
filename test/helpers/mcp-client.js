@@ -3,29 +3,18 @@
  * its own process, talked to over stdio with the SDK client, as an MCP client
  * does. Closing the client ends the server.
  */
-import path from 'path';
-import { fileURLToPath } from 'url';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { serverTransport } from './mcp-server.js';
 export { closeClient } from './close-client.js';
 
-const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
-
 /**
- * Starts the server and returns a connected client; the caller closes it.
- * The server gets `env`, this process's environment unless a test passes
- * another (the SDK adds its own default set to it, as for any MCP client).
+ * Starts the server (serverTransport()) and returns a connected client; the
+ * caller closes it. The server gets `env`, this process's environment unless a
+ * test passes another.
  */
-export async function connectToServer(clientName, env = process.env) {
-  const transport = new StdioClientTransport({
-    command: process.execPath,
-    args: [path.join(PROJECT_ROOT, 'dist/index.js'), '--no-onboarding'],
-    cwd: PROJECT_ROOT,
-    stderr: 'pipe',
-    env: { ...env },
-  });
+export async function connectToServer(clientName, env) {
   const client = new Client({ name: clientName, version: '1.0.0' }, { capabilities: {} });
-  await client.connect(transport, { timeout: 30_000 });
+  await client.connect(serverTransport({ env }), { timeout: 30_000 });
   return client;
 }
 
@@ -45,4 +34,9 @@ export function readSearchAnswer(result) {
     totalResults: counts ? Number(counts[2] ?? counts[1]) : undefined,
     totalMatches: counts ? Number(counts[1]) : undefined,
   };
+}
+
+/** The text of a tool result (what the AI reads) */
+export function answerText(result) {
+  return (result?.content ?? []).map((part) => part.text ?? '').join('\n');
 }

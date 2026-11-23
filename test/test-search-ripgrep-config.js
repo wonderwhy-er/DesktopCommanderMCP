@@ -16,6 +16,7 @@ import { searchManager } from '../dist/search-manager.js';
 import { configManager } from '../dist/config-manager.js';
 import { startSearchAndWait } from './helpers/search.js';
 import { runIfMain } from './helpers/run-if-main.js';
+import { withEnv } from './helpers/test-env.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const TEST_DIR = path.join(__dirname, 'search-ripgrep-config-test');
@@ -49,15 +50,7 @@ async function runSearch(searchArgs) {
 
 /** Runs a search with RIPGREP_CONFIG_PATH set to `configPath`, or unset */
 async function runSearchWithRipgrepConfig(configPath, searchArgs) {
-  const original = process.env.RIPGREP_CONFIG_PATH;
-  if (configPath === undefined) delete process.env.RIPGREP_CONFIG_PATH;
-  else process.env.RIPGREP_CONFIG_PATH = configPath;
-  try {
-    return await runSearch(searchArgs);
-  } finally {
-    if (original === undefined) delete process.env.RIPGREP_CONFIG_PATH;
-    else process.env.RIPGREP_CONFIG_PATH = original;
-  }
+  return withEnv({ RIPGREP_CONFIG_PATH: configPath }, () => runSearch(searchArgs));
 }
 
 /**

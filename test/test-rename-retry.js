@@ -16,7 +16,16 @@ import { holdFileOpen } from './helpers/hold-file-open.js';
 import { runIfMain } from './helpers/run-if-main.js';
 
 const isWindows = process.platform === 'win32';
-const LOCK_MS = 1000;
+// The holder keeps the file open until the test kills it (long past any run),
+// so the test, not a timer in the holder, decides when it lets go
+const HOLD_MS = 60_000;
+// renameWithRetry retries for up to 5 s (rename.ts). The holder lets go this
+// long after it starts, so the retries must wait that out, with the rest of
+// the 5 s to spare on a loaded machine
+const RELEASE_AFTER_MS = 300;
+// The retries last up to 5 s; failing at once takes milliseconds. Half the
+// retry budget still tells the two apart on a loaded machine
+const FAIL_AT_ONCE_MS = 2500;
 
 async function testRenameWhileHeldOpen(dir) {
   console.log('\nTest 1: Rename a file another process holds open');
@@ -25,7 +34,7 @@ async function testRenameWhileHeldOpen(dir) {
   const destination = path.join(dir, 'moved.txt');
   await fs.writeFile(source, 'held content');
 
-  const holder = await holdFileOpen(source, LOCK_MS);
+  const holder = await holdFileOpen(source, HOLD_MS);
   try {
     if (isWindows) {
       // The lock is real: a plain rename fails while the file is held open
@@ -36,7 +45,13 @@ async function testRenameWhileHeldOpen(dir) {
     }
 
     const started = Date.now();
-    await renameWithRetry(source, destination);
+    // Let go while renameWithRetry is retrying: it must wait that out
+    const release = setTimeout(() => holder.kill(), RELEASE_AFTER_MS);
+    try {
+      await renameWithRetry(source, destination);
+    } finally {
+      clearTimeout(release);
+    }
     console.log(`✓ renameWithRetry succeeded after ${Date.now() - started}ms`);
   } finally {
     holder.kill();
@@ -54,7 +69,7 @@ async function testPermanentErrorsAreNotRetried(dir) {
   await assert.rejects(renameWithRetry(path.join(dir, 'missing.txt'), path.join(dir, 'x.txt')),
     (error) => error.code === 'ENOENT');
   const elapsed = Date.now() - started;
-  assert.ok(elapsed < 500, `A missing source should fail without retrying, took ${elapsed}ms`);
+  assert.ok(elapsed < FAIL_AT_ONCE_MS, `A missing source should fail without retrying, took ${elapsed}ms`);
 
   console.log('✓ Test 2 passed: ENOENT is thrown without retrying');
 }

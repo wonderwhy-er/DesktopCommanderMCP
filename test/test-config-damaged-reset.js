@@ -42,7 +42,7 @@ const settingsAfterStartup = `
   let onDisk = null;
   try { onDisk = JSON.parse(fsSync.readFileSync(CONFIG_FILE, 'utf8')); } catch { /* left as it was */ }
   console.log(JSON.stringify({ config, onDisk, defaults: configManager.getDefaultConfig(),
-    firstRun: configManager.isFirstRun(), echoAllowed: await commandManager.validateCommand('echo hello') }));`;
+    firstRun: configManager.isFirstRun(), echoAllowed: await commandManager.validateCommand('echo hello', 'bash') }));`;
 
 /** `config`'s values of `keys` */
 const pick = (config, keys) => Object.fromEntries(keys.map((key) => [key, config?.[key]]));

@@ -59,6 +59,7 @@ const base64url = (value) => Buffer.from(JSON.stringify(value)).toString('base64
 
 export async function startRemoteStandIn({
   accessTtlSec = 3600, reuseIntervalSec = 0, serverAheadSec = 0, diagnostics = false, realtime = false, channel = false,
+  hostedSupabase = false,
 } = {}) {
   const deviceId = 'b6f0a1c2-0000-4000-8000-000000000695';
   const anonKey = 'stand-in-anon-key';
@@ -84,6 +85,9 @@ export async function startRemoteStandIn({
     refreshes: [],
     /** Requests for the device-code flow */
     deviceFlowRequests: 0,
+    revocations: [],
+    revokeStatus: 200,
+    confirmMqttRevocation: true,
     /** Requests this stand-in has no answer for */
     unexpected: [],
     /** Every request, in order: { method, url, apikey }; a websocket upgrade has method UPGRADE */
@@ -296,6 +300,16 @@ export async function startRemoteStandIn({
     if (route === 'GET /device/rollouts') {
       return sessionOfBearer(request) ? [200, { rollouts: standIn.rollouts }] : [401, { error: 'invalid token' }];
     }
+    if (route === 'POST /device/revoke') {
+      const session = sessionOfBearer(request);
+      if (!session) return [401, { error: 'unauthorized' }];
+      if (JSON.parse(body).device_id !== deviceId) return [404, { error: 'not_found' }];
+      if (standIn.revokeStatus !== 200) return [standIn.revokeStatus, { error: 'revoke_failed' }];
+      if (!standIn.confirmMqttRevocation) return [200, { success: true }];
+      standIn.revocations.push(deviceId);
+      session.revoked = true;
+      return [200, { success: true, mqtt_revoked: true }];
+    }
     if (route === 'POST /auth/v1/token' && url.searchParams.get('grant_type') === 'refresh_token') {
       return refresh(JSON.parse(body || '{}').refresh_token);
     }
@@ -367,6 +381,9 @@ export async function startRemoteStandIn({
   server.on('upgrade', (request, socket, head) => {
     standIn.requests.push({ method: 'UPGRADE', url: request.url, apikey: request.headers.apikey });
     if (!sockets || new URL(request.url, standIn.url).pathname !== '/realtime/v1/websocket') {
+      // The http server stops listening for this socket's errors once it hands the socket here. Without
+      // a listener, a device that resets the connection while the 503 is on its way stops the test process.
+      socket.on('error', () => {});
       socket.end('HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\n\r\n');
       return;
     }
@@ -374,12 +391,25 @@ export async function startRemoteStandIn({
       ws.on('message', (data) => {
         let message;
         try { message = JSON.parse(String(data)); } catch { return; }
+        const arrayMessage = Array.isArray(message);
+        if (arrayMessage) {
+          // Realtime v2 text frames are [join_ref, ref, topic, event, payload]; v1 uses objects.
+          // https://supabase.com/docs/guides/realtime/protocol
+          const [join_ref, ref, topic, event] = message;
+          message = { join_ref, ref, topic, event };
+        }
+        let reply;
         if (message.topic === 'phoenix' && message.event === 'heartbeat') {
           standIn.heartbeatsAnswered++;
-          ws.send(JSON.stringify({ topic: 'phoenix', event: 'phx_reply', payload: { status: 'ok', response: {} }, ref: message.ref }));
+          reply = { topic: 'phoenix', event: 'phx_reply', payload: { status: 'ok', response: {} }, ref: message.ref };
         } else if (channel && message.ref) {
           // A join, a presence track, a new access token: accepted, as the realtime server answers them
-          ws.send(JSON.stringify({ topic: message.topic, event: 'phx_reply', payload: { status: 'ok', response: {} }, ref: message.ref, join_ref: message.join_ref }));
+          reply = { topic: message.topic, event: 'phx_reply', payload: { status: 'ok', response: {} }, ref: message.ref, join_ref: message.join_ref };
+        }
+        if (reply) {
+          ws.send(JSON.stringify(arrayMessage
+            ? [reply.join_ref ?? null, reply.ref, reply.topic, reply.event, reply.payload]
+            : reply));
         }
       });
     });
@@ -387,6 +417,9 @@ export async function startRemoteStandIn({
 
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   standIn.url = `http://127.0.0.1:${server.address().port}`;
+  // Device startup validates a hosted Supabase URL; the test-only transport
+  // preload routes this exact hostname to this server without changing validation.
+  if (hostedSupabase) standIn.supabaseUrl = 'https://xnalhwxchxhthlmzkhal.supabase.co';
   if (diagnostics) standIn.diagnosticsUrl = `${standIn.url}/diagnostics`;
   return standIn;
 }
