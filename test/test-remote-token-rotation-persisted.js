@@ -45,8 +45,12 @@ process.env.DESKTOP_COMMANDER_DISABLE_TELEMETRY = '1';
 
 const DEVICE_ID = 'device-1';
 
-/** Cap on waiting for a write to land; far above any healthy save. */
-const PERSIST_DEADLINE_MS = 5000;
+/**
+ * Cap on waiting for a write to land; far above any healthy save, even on a
+ * loaded machine. The wait returns as soon as the write lands, so only a
+ * rotation that never reaches disk waits it out.
+ */
+const PERSIST_DEADLINE_MS = 30_000;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -106,6 +110,11 @@ async function makeDevice(configPath) {
     const device = new MCPDevice();
     device.deviceId = DEVICE_ID;
     device.configPath = configPath;
+    // A real device gets this only after validating /api/mcp-info.
+    device.trustedAuthContext = {
+      serverOrigin: 'https://mcp.desktopcommander.app',
+      supabaseUrl: 'https://olvbkozcufcbptfogatw.supabase.co',
+    };
 
     const client = makeFakeClient();
     const rc = device.remoteChannel;
@@ -186,6 +195,10 @@ await test('a restart loads the rotated token, not the one the process started w
     // A fresh process reading the same config file — what a restart does.
     const restarted = new MCPDevice();
     restarted.configPath = configPath;
+    restarted.trustedAuthContext = {
+      serverOrigin: 'https://mcp.desktopcommander.app',
+      supabaseUrl: 'https://olvbkozcufcbptfogatw.supabase.co',
+    };
     const loaded = await restarted.loadPersistedConfig();
 
     assert.ok(loaded, 'the restart must find a persisted session');

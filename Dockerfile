@@ -2,6 +2,10 @@
 FROM node:lts-alpine
 
 ENV MCP_CLIENT_DOCKER=true
+
+# Chromium and fonts for write_pdf. The Chrome that Desktop Commander downloads
+# can't start on Alpine, so Desktop Commander uses this one (/usr/bin/chromium).
+RUN apk add --no-cache chromium font-noto
 # Create app directory
 WORKDIR /usr/src/app
 

@@ -27,7 +27,9 @@ import fs from 'fs';
 import readline from 'readline';
 import { fileURLToPath } from 'url';
 
-const LIFETIME_MS = 15_000;
+// Past the test's longest wait on a fixture (45 s), so a slow, loaded run
+// doesn't see it end before the step it waits for
+const LIFETIME_MS = 60_000;
 const [mode, trigger] = process.argv.slice(2);
 
 setTimeout(() => process.exit(0), LIFETIME_MS).unref();

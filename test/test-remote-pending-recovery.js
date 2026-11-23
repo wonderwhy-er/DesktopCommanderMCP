@@ -143,6 +143,21 @@ const baseRow = (id, overrides = {}) => ({
 async function runTests() {
   {
     const rows = [
+      baseRow('mqtt', { metadata: { transport: 'mqtt_v1' } }),
+      baseRow('broadcast', { metadata: { transport: 'broadcast_v1' } }),
+      baseRow('legacy'),
+    ];
+    const { rc, delivered } = makeRemoteChannel(rows);
+    await rc.recoverPendingCalls();
+    assert.deepEqual(delivered.map(payload => payload.new.id), ['mqtt', 'broadcast', 'legacy'],
+      'recovery claims eligible calls regardless of transport metadata');
+    assert(rows.every(row => row.status === 'executing'));
+    rc.mqttReady = true;
+    await rc.recoverPendingCalls();
+    assert.equal(delivered.length, 3, 'MQTT readiness does not cause already claimed calls to be delivered again');
+  }
+  {
+    const rows = [
       baseRow('live-old', { created_at: iso(-10_000) }),
       baseRow('live-new', { created_at: iso(-1_000) }),
       baseRow('expired', { timeout_at: iso(-1_000) }),

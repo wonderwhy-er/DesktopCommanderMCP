@@ -26,10 +26,17 @@ import { runIfMain, skip } from './helpers/run-if-main.js';
 
 const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SAMPLE_PDF = path.join(PROJECT_ROOT, 'test/samples/01_sample_simple.pdf');
-/** The background load takes a few seconds at most; far above that */
-const LOAD_DEADLINE_MS = 30_000;
-/** An answer "at once": a refused call takes milliseconds; far above that */
-const AT_ONCE_MS = 5_000;
+/**
+ * The background load takes a few seconds at most; far above that, even on a
+ * loaded machine. The waits end as soon as it is done
+ */
+const LOAD_DEADLINE_MS = 60_000;
+/**
+ * An answer "at once": a refused call takes milliseconds; far above that, even
+ * on a loaded machine. A call that waits for the held package instead never
+ * answers before release(), so any limit catches it
+ */
+const AT_ONCE_MS = 30_000;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const heavyLoaded = (modules) => HEAVY_PACKAGES.filter((pkg) => modules.some((module) => packageOf(module.url) === pkg));

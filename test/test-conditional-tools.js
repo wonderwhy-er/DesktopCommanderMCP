@@ -4,31 +4,15 @@
  * Tests that give_feedback_to_desktop_commander is excluded for desktop-commander client
  */
 
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { exitProcess } from '../dist/utils/exit-process.js';
+import { connectToServer } from './helpers/mcp-client.js';
 
 async function testConditionalTools() {
     console.log('\n=== Test: Conditional Tool Registration ===\n');
 
     // Test 1: Regular client (should include feedback tool)
     console.log('Test 1: Testing with regular client (should include feedback tool)...');
-    const regularClient = new Client(
-        {
-            name: "test-client",
-            version: "1.0.0"
-        },
-        {
-            capabilities: {}
-        }
-    );
-
-    const regularTransport = new StdioClientTransport({
-        command: "node",
-        args: ["../dist/index.js"]
-    });
-
-    await regularClient.connect(regularTransport);
+    const regularClient = await connectToServer("test-client");
     const regularTools = await regularClient.listTools();
 
     const hasFeedbackRegular = regularTools.tools.some(t => t.name === 'give_feedback_to_desktop_commander');
@@ -60,22 +44,7 @@ async function testConditionalTools() {
 
     // Test 2: desktop-commander-app client (should exclude feedback and get_prompts)
     console.log('\nTest 2: Testing with desktop-commander-app client (should exclude feedback tool)...');
-    const dcClient = new Client(
-        {
-            name: "desktop-commander-app",
-            version: "1.0.0"
-        },
-        {
-            capabilities: {}
-        }
-    );
-
-    const dcTransport = new StdioClientTransport({
-        command: "node",
-        args: ["../dist/index.js"]
-    });
-
-    await dcClient.connect(dcTransport);
+    const dcClient = await connectToServer("desktop-commander-app");
     const dcTools = await dcClient.listTools();
 
     const hasFeedbackDC = dcTools.tools.some(t => t.name === 'give_feedback_to_desktop_commander');

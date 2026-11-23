@@ -328,7 +328,7 @@ async function run() {
           fsSync.rmSync(CONFIG_FILE);
           await configManager.setValue('fileReadLineLimit', 500);
           const onDisk = JSON.parse(fsSync.readFileSync(CONFIG_FILE, 'utf8'));
-          const sudoAllowed = await commandManager.validateCommand('sudo ls');
+          const sudoAllowed = await commandManager.validateCommand('sudo ls', 'bash');
           console.log(JSON.stringify({ onDisk, sudoAllowed }));`,
       });
       assert(child.status === 0 && child.result, `the child failed (${child.status}): ${child.stderr}`);

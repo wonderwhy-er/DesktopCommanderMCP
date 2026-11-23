@@ -1,0 +1,132 @@
+import { getShellType, POSIX_SHELLS } from './shell.js';
+import { requireCompleteArguments, type ArgumentInspection } from './command-reading.js';
+
+type FileWord = string | null;
+interface FileWordSource extends ArgumentInspection {
+    written?: readonly string[];
+}
+
+const POSIX_VALUE_OPTIONS = new Set(['-o', '+o', '-O', '+O', '--rcfile', '--init-file']);
+const POSIX_SHORT_OPTIONS = /^[-+][a-zA-Z]+$/;
+// These scalar spellings prove one argument; quoted $@ and arrays do not.
+const QUOTED_SCALAR_VALUE = /^"\$(?:[A-Za-z_]\w*|\{[A-Za-z_]\w*\})"$/;
+const BASH_STARTUP_OPTIONS = new Set(['--rcfile', '--init-file']);
+// Minimum spellings and aliases follow the PowerShell host's option precedence.
+const POWERSHELL_VALUE_OPTIONS = [
+    ['-executionpolicy', '-ex'], ['-inputformat', '-inp'], ['-outputformat', '-o'],
+    ['-configurationname', '-config'], ['-configurationfile', '-configurationfile'],
+    ['-custompipename', '-cus'], ['-workingdirectory', '-wo'], ['-settingsfile', '-settings'],
+    ['-windowstyle', '-w'], ['-encodedarguments', '-encodeda'],
+];
+const POWERSHELL_VALUE_ALIASES = new Set(['-ep', '-if', '-of', '-wd', '-ea']);
+
+/** Skipping only one grouped value would mistake another option name for the script. */
+function posixValueOptions(arg: string): string[] {
+    if (POSIX_VALUE_OPTIONS.has(arg)) return [arg];
+    if (!POSIX_SHORT_OPTIONS.test(arg)) return [];
+    return [...arg.slice(1)]
+        .filter((letter) => letter === 'o' || letter === 'O')
+        .map((letter) => arg[0] + letter);
+}
+
+/** Command/stdin mode owns later words, so only a positional file before that boundary is a script. */
+function posixScriptFile(args: FileWord[], source: FileWordSource): FileWord | undefined {
+    let quotedRuntimeValue = false;
+    for (let i = 0; i < args.length; i++) {
+        const arg = args[i];
+        if (arg === null) return arg;
+        if (/^-[a-zA-Z]*[cs]/.test(arg) || arg === '--command') return undefined;
+        const valueOptions = posixValueOptions(arg);
+        if (valueOptions.length > 0) {
+            const optionValues = args.slice(i + 1, i + 1 + valueOptions.length);
+            const uncertainValue = optionValues.some((value, offset) => value === null
+                && !QUOTED_SCALAR_VALUE.test(source.written?.[i + 1 + offset] ?? ''));
+            if (uncertainValue) return null;
+            quotedRuntimeValue ||= optionValues.includes(null);
+            i += valueOptions.length;
+            continue;
+        }
+        if (!arg.startsWith('-') && !arg.startsWith('+')) return arg;
+    }
+    return quotedRuntimeValue ? null : undefined;
+}
+
+/** A custom rcfile needs a note only when the explicit host options cause Bash to read it. */
+function bashStartupFile(args: FileWord[]): FileWord | undefined {
+    let file: FileWord | undefined;
+    let interactive = false;
+    let login = false;
+    let noRc = false;
+    for (let i = 0; i < args.length; i++) {
+        const arg = args[i];
+        if (arg === null || arg === '--') break;
+        if (BASH_STARTUP_OPTIONS.has(arg)) {
+            file = args[++i];
+            continue;
+        }
+        if (arg === '--norc') noRc = true;
+        if (arg === '--login') login = true;
+        if (POSIX_SHORT_OPTIONS.test(arg)) {
+            if (arg.includes('i')) interactive = arg[0] === '-';
+            if (arg.includes('l')) login = arg[0] === '-';
+        }
+        const valueOptions = posixValueOptions(arg);
+        if (valueOptions.length > 0) {
+            i += valueOptions.length;
+            continue;
+        }
+        if (!arg.startsWith('-') && !arg.startsWith('+')) break;
+    }
+    // POSIX-mode rcfile handling differs by Bash version; it cannot prove this file is unused.
+    if (!interactive || login || noRc || file === '') return undefined;
+    return file;
+}
+
+/** Host mode determines whether a later word is command text, a version value or a script path. */
+function powershellScriptFile(program: string, args: FileWord[]): FileWord | undefined {
+    for (let i = 0; i < args.length; i++) {
+        const arg = args[i];
+        if (arg === null) return arg;
+        const option = arg.toLowerCase();
+        if (arg === '-' || arg === '') return undefined;
+        if ('-command'.startsWith(option) || ['-commandwithargs', '-cwa', '-ec'].includes(option)
+            || '-encodedcommand'.startsWith(option)) return undefined;
+        if (['-f', '-fi', '-fil', '-file'].includes(option)) {
+            return args[i + 1] === '-' ? undefined : args[i + 1];
+        }
+        if ('-version'.startsWith(option)) {
+            if (program === 'pwsh' || program === 'pwsh.exe') return undefined;
+            i++;
+            continue;
+        }
+        if (POWERSHELL_VALUE_ALIASES.has(option) || POWERSHELL_VALUE_OPTIONS.some(
+            ([name, minimum]) => option.length >= minimum.length && name.startsWith(option),
+        )) {
+            i++;
+            continue;
+        }
+        if (!arg.startsWith('-')) return arg;
+    }
+    return undefined;
+}
+
+/** File arguments are found before command/script arguments can be mistaken for more host options. */
+export function shellScriptFiles(program: string, args: FileWord[], source: FileWordSource = {}): FileWord[] {
+    if (POSIX_SHELLS.has(program)) {
+        requireCompleteArguments(source);
+        const files: FileWord[] = [];
+        const startup = program === 'bash' ? bashStartupFile(args) : undefined;
+        const script = posixScriptFile(args, program === 'bash' ? source : {});
+        if (startup !== undefined) files.push(startup);
+        // Known file roles stay visible; only two null roles repeat the same program-level notice.
+        const repeatsRuntimeNotice = script === null && startup === null;
+        if (script !== undefined && !repeatsRuntimeNotice) files.push(script);
+        return files;
+    }
+    if (getShellType(program) === 'powershell') {
+        requireCompleteArguments(source);
+        const script = powershellScriptFile(program, args);
+        if (script !== undefined) return [script];
+    }
+    return [];
+}

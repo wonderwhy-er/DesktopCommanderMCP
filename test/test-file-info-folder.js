@@ -13,13 +13,9 @@ import assert from 'assert';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { fileURLToPath } from 'url';
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { runIfMain } from './helpers/run-if-main.js';
-import { closeClient } from './helpers/close-client.js';
+import { closeClient, connectToServer } from './helpers/mcp-client.js';
 
-const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const FOLDER_FIELDS = ['size', 'created', 'modified', 'accessed', 'isDirectory', 'isFile', 'permissions', 'fileType'];
 
 /** get_file_info's answer ("key: value" lines) as an object */
@@ -32,17 +28,10 @@ async function fileInfo(client, target) {
 
 export default async function runTests() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dc-file-info-folder-'));
-  const transport = new StdioClientTransport({
-    command: process.execPath,
-    args: [path.join(PROJECT_ROOT, 'dist/index.js'), '--no-onboarding'],
-    cwd: PROJECT_ROOT,
-    stderr: 'pipe',
-    env: { ...process.env },
-  });
-  const client = new Client({ name: 'file-info-folder-test', version: '1.0.0' }, { capabilities: {} });
+  let client;
   const failures = [];
   try {
-    await client.connect(transport, { timeout: 30_000 });
+    client = await connectToServer('file-info-folder-test');
     // A plain folder (text handler before), one named like an image (image handler before)
     for (const name of ['somedir', 'icons.png']) {
       const folder = path.join(dir, name);

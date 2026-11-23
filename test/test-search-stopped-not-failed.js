@@ -12,18 +12,18 @@
 
 import assert from 'assert';
 import fs from 'fs';
-import os from 'os';
 import path from 'path';
 import { fileURLToPath, pathToFileURL } from 'url';
 import { configManager } from '../dist/config-manager.js';
 import { runNode } from './helpers/run-node.js';
 import { hookArgs } from './helpers/module-hooks.js';
 import { runIfMain } from './helpers/run-if-main.js';
+import { createTempDir } from './helpers/test-env.js';
 
 const FIXTURES = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures');
 
 export default async function runTests() {
-  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'dc-search-stopped-')));
+  const dir = createTempDir('dc-search-stopped-');
   fs.writeFileSync(path.join(dir, 'a.txt'), 'hello\n');
   const originalConfig = await configManager.getConfig();
   await configManager.setValue('allowedDirectories', [dir]);

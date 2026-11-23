@@ -1,7 +1,9 @@
 /**
  * What a client receives from the tools the stack's fixes touched: exactly
  * what it received before, but for the search answers #768 made say how a
- * search ended (here: stopped at maxResults). Facts those fixes added for
+ * search ended (here: stopped at maxResults), and start_process's refusals,
+ * which name the blocked entry or say why the check failed, and its note on a
+ * program the check can't see (#870, #873). Facts those fixes added for
  * Desktop Commander's own code and tests (structuredContent) are dropped before
  * the reply (src/utils/internal-facts.ts), so no other new information reaches the client.
  * Runs the real server over stdio, as a client does.
@@ -10,14 +12,11 @@ import assert from 'assert';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { fileURLToPath } from 'url';
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { runIfMain, skip } from './helpers/run-if-main.js';
-import { closeClient } from './helpers/close-client.js';
+import { closeClient, connectToServer } from './helpers/mcp-client.js';
 import { callToolOnceLoaded } from './helpers/heavy-packages.js';
+import { waitUntil } from './helpers/wait.js';
 
-const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 const textOf = (result) => result.content?.find((block) => block.type === 'text')?.text ?? '';
 
@@ -74,7 +73,6 @@ async function processToolsSendOnlyText(client) {
   assertNothingInternal('start_process', finished);
 
   const blocked = await client.callTool({ name: 'start_process', arguments: { command: 'mkfs', timeout_ms: 1000 } });
-  assert.strictEqual(textOf(blocked), 'Error: Command not allowed: mkfs', 'a blocked command should answer as before');
   assertNothingInternal('start_process (blocked command)', blocked);
 
   const repl = await client.callTool({ name: 'start_process', arguments: { command: 'node -i', timeout_ms: 5000 } });
@@ -96,6 +94,27 @@ async function processToolsSendOnlyText(client) {
     await client.callTool({ name: 'force_terminate', arguments: { pid } });
   }
   console.log('✓ start_process, interact_with_process, list_sessions: nothing internal is sent');
+}
+
+/** Client text must keep the refusal cause and unseen-command note so callers can explain the result. */
+async function startProcessSaysWhatTheCheckSaw(client, dir) {
+  const blocked = await client.callTool({ name: 'start_process', arguments: { command: 'mkfs', timeout_ms: 1000 } });
+  assert.strictEqual(textOf(blocked), 'Error: Command not allowed: "mkfs" is in the blockedCommands setting.',
+    'a blocked command should name the blockedCommands entry');
+
+  const failed = await client.callTool({ name: 'start_process', arguments: { command: 'echo "unclosed', shell: 'sh', timeout_ms: 1000 } });
+  assert.strictEqual(textOf(failed),
+    'Error: Command not allowed: the check for blocked commands failed (unterminated double quote), so nothing was run.',
+    "a command the check can't read should be refused, saying why");
+
+  // A file that isn't there, so the shell runs nothing
+  const script = path.join(dir, 'missing.sh');
+  const unseen = await client.callTool({ name: 'start_process', arguments: { command: `sh "${script}"`, timeout_ms: 10000 } });
+  const note = `\n\nNote: the blocklist could not check the commands in ${script}, `
+    + 'because they are in that file, not in this command.';
+  assert(textOf(unseen).endsWith(note),
+    `a script file given to a shell should be noted at the end of the answer, got: ${textOf(unseen)}`);
+  console.log("✓ start_process: the refusal names the blocked entry or why the check failed, and a program the check can't see is noted");
 }
 
 /** start_search and get_more_search_results send only their text */
@@ -134,13 +153,10 @@ async function searchStoppedAtMaxResultsSaysSo(client, dir) {
   assert(sessionId, `start_search should start a session, got: ${textOf(started)}`);
   try {
     let page;
-    const deadline = Date.now() + 10_000;
-    for (;;) {
+    await waitUntil(async () => {
       page = await client.callTool({ name: 'get_more_search_results', arguments: { sessionId } });
-      if (textOf(page).includes('Status: COMPLETED') || Date.now() > deadline) break;
-      await new Promise((resolve) => setTimeout(resolve, 100));
-    }
-    assert(textOf(page).includes('Status: COMPLETED'), `The search should complete, got: ${textOf(page)}`);
+      return textOf(page).includes('Status: COMPLETED');
+    }, 10_000, 'the search completes');
     assert(textOf(page).endsWith('\nStopped at maxResults (1): there may be more.') && !textOf(page).includes('✅ Search completed.'),
       `get_more_search_results should say the search stopped at maxResults, got: ${textOf(page)}`);
   } finally {
@@ -155,20 +171,13 @@ async function searchStoppedAtMaxResultsSaysSo(client, dir) {
 
 export default async function runTests() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dc-client-results-'));
-  const transport = new StdioClientTransport({
-    command: process.execPath,
-    args: [path.join(PROJECT_ROOT, 'dist/index.js'), '--no-onboarding'],
-    cwd: PROJECT_ROOT,
-    stderr: 'pipe',
-    env: { ...process.env },
-  });
-  const client = new Client({ name: 'client-results-test', version: '1.0.0' }, { capabilities: {} });
+  let client;
   const failures = [];
   try {
-    await client.connect(transport, { timeout: 30_000 });
+    client = await connectToServer('client-results-test');
     for (const check of [
-      writePdfIgnoringAnOption, processToolsSendOnlyText, searchToolsSendOnlyText, toolDescriptionsAsBefore,
-      searchStoppedAtMaxResultsSaysSo,
+      writePdfIgnoringAnOption, processToolsSendOnlyText, startProcessSaysWhatTheCheckSaw, searchToolsSendOnlyText,
+      toolDescriptionsAsBefore, searchStoppedAtMaxResultsSaysSo,
     ]) {
       try {
         await check(client, dir);

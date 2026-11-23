@@ -3,6 +3,7 @@ import path from 'path';
 import { createRequire } from 'module';
 import { fileURLToPath } from 'url';
 import { createTempDir } from './test-env.js';
+export { answerText } from './mcp-client.js';
 
 const require = createRequire(import.meta.url);
 const { PDFDocument } = require('pdf-lib');
@@ -20,11 +21,6 @@ export async function pageSizes(file) {
     const { width, height } = page.getSize();
     return `${Math.round(width)}x${Math.round(height)}`;
   });
-}
-
-/** The text of a tool result (what the AI reads) */
-export function answerText(result) {
-  return (result?.content ?? []).map((part) => part.text ?? '').join('\n');
 }
 
 /** True when a render failed only because this machine has no Chrome to launch */

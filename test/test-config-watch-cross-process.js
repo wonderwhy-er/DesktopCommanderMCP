@@ -7,7 +7,12 @@ import { fileURLToPath } from 'node:url';
 import { runIfMain } from './helpers/run-if-main.js';
 
 const TEST_FILE = fileURLToPath(import.meta.url);
-const TIMEOUT_MS = 5_000;
+// Each wait ends when its message or the reload arrives (tens of ms here: the
+// watcher reloads 20 ms after a change); this much holds up on a loaded machine
+const TIMEOUT_MS = 30_000;
+// A reload that writes config.json back would do so within tens of ms, and again
+// and again; this long still sees it when a loaded machine slows it down
+const NO_WRITE_BACK_MS = 1_000;
 const KEY = '__crossProcessWatchTest';
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -72,7 +77,7 @@ async function parent() {
     await setDone;
     await observed;
     const afterReload = statSync(configPath).mtimeMs;
-    await sleep(200);
+    await sleep(NO_WRITE_BACK_MS);
     assert.equal(statSync(configPath).mtimeMs, afterReload, 'watch reload must not write config back or create a loop');
     console.log('✓ running process reloads config after another process changes it without a write loop');
   } finally {

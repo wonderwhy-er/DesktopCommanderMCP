@@ -29,28 +29,40 @@ let passed = 0;
 async function run() {
   await configManager.getConfig(); // warm init so disk read is cached
 
-  // 1) A burst of non-blocking saves must resolve effectively immediately —
-  //    they must not each wait on a disk write.
+  // 1) A burst of non-blocking saves must resolve without waiting on a disk
+  //    write. Checked by order rather than by a time limit a loaded machine can
+  //    miss: with init warm the burst runs on microtasks alone, and no write can
+  //    complete before it resolves, so config.json can't hold any of its values
+  //    yet. Saves that wait on their writes leave one there.
   const BURST = 100;
+  // Values only this run writes, so one an earlier run left can't pass for them
+  const FIRST = Date.now();
+  const FINAL = FIRST + BURST - 1;
   const t0 = Date.now();
   await Promise.all(
-    Array.from({ length: BURST }, (_, i) => configManager.setValueNonBlocking(KEY, i))
+    Array.from({ length: BURST }, (_, i) => configManager.setValueNonBlocking(KEY, FIRST + i))
   );
   const elapsed = Date.now() - t0;
-  assert.ok(elapsed < 200, `burst of ${BURST} non-blocking saves took ${elapsed}ms (expected < 200ms)`);
-  passed++; console.log(`✓ ${BURST} non-blocking saves resolved in ${elapsed}ms`);
+  const onDisk = JSON.parse(readFileSync(CONFIG_FILE, 'utf8'))[KEY];
+  assert.ok(!(onDisk >= FIRST && onDisk <= FINAL),
+    `burst of ${BURST} non-blocking saves resolved only once config.json held ${onDisk}: they waited on disk writes`);
+  passed++; console.log(`✓ ${BURST} non-blocking saves resolved in ${elapsed}ms, before any disk write`);
 
   // 2) The in-memory value is visible immediately (synchronously updated).
-  assert.strictEqual(await configManager.getValue(KEY), BURST - 1);
+  assert.strictEqual(await configManager.getValue(KEY), FINAL);
   passed++; console.log('✓ in-memory value reflects the latest write immediately');
 
-  // 3) After the background flush window, config.json is valid JSON (no torn
+  // 3) Once the background write lands, config.json is valid JSON (no torn
   //    write from overlapping saves) and holds the final coalesced value.
-  await new Promise((r) => setTimeout(r, 300));
+  //    Polled, not one fixed wait: the locked write is slower on a loaded machine.
+  const deadline = Date.now() + 30_000;
   let parsed;
-  assert.doesNotThrow(() => { parsed = JSON.parse(readFileSync(CONFIG_FILE, 'utf8')); },
-    'config.json must remain valid JSON after concurrent writes');
-  assert.strictEqual(parsed[KEY], BURST - 1, 'final value must be persisted to disk');
+  do {
+    await new Promise((r) => setTimeout(r, 50));
+    assert.doesNotThrow(() => { parsed = JSON.parse(readFileSync(CONFIG_FILE, 'utf8')); },
+      'config.json must remain valid JSON after concurrent writes');
+  } while (parsed[KEY] !== FINAL && Date.now() < deadline);
+  assert.strictEqual(parsed[KEY], FINAL, 'final value must be persisted to disk');
   passed++; console.log('✓ config.json is valid and holds the coalesced final value');
 
   // cleanup: remove the test key (undefined is dropped by JSON.stringify)

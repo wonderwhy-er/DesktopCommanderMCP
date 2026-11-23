@@ -4,6 +4,10 @@
  * the same text (references to report.json) must not, or it silently returns
  * partial results. And a search stopped by its time limit must say so
  * (its outcome: timed_out) instead of looking like a complete search.
+ *
+ * Every check here holds on a loaded machine. An exact-filename file search
+ * that finishes within its 1.5 s default races that default itself, so it is
+ * in test-search-timeout-default.js.
  */
 
 import assert from 'assert';
@@ -15,6 +19,7 @@ import { searchManager } from '../dist/search-manager.js';
 import { configManager } from '../dist/config-manager.js';
 import { createStalledReadTarget } from './helpers/stalled-read.js';
 import { runIfMain } from './helpers/run-if-main.js';
+import { waitUntil } from './helpers/wait.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const TEST_DIR = path.join(__dirname, 'search-timeout-test');
@@ -28,6 +33,11 @@ const FILENAME = 'report.json';
 
 // The default time limit of an exact-filename file search
 const EXACT_FILENAME_TIMEOUT_MS = 1500;
+
+// How long a search may take to complete once it should: at once, or at its
+// time limit (1.5 s at most here). The wait returns then, so only a search
+// that never completes waits this out; a loaded machine still meets it
+const COMPLETE_WAIT_MS = 30_000;
 
 /** Starts a search and returns its start_search structuredContent */
 async function startSearch(searchArgs) {
@@ -93,12 +103,8 @@ async function readSession(sessionId) {
 
 /** Waits until a session reports isComplete and returns its state */
 async function waitUntilComplete(sessionId, label) {
-  const deadline = Date.now() + 5000;
   let state;
-  while (!(state = await readSession(sessionId)).isComplete) {
-    assert(Date.now() < deadline, `${label} should complete within 5s`);
-    await new Promise((resolve) => setTimeout(resolve, 20));
-  }
+  await waitUntil(async () => (state = await readSession(sessionId)).isComplete, COMPLETE_WAIT_MS, `${label} completes`);
   return state;
 }
 
@@ -177,17 +183,19 @@ async function testTimeoutMsReportsTimedOut() {
 }
 
 /**
- * Searches that finish within their time limit find their matches and report
- * that they completed
+ * Content searches that finish within their time limit (none, or one far past
+ * what the search takes) find their matches and report that they completed.
+ * An exact-filename file search, which has a 1.5 s default, is checked in
+ * test-search-timeout-default.js.
  */
 async function testFinishedSearchesDidNotTimeOut() {
   console.log('Testing that searches that finish in time report they completed...');
 
   const root = await fs.realpath(TEST_DIR);
   const cases = [
-    { args: { pattern: FILENAME, searchType: 'files' }, results: [{ file: path.join(root, FILENAME), type: 'file' }] },
     { args: { pattern: FILENAME, searchType: 'content' }, results: [{ file: path.join(root, 'notes.txt'), line: 1, match: FILENAME, type: 'content' }] },
-    { args: { pattern: FILENAME, searchType: 'content', timeout_ms: 20000 }, results: [{ file: path.join(root, 'notes.txt'), line: 1, match: FILENAME, type: 'content' }] },
+    // Past COMPLETE_WAIT_MS: the search finishes before its limit, or the wait fails first
+    { args: { pattern: FILENAME, searchType: 'content', timeout_ms: 60_000 }, results: [{ file: path.join(root, 'notes.txt'), line: 1, match: FILENAME, type: 'content' }] },
   ];
 
   for (const { args, results } of cases) {

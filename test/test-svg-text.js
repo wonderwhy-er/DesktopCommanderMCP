@@ -18,13 +18,9 @@ import fs from 'fs';
 import http from 'http';
 import os from 'os';
 import path from 'path';
-import { fileURLToPath } from 'url';
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { runIfMain } from './helpers/run-if-main.js';
-import { closeClient } from './helpers/close-client.js';
+import { closeClient, connectToServer } from './helpers/mcp-client.js';
 
-const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"><rect width="1" height="1"/></svg>';
 
 const textOf = (result) => (result.content ?? []).filter((block) => block.type === 'text').map((block) => block.text).join('\n');
@@ -112,19 +108,12 @@ async function previewWidgetStillGetsTheImage(client, dir) {
 
 export default async function runTests() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dc-svg-text-'));
-  const transport = new StdioClientTransport({
-    command: process.execPath,
-    args: [path.join(PROJECT_ROOT, 'dist/index.js'), '--no-onboarding'],
-    cwd: PROJECT_ROOT,
-    stderr: 'pipe',
-    env: { ...process.env },
-  });
-  const client = new Client({ name: 'svg-text-test', version: '1.0.0' }, { capabilities: {} });
+  let client;
   const failures = [];
   const { server, url } = await startHttpServer();
   httpUrl = url;
   try {
-    await client.connect(transport, { timeout: 30_000 });
+    client = await connectToServer('svg-text-test');
     for (const check of [readFileAnswersTheText, readMultipleFilesAnswersTheText, writeFileWritesTheText, editBlockWritesTheText, previewWidgetStillGetsTheImage,
       readUrlAnswersTheText, previewWidgetStillGetsTheUrlImage, pngUrlStaysAnImage]) {
       try {

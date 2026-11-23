@@ -12,11 +12,12 @@
 // Here each of the two tests runs, in a home of its own, with a preload
 // (fixtures/config-lock-at-child-spawn.mjs) that takes the config lock whenever
 // the test starts a Node.js child and releases it 200 ms later on a timer, so
-// the lock is held at that moment every run.
+// the lock is held at that moment every run. Just before, each runs once
+// without the preload: what it takes on this machine, now, with no lock held.
 //
 // Run: node test/repro/run-repro.js test-search-child-config-lock.js
-// Exit code: 1 if a test is held up by the lock (25 s or more), dies of
-// ECOMPROMISED, or fails.
+// Exit code: 1 if a test is held up by the lock (20 s or more longer than
+// without the preload), dies of ECOMPROMISED, or fails.
 import { spawn } from 'child_process';
 import path from 'path';
 import { fileURLToPath, pathToFileURL } from 'url';
@@ -26,15 +27,19 @@ import { exitProcess } from '../../dist/utils/exit-process.js';
 const TEST_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const PRELOAD = pathToFileURL(path.join(TEST_DIR, 'fixtures', 'config-lock-at-child-spawn.mjs')).href;
 const TESTS = ['test-search-without-ripgrep.js', 'test-search-office-completion.js'];
-// The lock goes stale after 30 s; without the hold-up each test takes a few seconds
-const HELD_UP_MS = 25_000;
+// The lock goes stale after 30 s, so a test held up by it takes about 30 s
+// longer than the same test without the preload. Compared with that run, not
+// with a fixed time, so a busy machine that slows both runs alike doesn't count
+const HELD_UP_MS = 20_000;
 const TIME_LIMIT_MS = 120_000;
 
-function runTest(file) {
+/** Runs a test file in a home of its own, with the preload unless `preload` is false */
+function runTest(file, { preload = true } = {}) {
   return new Promise((resolve) => {
     const testEnv = createTestEnv();
     const startedAt = Date.now();
-    const child = spawn(process.execPath, ['--import', PRELOAD, file], { cwd: TEST_DIR, env: testEnv.env, stdio: ['ignore', 'pipe', 'pipe'] });
+    const args = [...(preload ? ['--import', PRELOAD] : []), file];
+    const child = spawn(process.execPath, args, { cwd: TEST_DIR, env: testEnv.env, stdio: ['ignore', 'pipe', 'pipe'] });
     let output = '';
     child.stdout.on('data', (chunk) => { output += chunk; });
     child.stderr.on('data', (chunk) => { output += chunk; });
@@ -49,13 +54,14 @@ function runTest(file) {
 
 let problems = 0;
 for (const file of TESTS) {
+  const baseline = await runTest(file, { preload: false });
   const run = await runTest(file);
   const lockHeld = run.output.includes('[config-lock-at-child-spawn] holding the config lock');
-  const heldUp = run.ms >= HELD_UP_MS;
+  const heldUp = run.ms >= baseline.ms + HELD_UP_MS;
   const compromised = /ECOMPROMISED|Unable to update lock/.test(run.output);
   const failed = run.status !== 0;
   if (heldUp || compromised || failed) problems++;
-  console.log(`${file}: ${run.ms} ms, exit ${run.status}${run.signal ? ` (${run.signal})` : ''}; ` +
+  console.log(`${file}: ${run.ms} ms (${baseline.ms} ms without the preload, exit ${baseline.status}), exit ${run.status}${run.signal ? ` (${run.signal})` : ''}; ` +
     `lock held when its child started: ${lockHeld}${heldUp ? '; held up by the lock' : ''}${compromised ? '; died of ECOMPROMISED' : ''}`);
   if (heldUp || compromised || failed) {
     const lines = run.output.split('\n').filter((line) => /ECOMPROMISED|Unable to update lock|failed|Error|❌/.test(line));
@@ -65,5 +71,5 @@ for (const file of TESTS) {
 
 console.log(problems > 0
   ? `REPRODUCED: ${problems} of ${TESTS.length} tests were held up by the config lock their process held when it started its child, or failed`
-  : `NOT REPRODUCED: both tests started their child while their process held the config lock and finished in seconds`);
+  : `NOT REPRODUCED: both tests started their child while their process held the config lock and took about as long as without it`);
 exitProcess(problems > 0 ? 1 : 0);
