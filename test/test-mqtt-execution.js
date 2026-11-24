@@ -19,7 +19,7 @@ const setMqttTransport = enabled => rolloutManager.update({ MQTT_TRANSPORT_ENABL
 afterEach(() => rolloutManager.update({}));
 
 const setFlags = (transport, execution) =>
-    rolloutManager.update({ MQTT_TRANSPORT_ENABLED: transport, MQTT_EXECUTION_ENABLED: execution });
+    rolloutManager.update({ MQTT_TRANSPORT_ENABLED: transport, MQTT_ON_DEVICE_EXECUTION_ENABLED: execution });
 
 test('execution off: an MQTT doorbell is only observed and Broadcast runs the call', async () => {
     setFlags(true, false);

@@ -128,7 +128,7 @@ for (const property of ['shuttingDown', 'sessionLost', 'authGeneration']) {
     assert.deepEqual(deliveries, [], 'execution off: the MQTT doorbell is only observed');
     await f.channel.onBroadcastDoorbell(payload);
     assert.deepEqual(deliveries, [payload], 'execution off: Broadcast runs the call');
-    rolloutManager.update({ MQTT_TRANSPORT_ENABLED: true, MQTT_EXECUTION_ENABLED: true });
+    rolloutManager.update({ MQTT_TRANSPORT_ENABLED: true, MQTT_ON_DEVICE_EXECUTION_ENABLED: true });
     await f.channel.onBroadcastDoorbell(payload);
     assert.deepEqual(deliveries, [payload], 'execution on: the Broadcast doorbell is only observed');
     await f.channel.onMqttDoorbell(payload);

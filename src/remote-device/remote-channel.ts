@@ -836,7 +836,7 @@ export class RemoteChannel {
 
     /** Transport and execution on: MQTT runs calls and Broadcast only observes. */
     private mqttRunsCalls(): boolean {
-        return rolloutManager.get('MQTT_TRANSPORT_ENABLED') && rolloutManager.get('MQTT_EXECUTION_ENABLED');
+        return rolloutManager.get('MQTT_TRANSPORT_ENABLED') && rolloutManager.get('MQTT_ON_DEVICE_EXECUTION_ENABLED');
     }
 
     private async onMqttDoorbell(payload: MqttDoorbell): Promise<void> {
@@ -1032,7 +1032,9 @@ export class RemoteChannel {
                     'broadcast',
                     { event: 'new_call' },
                     ({ payload }: any) => {
-                        this.onBroadcastDoorbell(payload).catch((e: any) => {
+                        console.debug(`[DEBUG] Received broadcast doorbell for call ${payload?.call_id}`);
+                        this.onBroadcastDoorbell(payload)
+                        .catch((e: any) => {
                             console.error('[DEBUG] Doorbell handling failed:', e?.message);
                         });
                     }

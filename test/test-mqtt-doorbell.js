@@ -15,7 +15,7 @@ const { RemoteChannel } = await import('../dist/remote-device/remote-channel.js'
 const { rolloutManager } = await import('../dist/remote-device/rollouts.js');
 rolloutManager.update({ MQTT_TRANSPORT_ENABLED: true });
 /** Transport on; execution on means MQTT runs calls and Broadcast only observes. */
-const setExecution = on => rolloutManager.update({ MQTT_TRANSPORT_ENABLED: true, MQTT_EXECUTION_ENABLED: on });
+const setExecution = on => rolloutManager.update({ MQTT_TRANSPORT_ENABLED: true, MQTT_ON_DEVICE_EXECUTION_ENABLED: on });
 const { MCPDevice } = await import('../dist/remote-device/device.js');
 const { MqttTransport, createMqttConfig, mqttDoorbellTopic } = await import('../dist/remote-device/mqtt/mqtt-transport.js');
 const { configManager } = await import('../dist/config-manager.js');
