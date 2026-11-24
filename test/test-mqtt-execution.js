@@ -73,8 +73,8 @@ test('if MQTT and Broadcast both ring with execution on, MQTT runs the call once
     assert.deepEqual(fixture.delivered, ['call-both']);
 });
 
-test('a fresh MQTT subscription scans for calls missed while MQTT was down', async () => {
-    setMqttTransport(true);
+test('in shadow mode a fresh MQTT subscription can scan while Broadcast is ready', async () => {
+    setFlags(true, false);
     const fixture = makeChannel(RemoteChannel, ['missed-1', 'missed-2']);
     fixture.channel.recoverAfterMqttChange('after MQTT connected');
     await waitUntil(() => fixture.delivered.length === 2, 10_000, 'both missed calls are delivered');
@@ -142,11 +142,10 @@ test('a receiver that stopped itself is replaced; a failure from an old receiver
     clearTimeout(fixture.channel.mqttRestartTimer);
 });
 
-// The scan used to need Broadcast connected, so a device with only MQTT never scanned.
 const broadcastDown = fixture => Object.assign(fixture.channel, { channel: { state: 'errored' }, channelReady: false });
 
-test('with Broadcast down, MQTT ready is enough for the scan', async () => {
-    setMqttTransport(true);
+test('when MQTT runs calls, a ready MQTT connection can recover calls with Broadcast down', async () => {
+    setFlags(true, true);
     const fixture = makeChannel(RemoteChannel, ['mqtt-only-1', 'mqtt-only-2']);
     broadcastDown(fixture);
     fixture.channel.mqttReady = true;
@@ -154,13 +153,31 @@ test('with Broadcast down, MQTT ready is enough for the scan', async () => {
     await waitUntil(() => fixture.delivered.length === 2, 10_000, 'both calls are delivered over MQTT alone');
 });
 
-test('with Broadcast down, the scan claims nothing if MQTT is not ready or the executor is dead', async () => {
-    setMqttTransport(true);
-    for (const [mqttReady, executorAlive] of [[false, true], [true, false]]) {
+test('when MQTT runs calls, a ready Broadcast connection cannot recover calls while MQTT is down', async () => {
+    setFlags(true, true);
+    const fixture = makeChannel(RemoteChannel, ['blocked']);
+    fixture.channel.mqttReady = false;
+    await fixture.channel.recoverPendingCalls();
+    assert.deepEqual(fixture.table.scans, []);
+});
+
+test('when Broadcast runs calls, a ready MQTT connection cannot recover calls while Broadcast is down', async () => {
+    for (const [transport, execution] of [[true, false], [false, true], [false, false]]) {
+        setFlags(transport, execution);
         const fixture = makeChannel(RemoteChannel, ['blocked']);
         broadcastDown(fixture);
-        fixture.channel.mqttReady = mqttReady;
-        fixture.channel.localExecutorProbe = () => executorAlive;
+        fixture.channel.mqttReady = true;
+        await fixture.channel.recoverPendingCalls();
+        assert.deepEqual(fixture.table.scans, [], `transport=${transport}, execution=${execution}`);
+    }
+});
+
+test('both execution transports require a live local executor before scanning', async () => {
+    for (const execution of [true, false]) {
+        setFlags(true, execution);
+        const fixture = makeChannel(RemoteChannel, ['blocked']);
+        fixture.channel.mqttReady = true;
+        fixture.channel.localExecutorProbe = () => false;
         await fixture.channel.recoverPendingCalls();
         assert.deepEqual(fixture.table.scans, []);
     }

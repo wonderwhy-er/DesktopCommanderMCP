@@ -86,7 +86,7 @@ test('a connection lost before the subscription is granted fails startup immedia
     const started = receiver.start();
     client.emit('connect');
     client.emit('close');
-    await assert.rejects(started, /clos|disconnect/i);
+    await assert.rejects(started, /close|disconnect/i);
     assert.equal(failures.count, 0);
     assert.equal(client.ended, true);
 });

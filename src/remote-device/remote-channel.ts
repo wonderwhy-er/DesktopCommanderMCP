@@ -835,7 +835,7 @@ export class RemoteChannel {
     }
 
     /** Transport and execution on: MQTT runs calls and Broadcast only observes. */
-    private mqttRunsCalls(): boolean {
+    private isMqttExecutionEnabled(): boolean {
         return rolloutManager.get('MQTT_TRANSPORT_ENABLED') && rolloutManager.get('MQTT_ON_DEVICE_EXECUTION_ENABLED');
     }
 
@@ -843,7 +843,7 @@ export class RemoteChannel {
         if (this.shuttingDown || this.sessionLost || this.handlingSignedOut) {
             return;
         }
-        if (!this.mqttRunsCalls()) {
+        if (!this.isMqttExecutionEnabled()) {
             console.debug(`[MQTT] Doorbell for call ${payload.call_id} observed only; execution is off`);
             return;
         }
@@ -862,7 +862,7 @@ export class RemoteChannel {
         }
         observeTransport({ stage: 'received', payload, deviceId: this.deviceId,
             userId: this.user?.id, transport: 'broadcast' });
-        if (this.mqttRunsCalls()) {
+        if (this.isMqttExecutionEnabled()) {
             console.debug(`[DEBUG] Broadcast doorbell for call ${payload?.call_id} observed only; MQTT runs calls`);
             return;
         }
@@ -1112,7 +1112,9 @@ export class RemoteChannel {
      * which makes this safe against a doorbell arriving at the same time.
      */
     private async recoverPendingCalls(reason = 'after reconnect'): Promise<void> {
-        if (!this.client || !this.deviceId || !this.canRunCalls()) return;
+        if (!this.client || !this.deviceId || !this.canRunCalls()) {
+            return;
+        }
 
         const { data: pending, error } = await this.client
             .from('mcp_remote_calls')
@@ -1140,7 +1142,9 @@ export class RemoteChannel {
         // Claim quickly; dispatchToolCall() does not await tool execution, so
         // this loop serializes only the small REST claim operations.
         for (const row of pending) {
-            if (!this.canRunCalls()) break;
+            if (!this.canRunCalls()) {
+                break;
+            }
             await this.onDoorbell({
                 call_id: row.id,
                 device_id: row.device_id,
@@ -1634,14 +1638,11 @@ export class RemoteChannel {
             && this.localExecutorProbe();
     }
 
-    /**
-     * Can this device run calls right now? The scan asks this before it takes waiting calls.
-     * Yes if at least one way to receive calls is working (Broadcast connected, or MQTT ready)
-     * and the part of the app that runs the tools is alive. Before MQTT only Broadcast counted,
-     * so with Broadcast down and MQTT up, waiting calls were never picked up.
-     */
+    /** Recovery requires the selected execution transport and the local executor to be ready. */
     private canRunCalls(): boolean {
-        return this.isReachable() || (this.mqttReady && this.localExecutorProbe());
+        return this.isMqttExecutionEnabled()
+            ? this.mqttReady && this.localExecutorProbe()
+            : this.isReachable();
     }
 
     /**
