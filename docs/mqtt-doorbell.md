@@ -56,8 +56,12 @@ A failed replacement enrollment keeps the new key for the next restart. An inter
 reset is resumed before enrollment on the next startup. Valid matching credentials are reused.
 Unreadable identity or certificate caches still require inspection. Session, lock and
 filesystem errors stop enrollment. Only one process may enroll a profile at a time.
-Initial enrollment is attempted once; fix configuration and restart on failure.
-Established MQTT connections reconnect automatically. Renewal is separate work.
+With `MQTT_TRANSPORT_ENABLED` on, the device attempts to connect immediately.
+If startup fails or an established connection drops, the device waits 10 seconds
+before each of the first 10 retries. If the tenth retry fails, it waits five
+minutes before each further retry. Each wait starts when the previous attempt
+fails. A successful connection and subscription reset the count. Disabling
+MQTT, signing out, or shutting down cancels the pending retry.
 
 The broker defaults to `mqtts://a1vw7p0stdnykd-ats.iot.eu-west-1.amazonaws.com:8883`.
 Set `MQTT_BROKER_URL` to override it; unset or empty values use the default for every backend.

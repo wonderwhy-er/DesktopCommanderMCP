@@ -81,23 +81,50 @@ test('a fresh MQTT subscription scans for calls missed while MQTT was down', asy
     assert.deepEqual(fixture.delivered, ['missed-1', 'missed-2']);
 });
 
-test('a failed MQTT start is tried again while the flag is on, and not once it is off', async () => {
+test('MQTT retries ten times at 10 seconds, then every 5 minutes until it recovers', async t => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
     setMqttTransport(true);
-    const fixture = makeChannel(RemoteChannel, []);
+    const { channel } = makeChannel(RemoteChannel, []);
     let starts = 0;
-    fixture.channel.startMqtt = async () => { starts++; if (starts === 1) throw new Error('broker down'); };
-    await fixture.channel.updateMqttTransport(true);
-    assert.ok(fixture.channel.mqttRestartTimer, 'a restart is planned');
-    clearTimeout(fixture.channel.mqttRestartTimer);
-    fixture.channel.mqttRestartTimer = null;
-    await fixture.channel.updateMqttTransport(true);
-    assert.equal(starts, 2);
-    assert.equal(fixture.channel.mqttRestartFailures, 0, 'a start that works resets the wait');
+    let brokerAvailable = false;
+    channel.prepareMqttConfig = async () => ({});
+    channel.startMqttTransport = async () => {
+        starts++;
+        if (!brokerAvailable) throw new Error('broker down');
+        channel.mqttReceiver = { stop: async () => {} };
+    };
+    async function expectRetryAfter(delayMs) {
+        const before = starts;
+        t.mock.timers.tick(delayMs - 1); // Just before the retry deadline, no new attempt should have started.
+        await channel.mqttLifecycle;
+        assert.equal(starts, before, `retry ${before} started before ${delayMs} ms`);
+        t.mock.timers.tick(1); // Reach the deadline exactly.
+        await channel.mqttLifecycle;
+        assert.equal(starts, before + 1, `retry ${before} should start at ${delayMs} ms`);
+    }
 
+    await channel.updateMqttTransport(true);
+    assert.equal(starts, 1, 'the initial connection starts immediately');
+    for (let retry = 1; retry <= 10; retry++) { // The MQTT retry policy allows ten fast retries after the initial failure.
+        await expectRetryAfter(10_000); // The fast retry interval is ten seconds.
+    }
+    const startsBeforeRefresh = starts;
+    await channel.updateMqttTransport(true);
+    assert.equal(starts, startsBeforeRefresh, 'another request to start MQTT respects the pending five-minute wait');
+    await expectRetryAfter(300_000); // Five minutes between attempts during a prolonged outage.
+    brokerAvailable = true;
+    await expectRetryAfter(300_000); // The device can still recover on a later five-minute retry.
+    assert.equal(channel.mqttRestartTimer, null);
+
+    brokerAvailable = false;
+    await channel.onMqttReceiverFailed(channel.mqttReceiver);
+    await expectRetryAfter(10_000); // A fresh outage after a successful connection starts with the ten-second interval.
     setMqttTransport(false);
-    fixture.channel.startMqtt = async () => { throw new Error('broker down'); };
-    await fixture.channel.updateMqttTransport(true);
-    assert.equal(fixture.channel.mqttRestartTimer, null);
+    const startsBeforeDisable = starts;
+    await channel.updateMqttTransport(false);
+    t.mock.timers.tick(300_000);
+    await channel.mqttLifecycle;
+    assert.equal(starts, startsBeforeDisable, 'disabling MQTT cancels the pending retry');
 });
 
 test('a receiver that stopped itself is replaced; a failure from an old receiver is ignored', async () => {

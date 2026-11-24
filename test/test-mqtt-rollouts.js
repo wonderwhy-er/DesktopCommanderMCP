@@ -174,6 +174,26 @@ await test('a failed startup releases the queue for the next flag change', async
     assert.deepEqual(f.capabilities.at(-1), { transport_mqtt_v1: true, app_version: VERSION });
 });
 
+await test('a restored session can start MQTT while the previous session had a retry pending', async t => {
+    rolloutManager.update(enabled);
+    const f = fixture(t);
+    f.channel.prepareMqttConfig = async () => { throw Error('offline'); };
+    await f.channel.registerDevice({}, 'device', 'fixture', () => {});
+    await f.channel.mqttLifecycle;
+    assert.ok(f.channel.mqttRestartTimer);
+
+    f.channel.lastKnownSession = { access_token: 'token', refresh_token: 'refresh' };
+    f.channel.client.auth = {
+        setSession: async () => ({ error: null }),
+        refreshSession: async () => ({ data: { session: f.channel.lastKnownSession }, error: null }),
+    };
+    f.channel.prepareMqttConfig = async () => ({});
+    await f.channel.handleSignedOut();
+    await f.channel.mqttLifecycle;
+    assert.equal(f.starts, 1);
+    assert.equal(f.channel.mqttRestartTimer, null);
+});
+
 await test('a new start waits until the previous stop and capability withdrawal finish', async t => {
     rolloutManager.update(enabled);
     const f = fixture(t);

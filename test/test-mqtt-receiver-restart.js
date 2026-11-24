@@ -1,7 +1,5 @@
 #!/usr/bin/env node
-// A receiver that stops itself after startup (the broker refuses the subscription on a
-// reconnect, a reconnect never subscribes again, or the readiness write fails) tells RemoteChannel through onFailed, so MQTT is
-// restarted instead of staying off until the app restarts.
+// A receiver reports startup failures through start() and later disconnects through onFailed.
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { EventEmitter } from 'node:events';
@@ -45,16 +43,18 @@ function receiverOn(client, onReady = async () => {}, options = {}) {
     return { receiver, failures };
 }
 
-test('a subscription refused on a reconnect stops the receiver and reports it once', async () => {
+test('a lost connection withdraws readiness and requests one replacement', async () => {
     const client = fakeClient();
-    const { receiver, failures } = receiverOn(client);
+    const readiness = [];
+    const { receiver, failures } = receiverOn(client, async ready => readiness.push(ready));
     const started = receiver.start();
     client.emit('connect');
     await started;
-    client.subscribe = (_topic, _options, callback) => callback(new Error('not authorized'));
-    client.emit('connect');
+    client.emit('close');
+    client.emit('close');
+    assert.deepEqual(readiness, [true, false]);
     assert.equal(failures.count, 1);
-    assert.equal(client.ended, true, 'the receiver stopped');
+    assert.equal(client.ended, true);
 });
 
 test('a subscription refused during startup rejects start() and does not report a later failure', async () => {
@@ -67,54 +67,48 @@ test('a subscription refused during startup rejects start() and does not report 
     assert.equal(failures.count, 0, 'start() already reports it; RemoteChannel retries the start');
 });
 
-test('a readiness write that fails on a reconnect stops the receiver and reports it', async () => {
+test('a readiness write that fails during startup rejects the attempt', async () => {
     const client = fakeClient();
-    let failReadiness = false;
     const { receiver, failures } = receiverOn(client, async ready => {
-        if (ready && failReadiness) throw new Error('capability write failed');
+        if (ready) throw new Error('capability write failed');
     });
     const started = receiver.start();
     client.emit('connect');
-    await started;
-    failReadiness = true;
-    client.emit('connect');
-    // The readiness callback is a promise, so the failure is seen a few microtask turns later.
-    for (let turn = 0; turn < 5 && failures.count === 0; turn++) await Promise.resolve();
-    assert.equal(failures.count, 1);
+    await assert.rejects(started, /readiness/);
+    assert.equal(failures.count, 0);
+    assert.equal(client.ended, true);
 });
 
-// After a dropped connection the receiver has the startup limit to subscribe again. A broker that
-// never grants it again would otherwise leave the device connected and not ready until a restart.
-const DEADLINE = { connectTimeout: 30 };
-const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
-
-/** A started receiver whose next subscriptions get no answer from the broker. */
-async function startedThenSilent(onReady) {
+test('a connection lost before the subscription is granted fails startup immediately', async () => {
     const client = fakeClient();
-    const { receiver, failures } = receiverOn(client, onReady, DEADLINE);
+    client.subscribe = () => {};
+    const { receiver, failures } = receiverOn(client);
+    const started = receiver.start();
+    client.emit('connect');
+    client.emit('close');
+    await assert.rejects(started, /clos|disconnect/i);
+    assert.equal(failures.count, 0);
+    assert.equal(client.ended, true);
+});
+
+test('a broker that never grants the subscription reaches the startup deadline', async () => {
+    const client = fakeClient();
+    client.subscribe = () => {};
+    const { receiver, failures } = receiverOn(client, undefined, { connectTimeout: 30 });
+    const started = receiver.start();
+    client.emit('connect');
+    await assert.rejects(started, /timed out/);
+    assert.equal(failures.count, 0);
+    assert.equal(client.ended, true);
+});
+
+test('an intentional stop does not request a replacement when the socket closes', async () => {
+    const client = fakeClient();
+    const { receiver, failures } = receiverOn(client);
     const started = receiver.start();
     client.emit('connect');
     await started;
-    client.subscribe = () => {};
-    return { client, receiver, failures };
-}
-
-test('a reconnect that never subscribes again stops the receiver and reports it once', async () => {
-    const { client, failures } = await startedThenSilent();
+    await receiver.stop();
     client.emit('close');
-    client.emit('connect');
-    client.emit('close');
-    await wait(60);
-    assert.equal(failures.count, 1);
-    assert.equal(client.ended, true, 'the receiver stopped');
-});
-
-test('a reconnect that subscribes again in time keeps the receiver', async () => {
-    const { client, failures } = await startedThenSilent();
-    client.emit('close');
-    client.subscribe = (topic, _options, callback) => callback(null, [{ topic, qos: 1 }]);
-    client.emit('connect');
-    await wait(60);
     assert.equal(failures.count, 0);
-    assert.notEqual(client.ended, true);
 });

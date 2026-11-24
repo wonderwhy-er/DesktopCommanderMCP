@@ -20,8 +20,8 @@ const { MCPDevice } = await import('../dist/remote-device/device.js');
 const { MqttTransport, createMqttConfig, mqttDoorbellTopic } = await import('../dist/remote-device/mqtt/mqtt-transport.js');
 const { configManager } = await import('../dist/config-manager.js');
 
-const until = async (condition) => {
-    const deadline = Date.now() + 4000;
+const until = async (condition, timeoutMs = 4000) => {
+    const deadline = Date.now() + timeoutMs;
     while (!condition()) {
         if (Date.now() >= deadline) throw new Error('Timed out waiting for MQTT fixture');
         await new Promise(resolve => setTimeout(resolve, 5));
@@ -154,7 +154,8 @@ function fixture() {
 try {
     const f = fixture();
     assert.equal(f.channel.isReachable(), true, 'Broadcast readiness cannot depend on MQTT');
-    await f.channel.startMqttTransport(config);
+    f.channel.prepareMqttConfig = async () => config;
+    await f.channel.updateMqttTransport(true);
     assert.equal(f.channel.isReachable(), true);
     assert.equal(f.capabilities.at(-1).transport_mqtt_v1, true);
     assert.deepEqual(Object.keys(f.capabilities.at(-1)).sort(), [
@@ -297,20 +298,21 @@ try {
     assert.equal(malformed, invalid.length + 1);
 
     // Two identical result doorbells must each discard their own packet on disconnect.
-    const brokerClient = broker.clients[receiver.client.options.clientId];
+    const disconnectedClient = receiver.client;
+    assert.equal(disconnectedClient.options.reconnectPeriod, 0, 'RemoteChannel owns socket retries');
+    const brokerClient = broker.clients[disconnectedClient.options.clientId];
     const originalWrite = brokerClient.conn.write;
     brokerClient.conn.write = () => true;
-    receiver.client.options.reconnectPeriod = 20;
     try {
         await Promise.all([
             assert.rejects(receiver.publishResult('same-call', 'backend'), /disconnected/),
             assert.rejects(receiver.publishResult('same-call', 'backend'), /disconnected/),
             (async () => {
                 await until(() => resultPackets.filter(packet => packet.body.call_id === 'same-call').length === 2);
-                receiver.client.stream.destroy();
+                disconnectedClient.stream.destroy();
             })(),
         ]);
-        assert.deepEqual(Object.keys(receiver.client.outgoing), [], 'no unacknowledged result is replayed after reconnect');
+        assert.deepEqual(Object.keys(disconnectedClient.outgoing), [], 'no unacknowledged result is replayed after reconnect');
     } finally {
         brokerClient.conn.write = originalWrite;
     }
@@ -323,7 +325,9 @@ try {
     await until(() => claims('while-mqtt-disconnected').length === 1);
     assert.deepEqual(claims('while-mqtt-disconnected'), ['broadcast']);
     f.add('missed-while-disconnected');
-    await until(() => f.channel.mqttReady);
+    // Allow the specified 10-second retry delay plus time for the local TLS handshake.
+    await until(() => f.channel.mqttReady, 15_000);
+    assert.notEqual(f.channel.mqttReceiver, receiver, 'the retry creates a fresh receiver');
     await until(() => f.capabilities.at(-1).transport_mqtt_v1 === true);
     // Doorbells sent while MQTT was down are not delivered later, so the reconnect scans for waiting calls.
     await until(() => f.rows.get('missed-while-disconnected').status === 'completed');

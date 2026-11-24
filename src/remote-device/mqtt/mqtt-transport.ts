@@ -55,8 +55,6 @@ export function createMqttConfig(credentials: {
 		clean: true,
 		keepalive: 30,
 		connectTimeout: CONNECT_TIMEOUT_MS,
-		// Spread reconnects between connector processes after a shared network outage.
-		reconnectPeriod: 1_000 + Math.floor(Math.random() * 1_500),
 		resubscribe: false,
 		queueQoSZero: false,
 		cert: credentials.cert,
@@ -79,8 +77,6 @@ export class MqttTransport {
 	private stopped = false;
 	private ready = false;
 	private cancelStart: (() => void) | null = null;
-	/** After a dropped connection: the time left to subscribe again before the receiver gives up. */
-	private resubscribeTimer: NodeJS.Timeout | null = null;
 	private readonly topic: string;
 
 	/** Bind verified registration identity and RemoteChannel's delivery/readiness callbacks once. */
@@ -97,10 +93,7 @@ export class MqttTransport {
 		this.topic = mqttDoorbellTopic(userId, deviceId);
 	}
 
-	/**
-	 * Connect once and resolve after QoS 1 SUBACK plus the readiness callback.
-	 * MQTT.js owns socket reconnects; this receiver owns resubscription and admission.
-	 */
+	/** Make one connection attempt and resolve after QoS 1 SUBACK and the readiness update. */
 	async start(): Promise<void> {
 		if (this.client || this.stopped) {
 			throw new Error("MQTT receiver already started or stopped");
@@ -112,6 +105,7 @@ export class MqttTransport {
 		);
 		const client = connect(this.config.url, {
 			...this.config.options,
+			reconnectPeriod: 0, // MQTT.js IClientOptions.reconnectPeriod: 0 ms disables automatic retries. RemoteChannel schedules them.
 			// Stable identity also lets an AWS policy restrict this certificate's Connect permission.
 			clientId: `dc-device-${this.deviceId}`,
 		});
@@ -135,27 +129,23 @@ export class MqttTransport {
                     resolve(); 
                 }
 			};
-			// A connected socket without a granted subscription must not hang device startup.
-			const timer = setTimeout(() => {
-				finish(new Error("MQTT connection/subscription timed out"));
-				void this.stop().catch(() => {});
-			}, this.config.options.connectTimeout ?? CONNECT_TIMEOUT_MS);
-			this.cancelStart = () => finish(new Error("MQTT receiver stopped"));
-			// Stop this receiver for good and tell RemoteChannel once, so it can start a new one.
-			// During startup, start() fails and that is the report. After startup, start() has
-			// already finished and can't fail again, so onFailed() is the report instead.
-			// Reporting both ways would schedule two restarts.
+			// Report a startup failure through start(), and a later disconnect through onFailed().
 			const stopWithError = (error: Error) => {
-				const alreadyStarted = settled; // read before finish() sets it
-				finish(error); // fails start() if it is still running, otherwise does nothing
+				if (this.stopped) return;
+				const alreadyStarted = settled;
+				finish(error);
 				void this.stop().catch(() => {});
 				if (alreadyStarted) this.onFailed();
 			};
-			client.on("connect", () => {
+			// A connected socket without a granted subscription must not hang device startup.
+			const timer = setTimeout(() => stopWithError(new Error("MQTT connection/subscription timed out")),
+				this.config.options.connectTimeout ?? CONNECT_TIMEOUT_MS);
+			this.cancelStart = () => finish(new Error("MQTT receiver stopped"));
+			client.once("connect", () => {
 				if (this.stopped) {
                     return;
                 }
-				// Run after every connection: a TCP connection alone cannot receive commands.
+				// A TCP connection alone cannot receive commands.
 				client.subscribe(this.topic, { qos: 1 }, (error, granted) => {
 					if (this.stopped || !client.connected) {
                         return;
@@ -172,7 +162,6 @@ export class MqttTransport {
 					// Reject downgraded/foreign grants above, then let RemoteChannel persist capability.
 					// Recheck after that await so a stop/close cannot resolve stale startup as ready.
 					this.ready = true;
-					this.clearResubscribeTimer();
 					void this.onReady(true)
 						.then(() => {
 							if (!this.stopped && this.ready) {
@@ -186,18 +175,8 @@ export class MqttTransport {
 						.catch(() => stopWithError(new Error("MQTT readiness update failed")));
 				});
 			});
-			// Withdraw local admission immediately; RemoteChannel serializes the durable flag update.
-			client.on("close", () => {
-				if (this.ready && !this.stopped) {
-					console.debug("[MQTT] Disconnected; waiting for reconnection");
-				}
-				this.ready = false;
-				void this.onReady(this.ready).catch(() => {});
-				// During startup the startup timer already watches the connection.
-				if (settled) this.startResubscribeCountdown(stopWithError);
-			});
-			// MQTT.js reconnects after network faults. Never print TLS/broker errors,
-			// which can include certificate paths or broker-provided sensitive text.
+			client.once("close", () => stopWithError(new Error("MQTT connection closed")));
+			// Raw TLS/broker errors can include certificate paths or broker-provided sensitive text.
 			client.on("error", () => {});
 			// Treat broker input as untrusted before RemoteChannel performs any database read.
 			// Reject retained backlog and oversized data before parsing, then enforce exact identity.
@@ -252,28 +231,6 @@ export class MqttTransport {
 				void this.onDoorbell(payload).catch(() => {});
 			});
 		});
-	}
-
-	/**
-	 * After a drop, MQTT.js reconnects by itself. This gives it 10 s (the startup limit) to be
-	 * connected and subscribed again. If it isn't, give up so RemoteChannel does a clean start
-	 * with a growing wait. That covers a broker that connects but never grants the subscription
-	 * (otherwise the device stays not ready until the app restarts), and a long outage (otherwise
-	 * MQTT.js retries every 1-2.5 s without end). Only the first drop starts the countdown, so
-	 * quick repeated drops can't keep resetting it.
-	 */
-	private startResubscribeCountdown(stopWithError: (error: Error) => void): void {
-		// Stopping closes the connection too, and that is not a failure.
-		if (this.stopped || this.resubscribeTimer) return;
-		this.resubscribeTimer = setTimeout(() => {
-			this.resubscribeTimer = null;
-			if (!this.stopped) stopWithError(new Error("MQTT reconnect did not resubscribe in time"));
-		}, this.config.options.connectTimeout ?? CONNECT_TIMEOUT_MS);
-	}
-
-	private clearResubscribeTimer(): void {
-		if (this.resubscribeTimer) clearTimeout(this.resubscribeTimer);
-		this.resubscribeTimer = null;
 	}
 
 	/** Publish one bounded result attempt without queuing it for a later connection. */
@@ -341,9 +298,11 @@ export class MqttTransport {
 				client.on("packetsend", onPacket);
 				try {
 					observeTransport({ stage: 'publish_from_device', callId, deviceId: this.deviceId, userId: this.userId, transport:'mqtt' });
-					client.publish(topic, payload, { qos: 1, retain: false }, (error) =>
-						finish(error ? new Error("MQTT result publish failed") : undefined),
-					);
+					client.publish(topic, payload, { qos: 1, retain: false }, (error) => {
+						// MQTT.js can fail pending publishes during shutdown before their close listeners run.
+						if (error && (this.stopped || !client.connected)) return onClose();
+						finish(error ? new Error("MQTT result publish failed") : undefined);
+					});
 				} catch {
 					finish(new Error("MQTT result publish failed"));
 				}
@@ -358,7 +317,6 @@ export class MqttTransport {
 		this.stopped = true;
 		this.ready = false;
 		this.cancelStart?.();
-		this.clearResubscribeTimer();
 		// Force socket closure: teardown must not wait for broker acknowledgements.
 		this.client?.end(true);
 		this.client = null;
