@@ -235,6 +235,13 @@ export const GetRecentToolCallsArgsSchema = z.object({
   maxResults: z.number().min(1).max(1000).optional().default(50),
   toolName: z.string().optional(),
   since: z.string().datetime().optional(),
+  // With device context on, results are compact (one line per call); "full" returns complete arguments and outputs
+  format: z.enum(['compact', 'full']).optional(),
+});
+
+export const GetDeviceContextArgsSchema = z.object({
+  project: z.string().optional(),
+  limit: z.number().int().min(1).max(20).optional(),
 });
 
 export const TrackUiEventArgsSchema = z.object({
@@ -249,6 +256,7 @@ export const TrackUiEventArgsSchema = z.object({
  * with the tool definitions in server.ts.
  */
 export const toolArgSchemas: Record<string, z.ZodTypeAny> = {
+  get_device_context: GetDeviceContextArgsSchema,
   get_config: GetConfigArgsSchema,
   set_config_value: SetConfigValueArgsSchema,
   read_file: ReadFileArgsSchema,

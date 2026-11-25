@@ -1,0 +1,1 @@
+{ "name": "shop-old", "description": "Archived copy of the old shop", "version": "0.9.0", "scripts": { "start": "node server.js" } }

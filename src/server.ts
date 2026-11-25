@@ -56,6 +56,7 @@ import {
     StopSearchArgsSchema,
     ListSearchesArgsSchema,
     GetRecentToolCallsArgsSchema,
+    GetDeviceContextArgsSchema,
     WritePdfArgsSchema,
     toolArgSchemas,
 } from './tools/schemas.js';
@@ -71,6 +72,7 @@ import { trackToolCall } from './utils/trackTools.js';
 import { usageTracker } from './utils/usageTracker.js';
 import { processDockerPrompt } from './utils/dockerPrompt.js';
 import { toolHistory } from './utils/toolHistory.js';
+import { deviceContextInstructions, handleGetDeviceContext, isDeviceContextToolEnabled, maybeAppendDeviceContext, observeToolCall } from './device-context/index.js';
 import { handleWelcomePageOnboarding, skipWelcomePageOnboarding } from './utils/welcome-onboarding.js';
 
 import { VERSION } from './version.js';
@@ -273,7 +275,7 @@ server.setRequestHandler(InitializeRequestSchema, async (request: InitializeRequ
                 name: "desktop-commander",
                 version: VERSION,
             },
-            instructions: SERVER_INSTRUCTIONS,
+            instructions: SERVER_INSTRUCTIONS + deviceContextInstructions(),
         };
     } catch (error) {
         logToStderr('error', `Error in initialization handler: ${error}`);
@@ -290,6 +292,10 @@ deferLog('info', 'Setting up request handlers...');
  * Check if a tool should be included based on current client
  */
 function shouldIncludeTool(toolName: string): boolean {
+    // Device context (experimental, env DESKTOP_COMMANDER_DEVICE_CONTEXT=tool|both)
+    if (toolName === 'get_device_context') {
+        return isDeviceContextToolEnabled();
+    }
     // Exclude these tools for desktop-commander client (DC-specific meta-tools not useful when DC itself is the client)
     if (currentClient?.name === 'desktop-commander-app') {
         if (toolName === 'give_feedback_to_desktop_commander') {
@@ -310,6 +316,24 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
 
         // Build complete tools array
         const allTools = [
+            // Device context: listed first so a new conversation sees it before reaching for list/search
+            {
+                name: "get_device_context",
+                description: `
+                        What was recently worked on on this computer, learned from earlier Desktop Commander activity:
+                        the last session, recent projects (what each one is, stack, git, what runs, recent changes, failed commands).
+                        Call it first when the user talks about their projects, sites or apps ("my site", "the app", "continue where we left off"),
+                        before listing or searching directories. Pass project (name or path) for details on one.
+                        ${CMD_PREFIX_DESCRIPTION}`,
+                inputSchema: zodToJsonSchema(GetDeviceContextArgsSchema),
+                annotations: {
+                    title: "Get Device Context",
+                    readOnlyHint: true,
+                    idempotentHint: true,
+                    openWorldHint: false,
+                    destructiveHint: false,
+                },
+            },
             // Configuration tools
             {
                 name: "get_config",
@@ -1106,6 +1130,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         - Recovering context after chat history loss
                         - Debugging tool call sequences
                         
+                        With device context on, results come as one line per call (format: "full" for complete arguments and outputs).
                         Note: Does not track its own calls or track_ui_event.
                         History is persisted locally in tool-history.jsonl, keeps up to the last 1000
                         calls in memory, and trims older on-disk history. Stored outputs over 4 KiB
@@ -1292,6 +1317,19 @@ async function handleCallToolRequest(request: CallToolRequest): Promise<ServerRe
                 }
                 break;
 
+            case "get_device_context":
+                if (!isDeviceContextToolEnabled()) {
+                    result = { content: [{ type: "text", text: `Error: Unknown tool: ${name}` }], isError: true };
+                    break;
+                }
+                try {
+                    result = handleGetDeviceContext(args, metadata);
+                } catch (error) {
+                    capture('server_request_error', { message: `Error in get_device_context handler: ${error}` });
+                    result = { content: [{ type: "text", text: `Error: Failed to get device context` }], isError: true };
+                }
+                break;
+
             case "get_recent_tool_calls":
                 try {
                     result = await handlers.handleGetRecentToolCalls(args);
@@ -1441,6 +1479,9 @@ async function handleCallToolRequest(request: CallToolRequest): Promise<ServerRe
             toolHistory.addCall(name, args, result, duration);
         }
 
+        // Device context: remember which project this call touched (no contents, no command text)
+        observeToolCall(name, args, result, isRemoteCall);
+
         // Track success or failure based on result
         if (name === 'track_ui_event') {
             return result;
@@ -1495,6 +1536,11 @@ async function handleCallToolRequest(request: CallToolRequest): Promise<ServerRe
             // Check if should prompt about Docker environment
             result = await processDockerPrompt(result, name);
         }
+
+        // Device context safety net: when the agent is looking for a project blindly,
+        // append a short list of recent projects (at most once per episode). New object,
+        // so the history entry recorded above stays unchanged.
+        result = maybeAppendDeviceContext(name, args, result, metadata);
 
         // If the caller sent parameters this tool does not support, Zod silently
         // strips them. Prepend a corrective warning so the model knows they were
