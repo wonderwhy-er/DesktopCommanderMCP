@@ -21,8 +21,9 @@ const tz = () => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone
 /** Count of uncommitted changes (git status --porcelain), time-boxed; null when not a git repo or too slow. */
 function uncommitted(root: string): number | null {
     if (!fs.existsSync(path.join(root, '.git'))) return null;
-    // Never let a repo's own config run code when we only want a count (fsmonitor, filters, hooks)
-    try { if (/fsmonitor|hookspath|\[filter|textconv|\bsshcommand/i.test(fs.readFileSync(path.join(root, '.git', 'config'), 'utf8'))) return null; } catch { return null; }
+    // Never let a repo's own config run code when we only want a count (fsmonitor, filters, hooks, or any of
+    // those pulled in through [include] / [includeIf], which this text check can't follow)
+    try { if (/fsmonitor|hookspath|\[filter|textconv|\bsshcommand|\[include/i.test(fs.readFileSync(path.join(root, '.git', 'config'), 'utf8'))) return null; } catch { return null; }
     try {
         const out = execFileSync('git', ['-c', 'core.fsmonitor=false', '-c', 'core.hooksPath=/dev/null', '--no-optional-locks', '-C', root, 'status', '--porcelain', '--untracked-files=no'],
             { encoding: 'utf8', timeout: 500, stdio: ['ignore', 'pipe', 'ignore'], env: { ...process.env, GIT_CONFIG_NOSYSTEM: '1', GIT_TERMINAL_PROMPT: '0' } });

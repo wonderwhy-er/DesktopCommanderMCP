@@ -277,12 +277,14 @@ export function handleGetDeviceContext(args: any, meta: any): { content: Array<{
     ep.contextTool = true;
     ep.lastCallAt = Date.now();
     const ranking = visibleRanking();
-    const q = typeof args?.project === 'string' ? args.project.trim().toLowerCase() : '';
+    // Exact path as given (keyOf ignores case only where the file system does); lower case only for the name fallback
+    const raw = typeof args?.project === 'string' ? args.project.trim() : '';
+    const q = raw.toLowerCase();
     const limit = Math.min(Math.max(Number(args?.limit) || 5, 1), 20);
     let text: string;
     if (q) {
-        const hit = ranking.find((r) => keyOf(r.root) === keyOf(q)) ?? matchProjects(ranking, [q, ...q.split(/[\s/\\]+/)])[0];
-        text = render(ranking, { now: now(), home: home(), limit, project: hit?.root ?? q });
+        const hit = ranking.find((r) => keyOf(r.root) === keyOf(raw)) ?? matchProjects(ranking, [q, ...q.split(/[\s/\\]+/)])[0];
+        text = render(ranking, { now: now(), home: home(), limit, project: hit?.root ?? raw });
     } else {
         // Same resume card as the safety net: last session, projects, what runs, what failed
         const rows = readJournal();

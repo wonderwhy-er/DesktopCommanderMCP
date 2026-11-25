@@ -72,7 +72,7 @@ import { trackToolCall } from './utils/trackTools.js';
 import { usageTracker } from './utils/usageTracker.js';
 import { processDockerPrompt } from './utils/dockerPrompt.js';
 import { toolHistory } from './utils/toolHistory.js';
-import { deviceContextInstructions, handleGetDeviceContext, isDeviceContextToolEnabled, maybeAppendDeviceContext, observeToolCall } from './device-context/index.js';
+import { deviceContextInstructions, deviceContextMode, handleGetDeviceContext, isDeviceContextToolEnabled, maybeAppendDeviceContext, observeToolCall } from './device-context/index.js';
 import { handleWelcomePageOnboarding, skipWelcomePageOnboarding } from './utils/welcome-onboarding.js';
 
 import { VERSION } from './version.js';
@@ -1130,7 +1130,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         - Recovering context after chat history loss
                         - Debugging tool call sequences
                         
-                        With device context on, results come as one line per call (format: "full" for complete arguments and outputs).
+                        ${['nudge', 'both'].includes(deviceContextMode()) ? 'Results come as one line per call (format: "full" for complete arguments and outputs).' : ''}
                         Note: Does not track its own calls or track_ui_event.
                         History is persisted locally in tool-history.jsonl, keeps up to the last 1000
                         calls in memory, and trims older on-disk history. Stored outputs over 4 KiB

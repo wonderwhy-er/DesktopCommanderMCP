@@ -275,3 +275,13 @@ H twin shop · S stale (renamed) · S0 stale without memory. Results: `test\devi
 - Ranking recency uses the last activity of any kind; a smoother per-day decay would be better.
 - Two chats at the same time without a chat id: only the first gets the note.
 - Tested on toy setups (3–4 projects locally, 13 on the test VPS) and a synthetic ranking test.
+
+Open items from code review (not fixed in this prototype):
+
+- Building the card calls `ss`, `docker ps` and `git status` synchronously, each time-boxed (worst case a few
+  seconds with many projects), and `device-context.md` is rebuilt at most every 30 s during activity. Next: async
+  `execFile`, a short cache for git status, and rebuilding the file only on request.
+- The suites in `test/device-context/` don't run under `npm test` yet (the runner only picks up top-level
+  `test*.js`); the adversarial suite prints known gaps as FAIL and needs `skip()` before it can join CI.
+- The eval and VPS scripts (`eval/`, `photos/`, `run-local-test.ps1`) are dev-only: they use fixed paths and
+  rewrite or delete local DC files and test folders. They belong in a clearly marked dev-only folder with checks.
