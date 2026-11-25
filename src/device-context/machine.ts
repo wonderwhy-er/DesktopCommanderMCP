@@ -105,6 +105,8 @@ export function runAsync(cmd: string, args: string[], timeout = TIMEOUT, env?: N
             const child = execFile(cmd, args, { encoding: 'utf8', timeout, maxBuffer: 1024 * 1024, env, windowsHide: true },
                 (err, stdout) => resolve(err ? null : String(stdout)));
             child.stdin?.end();
+            // never keep DC alive at exit for a background check
+            try { child.unref(); (child.stdout as any)?.unref?.(); (child.stderr as any)?.unref?.(); } catch { /* ignore */ }
         } catch { resolve(null); }
     });
 }
@@ -114,7 +116,7 @@ function cwdOf(pid: number): string | null {
 }
 
 /** Linux without `ss`: listening sockets from /proc/net/tcp*, owners by scanning our own processes' fds. */
-function listeningFromProc(): RunningEntry[] {
+async function listeningFromProc(): Promise<RunningEntry[]> {
     const inodes = new Map<string, string>(); // inode -> port
     for (const f of ['/proc/net/tcp', '/proc/net/tcp6']) {
         let txt = ''; try { txt = fs.readFileSync(f, 'utf8'); } catch { continue; }
@@ -127,7 +129,10 @@ function listeningFromProc(): RunningEntry[] {
     if (!inodes.size) return [];
     const owners = new Map<string, number>();
     let pids: string[] = []; try { pids = fs.readdirSync('/proc').filter((x) => /^\d+$/.test(x)); } catch { /* ignore */ }
+    let n = 0;
     for (const pid of pids.slice(0, 2000)) {
+        // let other MCP calls run between batches: this walks every process's open files
+        if (++n % 25 === 0) await new Promise((r) => setImmediate(r));
         let fds: string[] = []; try { fds = fs.readdirSync(`/proc/${pid}/fd`); } catch { continue; }
         for (const fd of fds) {
             let l = ''; try { l = fs.readlinkSync(`/proc/${pid}/fd/${fd}`); } catch { continue; }
@@ -151,7 +156,7 @@ function listeningFromProc(): RunningEntry[] {
 async function listeningPorts(): Promise<RunningEntry[]> {
     if (process.platform !== 'linux') return [];
     const out = await runAsync('ss', ['-ltnpH']);
-    if (!out) return listeningFromProc();
+    if (!out) return await listeningFromProc();
     const seen = new Set<string>();
     const res: RunningEntry[] = [];
     for (const line of out.split('\n')) {

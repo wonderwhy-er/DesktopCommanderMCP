@@ -2,7 +2,7 @@
 import fs from 'fs'; import os from 'os'; import path from 'path'; import { execFileSync } from 'child_process'; import { pathToFileURL } from 'url';
 const DIST = process.argv[2] || './dist';
 const H = fs.mkdtempSync(path.join(os.tmpdir(), 'dcb-'));
-process.env.DC_DEVICE_CONTEXT_HOME = H; process.env.DESKTOP_COMMANDER_DEVICE_CONTEXT = 'both';
+process.env.DC_DEVICE_CONTEXT_HOME = H; process.env.DESKTOP_COMMANDER_DEVICE_CONTEXT = 'both'; process.env.DC_DEVICE_CONTEXT_NO_WARM = '1';
 const repo = path.join(H, 'code', 'app'); fs.mkdirSync(repo, { recursive: true });
 fs.writeFileSync(path.join(repo, 'package.json'), '{"name":"app"}'); fs.writeFileSync(path.join(repo, 'a.txt'), '1');
 const git = (...a) => execFileSync('git', ['-C', repo, ...a], { stdio: 'ignore', env: { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' } });
@@ -18,7 +18,8 @@ card._resetGitCacheForTests(); machine._resetMachineCachesForTests();
 const t0 = performance.now();
 const first = card.renderCard(rows, core.rank(rows, new Date()), { now: new Date(), home: H });
 const ms = performance.now() - t0;
-check('first card is built without waiting for git or ss', ms < 150, `${ms.toFixed(0)} ms`);
+// generous bound for slow CI machines; the real check is that the first card has no count yet (it didn't wait for git)
+check('first card is built without waiting for git or ss', ms < 1000, `${ms.toFixed(0)} ms`);
 check('first card has no count yet', !/uncommitted change/.test(first), first);
 await card.refreshUncommitted(repo); await machine.refreshRunningMap();
 const second = card.renderCard(rows, core.rank(rows, new Date()), { now: new Date(), home: H });

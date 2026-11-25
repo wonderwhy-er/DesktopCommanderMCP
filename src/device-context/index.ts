@@ -15,7 +15,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { observeEvent, failureAttributable, rank, render, renderTargeted, keyOf, isInside, redact, type JournalRow, type RankedProject } from './core.js';
 import { classify, matchProjects, didYouMean, episodeFor, resetEpisode, RESTART_IDLE_MS } from './nudge.js';
-import { renderCard } from './card.js';
+import { renderCard, refreshUncommitted } from './card.js';
 import { runningMap } from './machine.js';
 import { capture } from '../utils/capture.js';
 
@@ -241,7 +241,7 @@ function scheduleContextFile(): void {
 
 export function observeToolCall(name: string, args: any, result: any, isRemote: boolean): void {
     if (!isEnabled() || name === 'get_device_context' || isUiCall(args) || result?.isError) return;
-    runningMap();   // warms the background map (ss, docker, nginx) so the next card has it; returns at once
+    if (isNudgeEnabled()) runningMap();   // nudge/both: a note may be added soon, so warm the background map; returns at once
     try {
         ensureJournal();
         const { journal, dropped } = observeEvent({ t: now().toISOString(), tool: name, args, origin: isRemote ? 'remote' : 'local' },
@@ -440,3 +440,18 @@ export function maybeAppendDeviceContext(name: string, args: any, result: any, m
         if (ep) ep.lastCallAt = Date.now();
     }
 }
+
+/** When DC starts with the feature on, start the background checks at once (they never block), so even the first
+ *  summary of the first chat can say what runs and what is uncommitted. */
+function warmAtStart(): void {
+    if (!isEnabled() || process.env.DC_DEVICE_CONTEXT_NO_WARM === '1') return;
+    const t = setTimeout(() => {
+        try {
+            runningMap();
+            const rows = readJournal();
+            for (const r of rank(rows, now()).slice(0, 10)) void refreshUncommitted(r.root);
+        } catch { /* ignore */ }
+    }, 0);
+    t.unref?.();
+}
+warmAtStart();
