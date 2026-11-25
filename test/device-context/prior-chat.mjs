@@ -6,6 +6,7 @@ import fs from 'fs';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 
+if (process.env.DC_DEV_TOOLS !== '1') { console.error('Dev-only script: rewrites the test shop and adds calls to your DC history. Set DC_DEV_TOOLS=1 to run it.'); process.exit(1); }
 const shop = path.resolve(process.argv[2] || 'C:\\dev\\handmade-shop');
 const dist = path.resolve('dist/index.js');
 // start from the working shop every time (this part is "before the chat", not through DC)

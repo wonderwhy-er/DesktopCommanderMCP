@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Photo scenario on the VPS.  prep: run.sh prep <off|both> <label>   after the chat: run.sh grade <label>
 set -u
+# Dev-only, for a throwaway test VPS: deletes and recreates ~/public_html and ~/code/<test projects>, replaces DC's history
+[ "${DC_DEV_TOOLS:-}" = 1 ] || { echo "Dev-only script for a throwaway VPS: deletes ~/public_html and ~/code test projects and replaces DC's tool history. Set DC_DEV_TOOLS=1 to run it."; exit 1; }
 D=/var/tmp/dctest; K=$D/photokit; C=$HOME/.claude-server-commander; OUT=$K/runs; SITE=$HOME/public_html
 cmd=$1; shift
 stop_all() { pkill -f "[c]ode/handmade-shop/server.js"; pkill -f "[c]ode/shop-old/server.js"; pkill -f "[c]ode/travel-blog/server.js"; pkill -f "[r]esize.js"; sleep 1; }

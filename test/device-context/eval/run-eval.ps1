@@ -6,6 +6,7 @@
 # Results: test\device-context\eval\results\<time>\summary.md  (do not commit)
 # Your real DC files (history, journal, debug log, config) are backed up first and restored at the end.
 param([int]$Runs = 3, [string]$Arms = 'A,B,C,D,E,F,G1,G2')
+if ($env:DC_DEV_TOOLS -ne '1') { Write-Host 'Dev-only script: recreates test projects in C:\dev and temporarily replaces your DC history, journal and config (backed up and restored). Set $env:DC_DEV_TOOLS=1 to run it.'; exit 1 }
 $ErrorActionPreference = 'Continue'
 [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)   # read claude's UTF-8 output correctly
 foreach ($c in @('claude', 'node', 'npm')) { if (-not (Get-Command $c -ErrorAction SilentlyContinue)) { Write-Host "$c is not in PATH"; exit 1 } }

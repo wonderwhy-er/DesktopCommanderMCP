@@ -1,6 +1,7 @@
 # Local "my shop is down" test: Claude Code (headless) + the fork's Desktop Commander, without vs with device context.
 # Run:  powershell -ExecutionPolicy Bypass -File C:\dev\DesktopCommanderMCP\test\device-context\run-local-test.ps1
 # Takes ~10-20 min. Results go to test\device-context\local-results\<time>\ (do not commit them)
+if ($env:DC_DEV_TOOLS -ne '1') { Write-Host 'Dev-only script: rewrites the DC config and journal (backed up to the results folder) and recreates C:\dev\handmade-shop. Set $env:DC_DEV_TOOLS=1 to run it.'; exit 1 }
 $ErrorActionPreference = 'Continue'
 $Fork   = 'C:\dev\DesktopCommanderMCP'
 $Shop   = 'C:\dev\handmade-shop'
@@ -22,7 +23,9 @@ Pop-Location
 if (-not (Test-Path "$Fork\dist\device-context\card.js")) { Write-Host 'build failed: dist\device-context\card.js missing'; exit 1 }
 
 # Rebuild the device-context journal from DC's own tool history (drops rows recorded by an older build)
-Remove-Item (Join-Path $env:USERPROFILE '.claude-server-commander\device-context-events.jsonl') -ErrorAction SilentlyContinue
+$J = Join-Path $env:USERPROFILE '.claude-server-commander\device-context-events.jsonl'
+if (Test-Path $J) { Copy-Item $J (Join-Path $Out 'device-context-events.jsonl.backup') -Force }   # never delete the real journal without a copy
+Remove-Item $J -ErrorAction SilentlyContinue
 
 function Stop-Shop {
   Get-NetTCPConnection -LocalPort 3000 -State Listen -ErrorAction SilentlyContinue |

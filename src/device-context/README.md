@@ -228,6 +228,8 @@ Small samples (1–3 runs per variant). Raw logs are kept locally and not commit
 **Unit tests** (after `npm run build`):
 
 ```bash
+node test/run-all-tests.js --no-build test-device-context.js   # also part of npm test
+# or one suite at a time:
 for f in test/device-context/device-context*.test.mjs; do node "$f"; done
 node test/device-context/adversarial.test.mjs ./dist
 node test/device-context/synthetic-eval.mjs ./dist
@@ -245,6 +247,7 @@ raw last 50 history calls. The workload is synthetic: this checks ranking behavi
 **Claude Code, automated A/B** (Windows, PowerShell; needs `claude` in PATH; backs up and restores your DC files):
 
 ```powershell
+$env:DC_DEV_TOOLS = '1'   # the eval, setup and VPS scripts are dev-only and refuse to run without it
 powershell -ExecutionPolicy Bypass -File test\device-context\eval\run-eval.ps1 -Runs 3 -Arms "A,B,D,E,F,H,S,S0"
 ```
 
@@ -254,7 +257,7 @@ H twin shop · S stale (renamed) · S0 stale without memory. Results: `test\devi
 
 **Claude Desktop** (manual):
 
-1. `powershell -ExecutionPolicy Bypass -File test\device-context\claude-desktop-setup.ps1` (or `-Mode off`).
+1. `$env:DC_DEV_TOOLS = '1'; powershell -ExecutionPolicy Bypass -File test\device-context\claude-desktop-setup.ps1` (or `-Mode off`).
 2. Quit Claude Desktop from the tray and open it again.
 3. New chat, Remote Desktop Commander off, prompt: `use Desktop Commander: my online shop stopped working, can you fix it?`
    (without "use Desktop Commander" Claude Desktop uses its built-in file tools and never calls DC).
@@ -276,12 +279,12 @@ H twin shop · S stale (renamed) · S0 stale without memory. Results: `test\devi
 - Two chats at the same time without a chat id: only the first gets the note.
 - Tested on toy setups (3–4 projects locally, 13 on the test VPS) and a synthetic ranking test.
 
-Open items from code review (not fixed in this prototype):
+Code review (two rounds, 11 findings) — all addressed in this PR:
 
-- Fixed after review: `ss`, `docker ps` and `git status` now run in the background (async `execFile`, cached 30 s /
-  60 s), so building a card never blocks the server. The first card after a start may lack "running" and
-  "uncommitted" facts; the next one has them.
-- The suites in `test/device-context/` don't run under `npm test` yet (the runner only picks up top-level
-  `test*.js`); the adversarial suite prints known gaps as FAIL and needs `skip()` before it can join CI.
-- The eval and VPS scripts (`eval/`, `photos/`, `run-local-test.ps1`) are dev-only: they use fixed paths and
-  rewrite or delete local DC files and test folders. They belong in a clearly marked dev-only folder with checks.
+- `ss`, `docker ps` and `git status` run in the background (async `execFile`, cached 30 s / 60 s) and start when DC
+  starts with the feature on, so building a card never blocks the server; the `/proc` fallback yields to the event loop.
+- The suites run under the normal runner: `test/test-device-context.js` (part of `npm test`) runs every
+  `test/device-context/device-context*.test.mjs` and the adversarial suite; known, documented gaps are reported with
+  `skip()`, any other failure fails the run.
+- The eval, setup and VPS scripts are marked dev-only and refuse to run unless `DC_DEV_TOOLS=1` is set; the ones that
+  replace local DC files back them up first.

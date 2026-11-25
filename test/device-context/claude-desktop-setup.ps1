@@ -3,6 +3,8 @@
 #   "my online shop stopped working, can you fix it?"
 # Run:  powershell -ExecutionPolicy Bypass -File C:\dev\DesktopCommanderMCP\test\device-context\claude-desktop-setup.ps1 [-Mode both|off]
 param([ValidateSet('both', 'off')] [string]$Mode = 'both')
+# Dev-only: rewrites Claude Desktop's config (backed up first), recreates C:\dev\handmade-shop, writes the mode file
+if ($env:DC_DEV_TOOLS -ne '1') { Write-Host 'Dev-only script: rewrites the Claude Desktop config (with a backup), recreates C:\dev\handmade-shop and writes the device-context mode file. Set $env:DC_DEV_TOOLS=1 to run it.'; exit 1 }
 # Continue: in Windows PowerShell, 'Stop' turns npm/node warnings on stderr (2>&1) into terminating errors
 $ErrorActionPreference = 'Continue'
 $Fork = 'C:\dev\DesktopCommanderMCP'

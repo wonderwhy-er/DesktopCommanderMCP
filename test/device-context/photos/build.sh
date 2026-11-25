@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # One-time: build the pristine "old PHP shop with 300 product photos" for the photo scenario.
 set -e
+[ "${DC_DEV_TOOLS:-}" = 1 ] || { echo "Dev-only script for a throwaway VPS (writes /var/tmp/dctest/photokit). Set DC_DEV_TOOLS=1 to run it."; exit 1; }
 K=/var/tmp/dctest/photokit; P=$K/pristine/public_html
 rm -rf $K/pristine; mkdir -p $P/images/products $P/css $P/tools
 cat > $P/index.php <<'PHP'

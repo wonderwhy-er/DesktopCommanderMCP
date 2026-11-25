@@ -8,6 +8,7 @@ import os from 'os';
 import path from 'path';
 import { createRequire } from 'module';
 import { pathToFileURL } from 'url';
+if (process.env.DC_DEV_TOOLS !== '1') { console.error('Dev-only script for a throwaway VPS: replaces DC\'s tool history. Set DC_DEV_TOOLS=1 to run it.'); process.exit(1); }
 const req = createRequire(path.join(process.cwd(), 'package.json'));
 const sdk = async (p) => import(pathToFileURL(req.resolve(p)).href);
 const { Client } = await sdk('@modelcontextprotocol/sdk/client/index.js');

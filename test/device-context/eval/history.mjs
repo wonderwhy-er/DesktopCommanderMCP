@@ -11,6 +11,7 @@ import os from 'os';
 import path from 'path';
 import { createRequire } from 'module';
 import { pathToFileURL } from 'url';
+if (process.env.DC_DEV_TOOLS !== '1') { console.error('Dev-only script: rewrites test projects and DC\'s tool history. Set DC_DEV_TOOLS=1 to run it.'); process.exit(1); }
 
 // Runs from the fork root (cwd); the kit itself may live elsewhere, so load the MCP SDK from the fork
 const fork = process.cwd();
