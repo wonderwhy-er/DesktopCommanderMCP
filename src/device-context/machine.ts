@@ -7,7 +7,7 @@
  */
 import fs from 'fs';
 import path from 'path';
-import { execFileSync } from 'child_process';
+import { execFile, execFileSync } from 'child_process';
 
 // ---------- project description ----------
 const descCache = new Map<string, { at: number; value: string | null }>();
@@ -98,10 +98,15 @@ let runCache: { at: number; value: RunningEntry[] } | null = null;
 export let portsVisible = false;
 const TIMEOUT = 800;
 
-function run(cmd: string, args: string[]): string | null {
-    try {
-        return execFileSync(cmd, args, { encoding: 'utf8', timeout: TIMEOUT, stdio: ['ignore', 'pipe', 'ignore'], maxBuffer: 1024 * 1024 });
-    } catch { return null; }
+/** Runs a command without blocking the server (the MCP event loop keeps serving other calls meanwhile). */
+export function runAsync(cmd: string, args: string[], timeout = TIMEOUT, env?: NodeJS.ProcessEnv): Promise<string | null> {
+    return new Promise((resolve) => {
+        try {
+            const child = execFile(cmd, args, { encoding: 'utf8', timeout, maxBuffer: 1024 * 1024, env, windowsHide: true },
+                (err, stdout) => resolve(err ? null : String(stdout)));
+            child.stdin?.end();
+        } catch { resolve(null); }
+    });
 }
 
 function cwdOf(pid: number): string | null {
@@ -143,9 +148,9 @@ function listeningFromProc(): RunningEntry[] {
 }
 
 /** Linux: listening TCP sockets with their process (only processes this user may see get a folder). */
-function listeningPorts(): RunningEntry[] {
+async function listeningPorts(): Promise<RunningEntry[]> {
     if (process.platform !== 'linux') return [];
-    const out = run('ss', ['-ltnpH']);
+    const out = await runAsync('ss', ['-ltnpH']);
     if (!out) return listeningFromProc();
     const seen = new Set<string>();
     const res: RunningEntry[] = [];
@@ -189,8 +194,8 @@ export function nginxSites(): Array<{ domains: string[]; root?: string; port?: s
     return sites;
 }
 
-function dockerProjects(): RunningEntry[] {
-    const out = run('docker', ['ps', '-a', '--format', '{{.Names}}\t{{.Label "com.docker.compose.project.working_dir"}}\t{{.Ports}}\t{{.State}}']);
+async function dockerProjects(): Promise<RunningEntry[]> {
+    const out = await runAsync('docker', ['ps', '-a', '--format', '{{.Names}}\t{{.Label "com.docker.compose.project.working_dir"}}\t{{.Ports}}\t{{.State}}']);
     if (!out) return [];
     return out.split('\n').filter(Boolean).slice(0, 30).map((l) => {
         const [name, dir, ports, state] = l.split('\t');
@@ -200,22 +205,34 @@ function dockerProjects(): RunningEntry[] {
     });
 }
 
-/** Everything running that we can attribute, cached for 30 s. */
+/** Everything running that we can attribute. Collected in the background (ss, docker ps, nginx configs) and
+ * cached for 30 s; runningMap() never waits for it, so building a card never blocks the server. */
+let runRefresh: Promise<void> | null = null;
+export function refreshRunningMap(): Promise<void> {
+    if (process.env.DC_DEVICE_CONTEXT_NO_RUNNING === '1') return Promise.resolve();
+    if (runRefresh) return runRefresh;
+    runRefresh = (async () => {
+        try {
+            const [ports, docker] = await Promise.all([listeningPorts(), dockerProjects()]);
+            const entries: RunningEntry[] = [...ports];
+            for (const s of nginxSites()) {
+                const viaPort = s.port ? ports.find((p) => p.label.startsWith(`:${s.port} `)) : undefined;
+                const dir = s.root ?? viaPort?.dir;
+                const dead = !!s.port && !viaPort && ports.length > 0;
+                entries.push({ kind: 'nginx', label: `nginx config ${s.domains.slice(0, 2).join(' ') || '(default)'}${s.port ? ' → :' + s.port : ''}${dead ? ' (nothing listening)' : ''}`, dir, down: dead })
+            }
+            entries.push(...docker);
+            portsVisible = ports.some((p) => !!p.dir);
+            runCache = { at: Date.now(), value: entries };
+        } catch { /* keep the last value */ } finally { runRefresh = null; }
+    })();
+    return runRefresh;
+}
+/** The last collected map; starts a background refresh when it is missing or older than 30 s. */
 export function runningMap(): RunningEntry[] {
     if (process.env.DC_DEVICE_CONTEXT_NO_RUNNING === '1') return [];
-    if (runCache && Date.now() - runCache.at < 30_000) return runCache.value;
-    const ports = listeningPorts();
-    portsVisible = ports.some((p) => !!p.dir);
-    const entries: RunningEntry[] = [...ports];
-    for (const s of nginxSites()) {
-        const viaPort = s.port ? ports.find((p) => p.label.startsWith(`:${s.port} `)) : undefined;
-        const dir = s.root ?? viaPort?.dir;
-        const dead = !!s.port && !viaPort && ports.length > 0;
-        entries.push({ kind: 'nginx', label: `nginx config ${s.domains.slice(0, 2).join(' ') || '(default)'}${s.port ? ' → :' + s.port : ''}${dead ? ' (nothing listening)' : ''}`, dir, down: dead });
-    }
-    entries.push(...dockerProjects());
-    runCache = { at: Date.now(), value: entries };
-    return entries;
+    if (!runCache || Date.now() - runCache.at >= 30_000) void refreshRunningMap();
+    return runCache?.value ?? [];
 }
 
-export function _resetMachineCachesForTests() { runCache = null; descCache.clear(); }
+export function _resetMachineCachesForTests() { runCache = null; runRefresh = null; descCache.clear(); }

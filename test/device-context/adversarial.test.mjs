@@ -183,6 +183,7 @@ else {
   const deadPort = 20000 + Math.floor(Math.random() * 20000);
   fs.writeFileSync(path.join(NG, 'shop'), `server {\n  server_name shop.example.com;\n  location / { proxy_pass http://127.0.0.1:${deadPort}; }\n}\nserver {\n  server_name api.example.com;\n  location / { proxy_pass http://10.0.0.5:8080; }\n}\n`);
   machine._resetMachineCachesForTests();
+  await machine.refreshRunningMap();   // the map is collected in the background; wait for it here
   const sites = machine.nginxSites();
   const api = sites.find((s) => s.domains.includes('api.example.com'));
   check('nginx_proxy_to_remote_ip_parsed_as_port_10', 'low', !api?.port || api.port === '8080', JSON.stringify(api));

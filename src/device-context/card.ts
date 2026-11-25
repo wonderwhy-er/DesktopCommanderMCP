@@ -8,28 +8,40 @@
  */
 import path from 'path';
 import fs from 'fs';
-import { execFileSync } from 'child_process';
 import { keyOf, isInside, safe, stackOf, gitFacts, findProject, isLookVerb, type JournalRow, type RankedProject } from './core.js';
 import * as machine from './machine.js';
-import { describeProject, runningMap, type RunningEntry } from './machine.js';
+import { describeProject, runAsync, runningMap, type RunningEntry } from './machine.js';
 
 const SESSION_GAP_MS = 30 * 60_000;
 
 export const utc = (t: number | string) => new Date(t).toISOString().slice(0, 16).replace('T', ' ') + ' UTC';
 const tz = () => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone; } catch { return 'UTC'; } };
 
-/** Count of uncommitted changes (git status --porcelain), time-boxed; null when not a git repo or too slow. */
-function uncommitted(root: string): number | null {
-    if (!fs.existsSync(path.join(root, '.git'))) return null;
+/** Count of uncommitted changes (git status --porcelain). Runs in the background and is cached for 60 s: the card
+ * shows the last known count and never waits for git; a repo seen for the first time gets its count on the next card. */
+const gitCache = new Map<string, { at: number; value: number | null }>();
+const gitRunning = new Map<string, Promise<void>>();   // in-flight checks, so callers can wait for the same one
+export function refreshUncommitted(root: string): Promise<void> {
+    const running = gitRunning.get(root);
+    if (running) return running;
+    if (!fs.existsSync(path.join(root, '.git'))) { gitCache.set(root, { at: Date.now(), value: null }); return Promise.resolve(); }
     // Never let a repo's own config run code when we only want a count (fsmonitor, filters, hooks, or any of
     // those pulled in through [include] / [includeIf], which this text check can't follow)
-    try { if (/fsmonitor|hookspath|\[filter|textconv|\bsshcommand|\[include/i.test(fs.readFileSync(path.join(root, '.git', 'config'), 'utf8'))) return null; } catch { return null; }
-    try {
-        const out = execFileSync('git', ['-c', 'core.fsmonitor=false', '-c', 'core.hooksPath=/dev/null', '--no-optional-locks', '-C', root, 'status', '--porcelain', '--untracked-files=no'],
-            { encoding: 'utf8', timeout: 500, stdio: ['ignore', 'pipe', 'ignore'], env: { ...process.env, GIT_CONFIG_NOSYSTEM: '1', GIT_TERMINAL_PROMPT: '0' } });
-        return out.split('\n').filter(Boolean).length;
-    } catch { return null; }
+    try { if (/fsmonitor|hookspath|\[filter|textconv|\bsshcommand|\[include/i.test(fs.readFileSync(path.join(root, '.git', 'config'), 'utf8'))) { gitCache.set(root, { at: Date.now(), value: null }); return Promise.resolve(); } }
+    catch { gitCache.set(root, { at: Date.now(), value: null }); return Promise.resolve(); }
+    const p = runAsync('git', ['-c', 'core.fsmonitor=false', '-c', 'core.hooksPath=/dev/null', '--no-optional-locks', '-C', root, 'status', '--porcelain', '--untracked-files=no'],
+        2000, { ...process.env, GIT_CONFIG_NOSYSTEM: '1', GIT_TERMINAL_PROMPT: '0' })
+        .then((out) => { gitCache.set(root, { at: Date.now(), value: out === null ? null : out.split('\n').filter(Boolean).length }); })
+        .finally(() => { gitRunning.delete(root); });
+    gitRunning.set(root, p);
+    return p;
 }
+function uncommitted(root: string): number | null {
+    const hit = gitCache.get(root);
+    if (!hit || Date.now() - hit.at > 60_000) void refreshUncommitted(root);
+    return hit?.value ?? null;
+}
+export function _resetGitCacheForTests() { gitCache.clear(); gitRunning.clear(); }
 
 /** Looks like something that is meant to run (a server/app), so "nothing running" is worth saying. */
 function startable(root: string, verbs: Map<string, number>): boolean {

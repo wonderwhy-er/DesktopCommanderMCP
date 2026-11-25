@@ -16,6 +16,7 @@ import { fileURLToPath } from 'url';
 import { observeEvent, failureAttributable, rank, render, renderTargeted, keyOf, isInside, redact, type JournalRow, type RankedProject } from './core.js';
 import { classify, matchProjects, didYouMean, episodeFor, resetEpisode, RESTART_IDLE_MS } from './nudge.js';
 import { renderCard } from './card.js';
+import { runningMap } from './machine.js';
 import { capture } from '../utils/capture.js';
 
 export type DeviceContextMode = 'off' | 'tool' | 'nudge' | 'both';
@@ -240,6 +241,7 @@ function scheduleContextFile(): void {
 
 export function observeToolCall(name: string, args: any, result: any, isRemote: boolean): void {
     if (!isEnabled() || name === 'get_device_context' || isUiCall(args) || result?.isError) return;
+    runningMap();   // warms the background map (ss, docker, nginx) so the next card has it; returns at once
     try {
         ensureJournal();
         const { journal, dropped } = observeEvent({ t: now().toISOString(), tool: name, args, origin: isRemote ? 'remote' : 'local' },

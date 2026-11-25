@@ -278,9 +278,9 @@ H twin shop · S stale (renamed) · S0 stale without memory. Results: `test\devi
 
 Open items from code review (not fixed in this prototype):
 
-- Building the card calls `ss`, `docker ps` and `git status` synchronously, each time-boxed (worst case a few
-  seconds with many projects), and `device-context.md` is rebuilt at most every 30 s during activity. Next: async
-  `execFile`, a short cache for git status, and rebuilding the file only on request.
+- Fixed after review: `ss`, `docker ps` and `git status` now run in the background (async `execFile`, cached 30 s /
+  60 s), so building a card never blocks the server. The first card after a start may lack "running" and
+  "uncommitted" facts; the next one has them.
 - The suites in `test/device-context/` don't run under `npm test` yet (the runner only picks up top-level
   `test*.js`); the adversarial suite prints known gaps as FAIL and needs `skip()` before it can join CI.
 - The eval and VPS scripts (`eval/`, `photos/`, `run-local-test.ps1`) are dev-only: they use fixed paths and

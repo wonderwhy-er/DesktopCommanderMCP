@@ -47,6 +47,7 @@ const srv = spawn(process.execPath, ['-e', `require('http').createServer((q,s)=>
 await new Promise((r) => setTimeout(r, 400));
 fs.writeFileSync(path.join(NG, 'shop'), `server {\n  listen 80;\n  server_name shop.example.com www.shop.example.com;\n  location / { proxy_pass http://127.0.0.1:${port}; }\n}\nserver { server_name blog.example.com; root ${code}/blog/public; }\n`);
 machine._resetMachineCachesForTests();
+await machine.refreshRunningMap();   // collected in the background in production; wait for it here
 const running = machine.runningMap();
 if (LINUX) check('listening port mapped to the shop folder', running.some((e) => e.label === `:${port} node` && e.dir === path.join(code, 'shop')), JSON.stringify(running));
 if (LINUX) check('nginx site mapped through its proxied port', running.some((e) => e.label.includes('shop.example.com') && e.dir === path.join(code, 'shop')), JSON.stringify(running));
