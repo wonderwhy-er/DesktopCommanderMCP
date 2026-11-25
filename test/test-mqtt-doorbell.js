@@ -14,18 +14,23 @@ process.env.DESKTOP_COMMANDER_DISABLE_TELEMETRY = '1';
 const { RemoteChannel } = await import('../dist/remote-device/remote-channel.js');
 const { rolloutManager } = await import('../dist/remote-device/rollouts.js');
 rolloutManager.update({ MQTT_TRANSPORT_ENABLED: true });
+/** Transport on; execution on means MQTT runs calls and Broadcast only observes. */
+const setExecution = on => rolloutManager.update({ MQTT_TRANSPORT_ENABLED: true, MQTT_ON_DEVICE_EXECUTION_ENABLED: on });
 const { MCPDevice } = await import('../dist/remote-device/device.js');
 const { MqttTransport, createMqttConfig, mqttDoorbellTopic } = await import('../dist/remote-device/mqtt/mqtt-transport.js');
 const { configManager } = await import('../dist/config-manager.js');
 
-const until = async (condition) => {
-    const deadline = Date.now() + 4000;
+const until = async (condition, timeoutMs = 4000) => {
+    const deadline = Date.now() + timeoutMs;
     while (!condition()) {
         if (Date.now() >= deadline) throw new Error('Timed out waiting for MQTT fixture');
         await new Promise(resolve => setTimeout(resolve, 5));
     }
 };
 const events = [];
+/** Who claimed one call, from its call_claimed telemetry. */
+const claims = id => events.filter(event => event.name === 'call_claimed' && event.params.call_id === id)
+    .map(({ params }) => params.claimed_by);
 const originalRequest = https.request;
 const originalGetValue = configManager.getValue;
 const originalGetId = configManager.getOrCreateClientId;
@@ -149,7 +154,8 @@ function fixture() {
 try {
     const f = fixture();
     assert.equal(f.channel.isReachable(), true, 'Broadcast readiness cannot depend on MQTT');
-    await f.channel.startMqttTransport(config);
+    f.channel.prepareMqttConfig = async () => config;
+    await f.channel.updateMqttTransport(true);
     assert.equal(f.channel.isReachable(), true);
     assert.equal(f.capabilities.at(-1).transport_mqtt_v1, true);
     assert.deepEqual(Object.keys(f.capabilities.at(-1)).sort(), [
@@ -165,14 +171,16 @@ try {
     });
     await publisher.subscribeAsync(resultTopic, { qos: 1 });
 
-    // Existing backend packets remain valid, but their legacy flag has no effect.
-    for (const enabled of [undefined, false, true]) {
-        const id = `shadow-${enabled}`;
+    // Execution off: MQTT only observes and Broadcast runs the call. Execution on: MQTT runs it and
+    // Broadcast only observes. The rollout decides; a doorbell field saying the opposite is ignored.
+    // Two copies of one packet run the call once, and the "result ready" message goes out over MQTT.
+    for (const [execution, field] of [[false, undefined], [false, true], [true, undefined], [true, false]]) {
+        setExecution(execution);
+        const id = `mqtt-${execution}-${field}`;
         f.add(id);
         f.rows.get(id).metadata.origin_instance = 'backend';
         const payload = bell(id);
-        if (enabled !== undefined) payload.IS_MQTT_EXECUTION_ENABLED = enabled;
-        const before = f.operations.length;
+        if (field !== undefined) payload.IS_MQTT_EXECUTION_ENABLED = field;
         const executionsBefore = f.executed.length;
         await Promise.all([send(payload), send(payload)]);
         await until(() => events.filter(event => event.params.call_id === id && event.name === 'received_from_backend').length === 2);
@@ -182,37 +190,36 @@ try {
             assert.equal('IS_MQTT_EXECUTION_ENABLED' in event.params, false);
             assert.ok(Number.isFinite(Date.parse(event.params.timestamp_utc)));
         }
-        assert.equal(f.operations.length, before, 'MQTT receipts never read or claim a call');
-        assert.equal(f.executed.length, executionsBefore, 'duplicate MQTT packets only record analytics');
-        assert.equal(f.rows.get(id).status, 'pending');
-        assert.ok(!resultPackets.some(packet => packet.body.call_id === id));
+        if (!execution) {
+            // Time is the behaviour: give a wrongly started MQTT claim the chance to reach the fake table.
+            await new Promise(resolve => setTimeout(resolve, 50));
+            assert.equal(f.rows.get(id).status, 'pending', 'execution off: MQTT does not claim the call');
+        }
         await f.channel.onBroadcastDoorbell(payload);
         await until(() => f.rows.get(id).status === 'completed');
         await until(() => resultPackets.some(packet => packet.body.call_id === id));
         assert.deepEqual(resultPackets.find(packet => packet.body.call_id === id), {
             body: { call_id: id }, qos: 1, retain: false,
         });
-        assert.equal(f.executed.length, executionsBefore + 1, 'Broadcast still executes once');
+        assert.equal(f.executed.length, executionsBefore + 1, 'the call runs once');
+        assert.deepEqual(claims(id), [execution ? 'mqtt' : 'broadcast']);
     }
 
+    setExecution(true);
+
     f.add('old-metadata', 'mqtt_v1');
-    const beforeMqtt = f.operations.length;
     await send(bell('old-metadata'));
-    await until(() => events.some(event => event.params.call_id === 'old-metadata'));
-    assert.equal(f.operations.length, beforeMqtt);
-    assert.equal(f.rows.get('old-metadata').status, 'pending', 'MQTT only records receipt regardless of stored metadata');
-    await f.channel.onBroadcastDoorbell(bell('old-metadata'));
     await until(() => f.rows.get('old-metadata').status === 'completed');
     await f.channel.recoverPendingCalls();
     assert.equal(f.executed.filter(args => args.id === 'old-metadata').length, 1,
-        'Broadcast executes once regardless of transport metadata');
+        'the call runs once regardless of transport metadata');
 
-    for (const source of ['legacy', 'recovery', 'broadcast']) {
+    for (const source of ['legacy', 'recovery', 'mqtt']) {
         const id = `result-${source}`;
         f.add(id, source === 'legacy' ? null : 'broadcast_v1');
         f.rows.get(id).metadata.origin_instance = 'backend';
         if (source === 'recovery') await f.channel.recoverPendingCalls();
-        else await f.channel.onBroadcastDoorbell(bell(id));
+        else await send(bell(id));
         await until(() => resultPackets.some(packet => packet.body.call_id === id));
         assert.deepEqual(resultPackets.find(packet => packet.body.call_id === id).body, { call_id: id });
         await until(() => events.some(event => event.params.call_id === id && event.name === 'publish_from_device'));
@@ -236,7 +243,7 @@ try {
             return originalPublish(...args);
         };
         f.channel.sleep = async () => {};
-        await f.channel.onBroadcastDoorbell(bell(id));
+        await send(bell(id));
         await until(() => resultPackets.some(packet => packet.body.call_id === id));
         assert.equal(attempts, 3);
         const retryEvents = events.filter(event => event.params.call_id === id && event.name.startsWith('publish_from_device'));
@@ -263,11 +270,9 @@ try {
 
     f.add('expired');
     f.rows.get('expired').timeout_at = new Date(Date.now() - 1000).toISOString();
-    const readsBeforeExpiry = f.operations.length;
     const executionsBeforeExpiry = f.executed.length;
     await send(bell('expired'));
     await until(() => events.some(event => event.params.call_id === 'expired'));
-    assert.equal(f.operations.length, readsBeforeExpiry, 'even expired MQTT receipts only record analytics');
     await f.channel.onBroadcastDoorbell(bell('expired'));
     assert.equal(f.rows.get('expired').status, 'pending', 'the durable row controls expiry');
     assert.equal(f.executed.length, executionsBeforeExpiry, 'an expired row cannot execute through a valid envelope');
@@ -293,41 +298,44 @@ try {
     assert.equal(malformed, invalid.length + 1);
 
     // Two identical result doorbells must each discard their own packet on disconnect.
-    const brokerClient = broker.clients[receiver.client.options.clientId];
+    const disconnectedClient = receiver.client;
+    assert.equal(disconnectedClient.options.reconnectPeriod, 0, 'RemoteChannel owns socket retries');
+    const brokerClient = broker.clients[disconnectedClient.options.clientId];
     const originalWrite = brokerClient.conn.write;
     brokerClient.conn.write = () => true;
-    receiver.client.options.reconnectPeriod = 20;
     try {
         await Promise.all([
             assert.rejects(receiver.publishResult('same-call', 'backend'), /disconnected/),
             assert.rejects(receiver.publishResult('same-call', 'backend'), /disconnected/),
             (async () => {
                 await until(() => resultPackets.filter(packet => packet.body.call_id === 'same-call').length === 2);
-                receiver.client.stream.destroy();
+                disconnectedClient.stream.destroy();
             })(),
         ]);
-        assert.deepEqual(Object.keys(receiver.client.outgoing), [], 'no unacknowledged result is replayed after reconnect');
+        assert.deepEqual(Object.keys(disconnectedClient.outgoing), [], 'no unacknowledged result is replayed after reconnect');
     } finally {
         brokerClient.conn.write = originalWrite;
     }
     await until(() => !f.channel.mqttReady);
     assert.equal(f.channel.isReachable(), true, 'an MQTT outage does not withdraw healthy Broadcast');
+    setExecution(false);
     f.add('while-mqtt-disconnected');
     await f.channel.onBroadcastDoorbell(bell('while-mqtt-disconnected'));
     await until(() => f.rows.get('while-mqtt-disconnected').status === 'completed');
+    await until(() => claims('while-mqtt-disconnected').length === 1);
+    assert.deepEqual(claims('while-mqtt-disconnected'), ['broadcast']);
     f.add('missed-while-disconnected');
-    const disconnectedOperations = f.operations.length;
-    await until(() => f.channel.mqttReady);
+    // Allow the specified 10-second retry delay plus time for the local TLS handshake.
+    await until(() => f.channel.mqttReady, 15_000);
+    assert.notEqual(f.channel.mqttReceiver, receiver, 'the retry creates a fresh receiver');
     await until(() => f.capabilities.at(-1).transport_mqtt_v1 === true);
-    assert.equal(f.operations.length, disconnectedOperations, 'MQTT reconnect does not recover execution');
-    assert.equal(f.rows.get('missed-while-disconnected').status, 'pending');
-    await f.channel.recoverPendingCalls();
+    // Doorbells sent while MQTT was down are not delivered later, so the reconnect scans for waiting calls.
     await until(() => f.rows.get('missed-while-disconnected').status === 'completed');
+    await until(() => claims('missed-while-disconnected').length === 1);
+    assert.deepEqual(claims('missed-while-disconnected'), ['recovery']);
+    setExecution(true);
     f.add('reconnected');
     await send(bell('reconnected'));
-    await until(() => events.some(event => event.params.call_id === 'reconnected'));
-    assert.equal(f.rows.get('reconnected').status, 'pending');
-    await f.channel.onBroadcastDoorbell(bell('reconnected'));
     await until(() => f.rows.get('reconnected').status === 'completed');
 
     // A pending claim from the old session must never execute after shutdown.
