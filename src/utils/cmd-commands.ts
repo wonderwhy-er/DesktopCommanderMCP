@@ -365,7 +365,7 @@ export async function readCmdCommands(
   try {
     reader.readList(false);
   } catch (error) {
-    return { commands: [], functions: [], parseError: error instanceof Error ? error.message : String(error) };
+    return { commands: [], functions: [], parseError: error instanceof Error ? error.message : String(error), syntaxError: true };
   }
   return { commands: reader.commands.sort((a, b) => a.start - b.start), functions: [] };
 }
