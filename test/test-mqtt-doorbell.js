@@ -196,6 +196,8 @@ try {
             assert.equal(f.rows.get(id).status, 'pending', 'execution off: MQTT does not claim the call');
         }
         await f.channel.onBroadcastDoorbell(payload);
+        await until(() => events.some(event => event.params.call_id === id &&
+            event.name === 'received_from_backend' && event.params.transport === 'broadcast'));
         await until(() => f.rows.get(id).status === 'completed');
         await until(() => resultPackets.some(packet => packet.body.call_id === id));
         assert.deepEqual(resultPackets.find(packet => packet.body.call_id === id), {
