@@ -743,9 +743,6 @@ export class MCPDevice {
 
         const observation = { callId: call_id, deviceId: this.deviceId, userId: this.remoteChannel.user?.id, toolName: tool_name };
 
-        // Count every targeted delivery, including duplicates, before the local claim.
-        observeTransport({ stage: 'device_call_received', ...observation });
-        
         console.log(`🔧 Received tool call ${call_id}: ${tool_name} ${JSON.stringify(tool_args)} metadata: ${JSON.stringify(metadata)}`);
 
         // Claim locally first so duplicate deliveries cannot execute a call twice
@@ -756,8 +753,6 @@ export class MCPDevice {
         }
         this.rememberCallId(call_id);
 
-        // Running the tool and saving its result fail separately: only a tool
-        // that didn't run is "tool_call_failed"
         let result;
         try {
             // DB claim second — keeps the row state machine honest, gives
@@ -799,21 +794,17 @@ export class MCPDevice {
             }
         } catch (error: any) {
             console.error(`❌ Tool call ${tool_name} failed:`, error.message);
-            observeTransport({ stage: 'tool_call_failed', ...observation });
+            observeTransport({ stage: 'tool_call_completed', outcome: 'failed', ...observation });
             await this.reportToolCallFailure(call_id, tool_name, error, metadata.origin_instance);
             return;
         }
 
         console.log(`✅ Tool call ${tool_name} completed:\r\n ${JSON.stringify(result)}`);
 
-        // The tool ran. A result that can't be saved is reported and written as
-        // failed, as before, but its telemetry stays "tool_call_completed"
+        const outcome = result?.isError === true ? 'failed' : 'success';
+        observeTransport({ stage: 'tool_call_completed', outcome, ...observation });
         try {
-            try {
-                await this.remoteChannel.updateCallResult(call_id, 'completed', result, null, metadata.origin_instance);
-            } finally {
-                observeTransport({ stage: 'tool_call_completed', ...observation});
-            }
+            await this.remoteChannel.updateCallResult(call_id, 'completed', result, null, metadata.origin_instance);
         } catch (error: any) {
             console.error(`❌ Tool call ${tool_name} failed:`, error.message);
             await this.reportToolCallFailure(call_id, tool_name, error, metadata.origin_instance);

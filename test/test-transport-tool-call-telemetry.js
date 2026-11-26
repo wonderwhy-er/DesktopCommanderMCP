@@ -1,13 +1,10 @@
 #!/usr/bin/env node
-// A tool call's transport telemetry says which part failed. A tool that ran,
-// but whose result couldn't be saved, is "tool_call_completed" and not also
-// "tool_call_failed"; the "failed" row is still written. A tool that failed is
-// "tool_call_failed", never "tool_call_completed". A call that works is
-// "tool_call_completed" only.
+// Each executed tool reports one outcome. A later result-write error does not change it.
 import assert from 'node:assert/strict';
 import https from 'node:https';
 import { EventEmitter } from 'node:events';
 import { syncBuiltinESMExports } from 'node:module';
+import { mock } from 'node:test';
 import { configManager } from '../dist/config-manager.js';
 import { MCPDevice } from '../dist/remote-device/device.js';
 
@@ -15,26 +12,27 @@ const DEVICE_ID = 'device-1';
 
 // Every telemetry body this process would send
 const sent = [];
-const stagesOf = callId => sent.flatMap(body => body.events)
-    .filter(event => event.params?.call_id === callId)
-    .map(event => event.name);
+const eventsOf = callId => sent.flatMap(body => body.events)
+    .filter(event => event.params?.call_id === callId);
 
-/** Handles one tool call on a device whose tool and result save fail as asked; returns the call's transport stages and result rows. */
-async function handle(callId, { toolThrows = false, saveThrows = false } = {}) {
+async function handle(callId, { toolThrows = false, saveThrows = false, toolResult = { content: [{ type: 'text', text: 'ok' }] } } = {}) {
     const writes = [];
+    const beforeWrite = Date.now();
     const device = new MCPDevice();
     device.deviceId = DEVICE_ID;
     device.desktop = {
         callClientTool: async () => {
             if (toolThrows) throw new Error('the tool failed');
-            return { content: [{ type: 'text', text: 'ok' }] };
+            return toolResult;
         },
     };
     device.remoteChannel = {
         user: { id: 'user-1' },
         markCallExecuting: async () => true,
-        updateCallResult: async (id, status) => {
+        updateCallResult: async (id, status, result) => {
+            mock.timers.tick(1); // Give each result write a distinct timestamp from the tool finishing.
             writes.push(`${id}:${status}`);
+            if (status === 'completed') assert.deepEqual(result, toolResult);
             if (status === 'completed' && saveThrows) throw new Error('the result write failed');
         },
     };
@@ -42,20 +40,25 @@ async function handle(callId, { toolThrows = false, saveThrows = false } = {}) {
         new: { id: callId, tool_name: 'read_file', tool_args: {}, device_id: DEVICE_ID,
             metadata: { transport: 'broadcast_v1' } },
     });
-    // Transport events aren't awaited: wait for the one the call ends with, then a little longer for any other
-    const last = toolThrows ? 'tool_call_failed' : 'tool_call_completed';
-    for (let waited = 0; waited < 3000 && !stagesOf(callId).includes(last); waited += 20) {
+    // Transport delivery is asynchronous even though the device timestamps each event immediately.
+    for (let waited = 0; waited < 3000 && !eventsOf(callId).some(event => event.name === 'tool_call_completed'); waited += 20) {
         await new Promise(resolve => setTimeout(resolve, 20));
     }
     await new Promise(resolve => setTimeout(resolve, 200));
-    for (const event of sent.flatMap(body => body.events).filter(event => event.params?.call_id === callId)) {
+    const events = eventsOf(callId);
+    for (const event of events) {
         assert.equal('IS_MQTT_EXECUTION_ENABLED' in event.params, false);
     }
     for (const body of sent.filter(body => body.events.some(event => event.params?.call_id === callId))) {
         assert.equal(body.telemetry_type, 'transport');
         assert.equal(body.user_id, 'user-1');
     }
-    return { stages: stagesOf(callId), writes };
+    const terminalEvents = events.filter(event => event.name.startsWith('tool_call_'));
+    assert.deepEqual(terminalEvents.map(event => event.name), ['tool_call_completed']);
+    const { stage, outcome, timestamp_utc } = terminalEvents[0].params;
+    assert.equal(stage, 'tool_call_completed');
+    assert.equal(Date.parse(timestamp_utc), beforeWrite, 'tool completion must precede the result write that publishes it');
+    return { outcome, writes };
 }
 
 const originalRequest = https.request;
@@ -63,6 +66,7 @@ const originalGetValue = configManager.getValue;
 const originalGetOrCreateClientId = configManager.getOrCreateClientId;
 const originalDisableTelemetry = process.env.DESKTOP_COMMANDER_DISABLE_TELEMETRY;
 try {
+    mock.timers.enable({ apis: ['Date'], now: Date.now() });
     process.env.DESKTOP_COMMANDER_DISABLE_TELEMETRY = '0';
     configManager.getValue = async key => key === 'telemetryEnabled' ? true : undefined;
     configManager.getOrCreateClientId = async () => 'installation-1';
@@ -82,28 +86,29 @@ try {
     syncBuiltinESMExports();
 
     const saveFails = await handle('call-save-fails', { saveThrows: true });
-    assert.ok(saveFails.stages.includes('tool_call_completed'),
-        `a tool that ran should be reported as completed: ${saveFails.stages.join(', ')}`);
-    assert.ok(!saveFails.stages.includes('tool_call_failed'),
-        `a tool that ran, whose result couldn't be saved, was also reported as failed: ${saveFails.stages.join(', ')}`);
+    assert.equal(saveFails.outcome, 'success');
     assert.deepEqual(saveFails.writes, ['call-save-fails:completed', 'call-save-fails:failed'],
         'after the result save failed, the "failed" row should still be written');
 
     const toolFails = await handle('call-tool-fails', { toolThrows: true });
-    assert.ok(toolFails.stages.includes('tool_call_failed'),
-        `a tool that failed should be reported as failed: ${toolFails.stages.join(', ')}`);
-    assert.ok(!toolFails.stages.includes('tool_call_completed'),
-        `a tool that failed was reported as completed: ${toolFails.stages.join(', ')}`);
+    assert.equal(toolFails.outcome, 'failed');
     assert.deepEqual(toolFails.writes, ['call-tool-fails:failed']);
 
+    const errorReply = await handle('call-error-reply', {
+        toolResult: { isError: true, content: [{ type: 'text', text: 'file not found' }] },
+    });
+    assert.equal(errorReply.outcome, 'failed');
+    assert.deepEqual(errorReply.writes, ['call-error-reply:completed']);
+
     const works = await handle('call-works');
-    assert.deepEqual(works.stages.filter(stage => stage.startsWith('tool_call_')), ['tool_call_completed']);
+    assert.equal(works.outcome, 'success');
     assert.deepEqual(works.writes, ['call-works:completed']);
 } finally {
+    mock.timers.reset();
     https.request = originalRequest;
     syncBuiltinESMExports();
     configManager.getValue = originalGetValue;
     configManager.getOrCreateClientId = originalGetOrCreateClientId;
     process.env.DESKTOP_COMMANDER_DISABLE_TELEMETRY = originalDisableTelemetry;
 }
-console.log('PASS tool-call transport telemetry: a failed result save is completed, not failed; a failed tool is failed');
+console.log('PASS device tool completion reports one execution outcome per call');

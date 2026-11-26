@@ -56,6 +56,12 @@ export class ChannelUnreachableError extends Error {
     }
 }
 
+export type BroadcastDoorbell = {
+    call_id: string;
+    device_id: string;
+    user_id?: string;
+};
+
 interface DeviceData {
     user_id: string;
     device_name: string;
@@ -856,12 +862,18 @@ export class RemoteChannel {
         });
     }
 
-    private async onBroadcastDoorbell(payload: any): Promise<void> {
+    private async onBroadcastDoorbell(payload: BroadcastDoorbell): Promise<void> {
         if (this.shuttingDown || this.sessionLost || this.handlingSignedOut) {
             return;
         }
-        observeTransport({ stage: 'received', payload, deviceId: this.deviceId,
-            userId: this.user?.id, transport: 'broadcast' });
+        observeTransport({
+            stage: 'received_from_backend',
+            callId: payload?.call_id,
+            payload,
+            deviceId: this.deviceId,
+            userId: this.user?.id,
+            transport: 'broadcast',
+        });
         if (this.isMqttExecutionEnabled()) {
             console.debug(`[DEBUG] Broadcast doorbell for call ${payload?.call_id} observed only; MQTT runs calls`);
             return;
@@ -1028,10 +1040,10 @@ export class RemoteChannel {
                     presence: { key: this.deviceId, enabled: true }
                 }
             })
-                .on(
+                .on<BroadcastDoorbell>(
                     'broadcast',
                     { event: 'new_call' },
-                    ({ payload }: any) => {
+                    ({ payload }) => {
                         console.debug(`[DEBUG] Received broadcast doorbell for call ${payload?.call_id}`);
                         this.onBroadcastDoorbell(payload)
                         .catch((e: any) => {
@@ -1570,10 +1582,13 @@ export class RemoteChannel {
                 (result !== null ? ` resultBytes=~${JSON.stringify(updateData.result)?.length ?? 0}` : '')
             );
         }
+
         const { error } = await this.client
             .from('mcp_remote_calls')
             .update(updateData)
             .eq('id', callId);
+
+
 
         if (error) {
             console.error('[DEBUG] Failed to update call result:', error.message);
@@ -1594,9 +1609,12 @@ export class RemoteChannel {
                 );
             }
         } else {
-            // (an UPDATE without .select() returns no row data — log the id)
+            const hasResultDoorbell = originInstance && (status === 'completed' || status === 'failed');
+            const mqttEnabled = rolloutManager.get('MQTT_TRANSPORT_ENABLED');
             console.debug('[DEBUG] Call result updated successfully:', callId);
-            if (originInstance && (status === 'completed' || status === 'failed')) {
+            if (hasResultDoorbell && !mqttEnabled) {
+                observeTransport({ callId, deviceId: this.deviceId, userId: this.user?.id, timestampUtc: new Date().toISOString() , stage: 'publish_from_device', transport: 'broadcast' });
+            } else if (hasResultDoorbell && mqttEnabled) {
                 // The write already triggers Broadcast in shadow mode; MQTT must never delay it.
                 void this.publishMqttResult(callId, originInstance).catch(() => {});
             }

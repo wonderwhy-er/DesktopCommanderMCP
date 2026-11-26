@@ -136,7 +136,7 @@ for (const property of ['shuttingDown', 'sessionLost', 'authGeneration']) {
     rolloutManager.update({ MQTT_TRANSPORT_ENABLED: true });
     Object.assign(f.channel, { channel: { state: 'joined' }, channelReady: true, mqttReady: false });
     assert.equal(f.channel.isReachable(), true, 'MQTT readiness cannot withdraw healthy Broadcast');
-    const observation = observeTransport({ stage: 'received', payload, deviceId: 'device', userId: 'owner', transport: 'mqtt' });
+    const observation = observeTransport({ stage: 'received_from_backend', callId: payload.call_id, deviceId: 'device', userId: 'owner', transport: 'mqtt' });
     assert.equal('notification_id' in observation, false);
     assert.equal('attempt_number' in observation, false);
     assert.equal('monotonic_ms' in observation, false);
