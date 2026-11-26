@@ -12,6 +12,7 @@ type TransportObservation = {
     deviceId: string | null | undefined;
     userId: string | undefined;
     transport?: 'broadcast' | 'mqtt';
+    outcome?: 'success' | 'failed';
     timestampUtc?: string;
     toolName?: string;
     operation?: string;
@@ -39,6 +40,7 @@ export function observeTransport(input: TransportObservation) {
             device_id: deviceId,
             stage: input.stage,
             ...(input.transport === 'broadcast' || input.transport === 'mqtt' ? { transport: input.transport } : {}),
+            ...(input.outcome === 'success' || input.outcome === 'failed' ? { outcome: input.outcome } : {}),
             ...(input.stage === 'received_from_backend' && input.transport === 'broadcast' ? {
                 notification_id: `${callId}:broadcast:1`, attempt_number: 1,
             } : {}),

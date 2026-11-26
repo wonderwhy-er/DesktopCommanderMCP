@@ -225,12 +225,12 @@ try {
         await until(() => resultPackets.some(packet => packet.body.call_id === id));
         assert.deepEqual(resultPackets.find(packet => packet.body.call_id === id).body, { call_id: id });
         await until(() => events.some(event => event.params.call_id === id && event.name === 'publish_from_device'));
-        for (const stage of ['device_call_received', 'tool_call_completed']) {
-            const event = events.find(event => event.params.call_id === id && event.name === stage);
-            assert.ok(event, `missing ${stage}`);
-            assert.equal('IS_MQTT_EXECUTION_ENABLED' in event.params, false);
-        }
+        await until(() => events.some(event => event.params.call_id === id && event.name === 'tool_call_completed'));
+        const completion = events.find(event => event.params.call_id === id && event.name === 'tool_call_completed');
+        assert.equal(completion.params.outcome, 'success');
+        assert.equal('IS_MQTT_EXECUTION_ENABLED' in completion.params, false);
     }
+    assert.ok(!events.some(event => event.name === 'device_call_received'));
 
     // Failed shadow result publications are retried and each attempt is observed.
     const originalPublish = f.channel.mqttReceiver.publishResult.bind(f.channel.mqttReceiver);
