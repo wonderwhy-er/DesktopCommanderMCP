@@ -51,7 +51,7 @@ export function buildDocumentLayout(options: {
     hasDirectoryBackButton: boolean;
 }): { html: string; effectiveExpanded: boolean } {
     const range = parseReadRange(options.payload.content);
-    const notice = options.body.notice ? `<div class="notice">${options.body.notice}</div>` : '';
+    const notice = options.body.notice ? `<div class="notice">${escapeHtml(options.body.notice)}</div>` : '';
     const breadcrumb = buildBreadcrumb(options.payload.filePath);
     const lineCount = range ? range.toLine - range.fromLine + 1 : countContentLines(options.payload.content);
     const fileTypeLabel = options.payload.fileType === 'markdown' ? 'MARKDOWN'
@@ -131,7 +131,7 @@ export function buildDocumentLayout(options: {
                 ${loadAfterBanner}
               </div>
               <div class="panel-footer">
-                <span>${footerLabel}</span>
+                <span>${escapeHtml(footerLabel)}</span>
               </div>
             </section>
           </main>
