@@ -53,6 +53,7 @@ This document provides answers to the most commonly asked questions about Claude
 - [Troubleshooting](#troubleshooting)
   - [Claude says it doesn't have permission to access my files/directories](#claude-says-it-doesnt-have-permission-to-access-my-filesdirectories)
   - [Claude keeps hitting token/output limits](#claude-keeps-hitting-tokenoutput-limits)
+  - [Why does Microsoft Defender or antivirus flag Desktop Commander as a remote shell?](#why-does-microsoft-defender-or-antivirus-flag-desktop-commander-as-a-remote-shell)
   - [Installation fails on my system](#installation-fails-on-my-system)
 
 - [Best Practices](#best-practices)
@@ -494,6 +495,12 @@ Claude Desktop has certain limits on message size. When working with large codeb
 3. Request summarized information instead of full file contents
 4. Break complex tasks into smaller steps
 5. Create new chats for different aspects of your project
+
+### Why does Microsoft Defender or antivirus flag Desktop Commander as a remote shell?
+
+Desktop Commander runs terminal commands through an MCP server at your request. Endpoint security tools such as Microsoft Defender, Microsoft Defender for Endpoint, or other antivirus/EDR products can interpret that pattern as remote shell activity and raise a high-severity alert.
+
+This is a known false positive for Desktop Commander's command-execution behavior, not an indication that Desktop Commander is malware. If you are using a company-managed or monitored machine, check with your IT or security team before installing or running Desktop Commander so they can review the tool and any expected alerts.
 
 ### Installation fails on my system
 
