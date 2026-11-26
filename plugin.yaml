@@ -52,7 +52,7 @@ install:
 
 runtime:
   language: typescript
-  min_node: "18"
+  min_node: "22.12"
 
 protocols:
   - mcp
