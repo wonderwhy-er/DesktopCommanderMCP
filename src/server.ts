@@ -890,6 +890,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
 
                         Interactive process sessions support follow-up input after they are started.
                         Long-running process sessions expose newly available output while they remain active.
+                        Ending the initial wait, including after timeout_ms, does not terminate a process that is still running.
+                        Process-session tracking belongs to the current Desktop Commander server instance and is kept in memory.
+                        If that server exits or restarts, the managed-session handle is lost even if an OS child process survives;
+                        the MCP host or service manager may also terminate the child process tree. Jobs that must outlive Desktop
+                        Commander should be launched under a separately owned OS-level service or supervisor.
                         Binary files can be processed with appropriate command-line tools or libraries available
                         in the selected process environment.
 

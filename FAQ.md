@@ -281,10 +281,12 @@ This makes it particularly useful for onboarding to new projects or reviewing un
 
 Claude Desktop Commander has a sophisticated system for managing commands and operations that may take a while to complete:
 
-1. The `execute_command` function returns after a timeout with initial output
-2. The command continues running in the background
-3. You can use `read_output` with the PID to get new output as it becomes available
-4. You can use `force_terminate` to stop the command if needed
+1. `start_process` waits for a bounded period and may return earlier when smart detection identifies completion or a ready/interactive state
+2. If the call returns while the command is still running, including after `timeout_ms` is reached, the command continues in the background under the current Desktop Commander server instance
+3. You can use `read_process_output` with the returned PID to get new output while that managed session still exists
+4. You can use `force_terminate` to stop the managed session if needed
+
+Background execution is not a persistence guarantee. Process/session tracking is kept in memory, so when the Desktop Commander server exits or restarts, the managed-session handle is lost even if an OS child process happens to survive. Depending on the MCP host or service manager, the child process tree may also be terminated; for example, a systemd service can stop its whole control group. Jobs that must outlive Desktop Commander should be launched under a separately owned OS-level service or supervisor.
 
 For search operations:
 1. `start_search` begins a streaming search and returns immediately with a session ID
