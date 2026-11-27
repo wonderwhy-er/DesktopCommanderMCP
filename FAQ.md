@@ -53,6 +53,7 @@ This document provides answers to the most commonly asked questions about Claude
 - [Troubleshooting](#troubleshooting)
   - [Claude says it doesn't have permission to access my files/directories](#claude-says-it-doesnt-have-permission-to-access-my-filesdirectories)
   - [Claude keeps hitting token/output limits](#claude-keeps-hitting-tokenoutput-limits)
+  - [Windows environment variables are missing from launched processes](#windows-environment-variables-are-missing-from-launched-processes)
   - [Installation fails on my system](#installation-fails-on-my-system)
 
 - [Best Practices](#best-practices)
@@ -494,6 +495,16 @@ Claude Desktop has certain limits on message size. When working with large codeb
 3. Request summarized information instead of full file contents
 4. Break complex tasks into smaller steps
 5. Create new chats for different aspects of your project
+
+### Windows environment variables are missing from launched processes
+
+Desktop Commander passes its own process environment to commands started with `start_process`. In Remote mode, the local MCP process likewise inherits the environment of the Remote agent that launched it. Desktop Commander does not re-read the Windows user environment from the registry before every command.
+
+If you add or change a Windows user environment variable after Desktop Commander has already started, launch Desktop Commander again from a parent process that already sees the updated variable. Depending on how Desktop Commander is started, that can mean reopening the terminal or restarting the host application before it starts the MCP process. In Remote mode, the Remote agent itself must see the updated variable before it starts a fresh local MCP child. Restarting only a child from an older parent environment will not refresh the value.
+
+You do not need to stop unrelated applications or an independently running Python server just to refresh Desktop Commander's environment. After reconnecting, verify only that the variable exists in a newly launched process rather than printing secret values into chat or logs.
+
+Desktop Commander does make a couple of Windows-specific repairs for spawned commands (`PATHEXT`, and `ProgramData` when missing), but it does not generally reconstruct other user environment variables.
 
 ### Installation fails on my system
 
