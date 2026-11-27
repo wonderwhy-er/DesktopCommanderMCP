@@ -9,6 +9,7 @@ import {
   CONFIG_FIELD_KEYS,
   isConfigFieldKey,
 } from '../config-field-definitions.js';
+import { parseMode } from '../device-context/settings.js';
 
 const ALLOWED_CONFIG_KEYS = new Set(CONFIG_FIELD_KEYS);
 
@@ -186,6 +187,21 @@ export async function setConfigValue(args: unknown) {
           };
         }
         valueToStore = numeric;
+      }
+
+      // Device context mode: one of its four values (null clears it back to the env var / off)
+      if (parsed.data.key === 'deviceContext' && valueToStore !== null) {
+        const mode = parseMode(valueToStore);
+        if (!mode) {
+          return {
+            content: [{
+              type: "text",
+              text: `Value for deviceContext must be one of "off", "tool", "nudge", "both".`
+            }],
+            isError: true
+          };
+        }
+        valueToStore = mode;
       }
 
       // Not saved: in effect all the same, as the answer below says, and saved with the held changes

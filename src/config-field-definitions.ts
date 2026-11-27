@@ -38,6 +38,11 @@ export const CONFIG_FIELD_DEFINITIONS = {
     description: 'Maximum number of lines that can be written in one edit operation. This helps prevent accidental oversized writes and keeps file changes predictable.',
     valueType: 'number',
   },
+  deviceContext: {
+    label: 'Device Context (experimental)',
+    description: 'Lets a new chat know which projects were recently worked on on this computer. "off" (default), "tool" (a get_device_context tool), "nudge" (a short note when the assistant searches for a project, and compact tool history) or "both". Only folder paths, file names and command names are remembered, never file contents.',
+    valueType: 'string',
+  },
 } as const satisfies Record<string, ConfigFieldDefinition>;
 
 export type ConfigFieldKey = keyof typeof CONFIG_FIELD_DEFINITIONS;

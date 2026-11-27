@@ -61,3 +61,7 @@ test_search.js
 
 # Test reports: junit.xml, results.json, results.tap per runner (test/README.md)
 test-results/
+
+# device-context: local run logs (paths, transcripts) stay out of git
+test/device-context/eval/results/
+test/device-context/local-results/

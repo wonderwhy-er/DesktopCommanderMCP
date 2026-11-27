@@ -1,0 +1,1 @@
+{ "name": "travel-blog", "description": "Personal travel blog", "version": "1.0.0", "scripts": { "start": "node server.js" } }
