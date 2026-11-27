@@ -53,8 +53,11 @@ class CommandManager {
             // Trim any leading/trailing whitespace
             commandString = commandString.trim();
 
-            // Define command separators - these are the operators that can chain commands
-            const separators = [';', '&&', '||', '|', '&'];
+            // Define command separators - these are the operators that can chain commands.
+            // Newlines are separators too: a shell runs `echo ok\nrm -rf /` as two commands, so
+            // leaving them out let a newline-separated command skip the blocklist (#933, #957, #976).
+            // Order matters: "\r\n" before "\r", "&&" before "&", "||" before "|".
+            const separators = ['\r\n', '\n', '\r', ';', '&&', '||', '|', '&'];
 
             // This will store our extracted commands
             const commands: string[] = [];
