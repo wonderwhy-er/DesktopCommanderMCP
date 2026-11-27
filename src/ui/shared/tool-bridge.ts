@@ -1,5 +1,7 @@
 type ToolArgs = Record<string, unknown>;
 
+import { canonicalRequestKey } from './canonical-key.js';
+
 type ToolHelper = {
     callTool: (name: string, args: ToolArgs) => Promise<unknown> | unknown;
 };
@@ -32,6 +34,16 @@ export interface ToolBridgeOptions {
 }
 
 const DEFAULT_TIMEOUT_MS = 5000;
+
+// Only side-effect-free file/config reads are safe to share across callers.
+// Session cursors, command execution, editing, writing, and telemetry are not.
+const COALESCIBLE_READ_TOOLS = new Set([
+    'read_file',
+    'read_multiple_files',
+    'list_directory',
+    'get_file_info',
+    'get_config',
+]);
 
 function getDefaultTargetOrigin(): string {
     if (typeof document === 'undefined') {
@@ -100,6 +112,7 @@ export function createToolBridge(options: ToolBridgeOptions = {}) {
     const targetOrigin = normalizeTargetOrigin(options.targetOrigin ?? getDefaultTargetOrigin());
     const idPrefix = options.idPrefix ?? 'tool-bridge';
     let requestCounter = 0;
+    const inFlight = new Map<string, Promise<unknown>>();
 
     async function callViaFallback(name: string, args: ToolArgs): Promise<unknown> {
         if (!host.parent || !host.addEventListener || !host.removeEventListener) {
@@ -166,8 +179,7 @@ export function createToolBridge(options: ToolBridgeOptions = {}) {
         });
     }
 
-    async function callTool(name: string, args?: ToolArgs): Promise<unknown> {
-        const normalizedArgs = normalizeToolArgs(args);
+    async function callToolOnce(name: string, normalizedArgs: ToolArgs): Promise<unknown> {
         const helperCandidates = [host.openai, host.mcp].filter(
             (candidate): candidate is ToolHelper => Boolean(candidate?.callTool)
         );
@@ -187,6 +199,31 @@ export function createToolBridge(options: ToolBridgeOptions = {}) {
             return await callViaFallback(name, normalizedArgs);
         } catch (fallbackError) {
             throw fallbackError;
+        }
+    }
+
+    async function callTool(name: string, args?: ToolArgs): Promise<unknown> {
+        const normalizedArgs = normalizeToolArgs(args);
+        if (!COALESCIBLE_READ_TOOLS.has(name)) {
+            // A non-read operation can change the state observed by pending reads.
+            // Never suppress intentional duplicate writes or cursor advances.
+            inFlight.clear();
+            return callToolOnce(name, normalizedArgs);
+        }
+        const key = `${name}:${canonicalRequestKey(normalizedArgs)}`;
+        const existing = inFlight.get(key);
+        if (existing) {
+            return existing;
+        }
+
+        const pending = callToolOnce(name, normalizedArgs);
+        inFlight.set(key, pending);
+        try {
+            return await pending;
+        } finally {
+            if (inFlight.get(key) === pending) {
+                inFlight.delete(key);
+            }
         }
     }
 
