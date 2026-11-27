@@ -9,6 +9,13 @@ import path from 'path';
 import { createRequire } from 'module';
 import { pathToFileURL } from 'url';
 if (process.env.DC_DEV_TOOLS !== '1') { console.error('Dev-only script for a throwaway VPS: replaces DC\'s tool history. Set DC_DEV_TOOLS=1 to run it.'); process.exit(1); }
+// The earlier chats must record in "both" mode; a "deviceContext" in DC's config.json would override the env var.
+// (Inline, not dev-config.mjs: this kit is copied to the VPS on its own.)
+{
+  const cfgFile = path.join(os.homedir(), '.claude-server-commander', 'config.json');
+  let m = ''; try { m = String(JSON.parse(fs.readFileSync(cfgFile, 'utf8')).deviceContext ?? '').toLowerCase(); } catch { /* no config */ }
+  if (m && m !== 'both') { console.error(`${cfgFile} sets "deviceContext": "${m}", which overrides the "both" these earlier chats need. Remove the key and rerun.`); process.exit(1); }
+}
 const req = createRequire(path.join(process.cwd(), 'package.json'));
 const sdk = async (p) => import(pathToFileURL(req.resolve(p)).href);
 const { Client } = await sdk('@modelcontextprotocol/sdk/client/index.js');
@@ -84,8 +91,12 @@ if (!WEEK) {
 // DC's own history gets the same dates as the journal
 const dcDir = path.join(os.homedir(), '.claude-server-commander');
 const hf = path.join(dcDir, 'tool-history.jsonl');
+// A row belongs to the session whose span contains it; only a row in no span (written just after a session
+// ended, e.g. a late flush) falls back to the nearest span with a little slack. Checking the slack first would give
+// the first rows of a session that starts right after another one the previous session's shift.
+const spanOf = (ts) => spans.find(([a, b]) => ts >= a && ts <= b) ?? spans.find(([a, b]) => ts >= a - 500 && ts <= b + 2000);
 const lines = fs.readFileSync(hf, 'utf8').split('\n').filter(Boolean).map((l) => {
-  try { const r = JSON.parse(l); const ts = Date.parse(r.timestamp); const s = spans.find(([a, b]) => ts >= a - 500 && ts <= b + 2000);
+  try { const r = JSON.parse(l); const ts = Date.parse(r.timestamp); const s = spanOf(ts);
     if (s && s[2]) { r.timestamp = new Date(ts - s[2] * DAY).toISOString(); return JSON.stringify(r); } } catch {}
   return l;
 });
@@ -98,7 +109,7 @@ const y = new Date(Date.now() - (process.env.WEEK === '1' ? 7 : 1) * DAY);
 for (const f of fs.existsSync(web) ? fs.readdirSync(web) : []) fs.utimesSync(path.join(web, f), y, y);
 fs.utimesSync(path.join(site, 'tools', 'resize.js'), y, y);
 const done = fs.existsSync(web) ? fs.readdirSync(web).length : 0;
-const j = fs.readFileSync(path.join(dcDir, 'device-context-events.jsonl'), 'utf8');
+const j = fs.readFileSync(path.join(process.env.DC_DEVICE_CONTEXT_HOME || os.homedir(), '.claude-server-commander', 'device-context-events.jsonl'), 'utf8');
 const histN = lines.length; const jobIdx = lines.findIndex((l) => l.includes('resize.js')); console.log(`calls after the photo job in DC history: ${histN - jobIdx}`);
 console.log(`\nresized yesterday: ${done} of 300; journal has public_html: ${j.includes('public_html')}; failed row: ${/public_html[^\n]*"failed":true/.test(j)}`);
 if (done < 150 || done > 200) { console.error('HISTORY INCOMPLETE: expected the job to stop around #181'); process.exit(1); }

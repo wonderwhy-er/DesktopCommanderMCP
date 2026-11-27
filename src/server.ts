@@ -72,7 +72,8 @@ import { trackToolCall } from './utils/trackTools.js';
 import { usageTracker } from './utils/usageTracker.js';
 import { processDockerPrompt } from './utils/dockerPrompt.js';
 import { toolHistory } from './utils/toolHistory.js';
-import { deviceContextInstructions, deviceContextMode, handleGetDeviceContext, isDeviceContextToolEnabled, maybeAppendDeviceContext, observeToolCall } from './device-context/index.js';
+import { deviceContextInstructions, deviceContextMode, handleGetDeviceContext, isDeviceContextToolEnabled, maybeAppendDeviceContext, observeToolCall, refreshDeviceContextSettings, setConfigSource, startDeviceContext } from './device-context/index.js';
+import { configManager } from './config-manager.js';
 import { handleWelcomePageOnboarding, skipWelcomePageOnboarding } from './utils/welcome-onboarding.js';
 
 import { VERSION } from './version.js';
@@ -213,6 +214,14 @@ async function updateCurrentClient(clientInfo: { name?: string, version?: string
 }
 
 // Add handler for initialization method - capture client info
+// Device context reads its mode and the allowlist from DC's own config (see src/device-context/settings.ts)
+setConfigSource(() => configManager.getConfig());
+async function deviceContextAtStart(): Promise<string> {
+    await refreshDeviceContextSettings();
+    startDeviceContext();
+    return deviceContextInstructions();
+}
+
 server.setRequestHandler(InitializeRequestSchema, async (request: InitializeRequest) => {
     try {
         // Extract and store current client information
@@ -275,7 +284,7 @@ server.setRequestHandler(InitializeRequestSchema, async (request: InitializeRequ
                 name: "desktop-commander",
                 version: VERSION,
             },
-            instructions: SERVER_INSTRUCTIONS + deviceContextInstructions(),
+            instructions: SERVER_INSTRUCTIONS + (await deviceContextAtStart()),
         };
     } catch (error) {
         logToStderr('error', `Error in initialization handler: ${error}`);
@@ -292,7 +301,7 @@ deferLog('info', 'Setting up request handlers...');
  * Check if a tool should be included based on current client
  */
 function shouldIncludeTool(toolName: string): boolean {
-    // Device context (experimental, env DESKTOP_COMMANDER_DEVICE_CONTEXT=tool|both)
+    // Device context (experimental): config deviceContext (or env DESKTOP_COMMANDER_DEVICE_CONTEXT) = tool or both
     if (toolName === 'get_device_context') {
         return isDeviceContextToolEnabled();
     }
@@ -311,6 +320,7 @@ function shouldIncludeTool(toolName: string): boolean {
 
 server.setRequestHandler(ListToolsRequestSchema, async () => {
     try {
+        await refreshDeviceContextSettings();
         // logToStderr('debug', 'Generating tools list...');
         const showMcpUiPreviews = await shouldShowMcpUiPreviews();
 
@@ -1239,6 +1249,8 @@ async function handleCallToolRequest(request: CallToolRequest): Promise<ServerRe
     let isError = false;
 
     try {
+        // Device context: current mode and allowlist (config.json may have changed since the last call)
+        await refreshDeviceContextSettings();
         // telemetryData declared above; extract metadata from _meta field if present
         const metadata = request.params._meta as any;
         // Reset remote attribution for every call so a prior remote call never

@@ -1,19 +1,27 @@
 #!/usr/bin/env bash
 # Photo scenario on the VPS.  prep: run.sh prep <off|both> <label>   after the chat: run.sh grade <label>
-set -u
+# Every step must work (a failed copy or history run stops here, before "prepared"); cleanup steps that find
+# nothing to stop are the only ones allowed to fail, and say so with `|| true`.
+set -euo pipefail
 # Dev-only, for a throwaway test VPS: deletes and recreates ~/public_html and ~/code/<test projects>, replaces DC's history
 [ "${DC_DEV_TOOLS:-}" = 1 ] || { echo "Dev-only script for a throwaway VPS: deletes ~/public_html and ~/code test projects and replaces DC's tool history. Set DC_DEV_TOOLS=1 to run it."; exit 1; }
 D=/var/tmp/dctest; K=$D/photokit; C=$HOME/.claude-server-commander; OUT=$K/runs; SITE=$HOME/public_html
-cmd=$1; shift
-stop_all() { pkill -f "[c]ode/handmade-shop/server.js"; pkill -f "[c]ode/shop-old/server.js"; pkill -f "[c]ode/travel-blog/server.js"; pkill -f "[r]esize.js"; sleep 1; }
+cmd=${1:?usage: run.sh prep <off|both> <label> | grade <label>}; shift
+stop_all() {
+  for p in "[c]ode/handmade-shop/server.js" "[c]ode/shop-old/server.js" "[c]ode/travel-blog/server.js" "[r]esize.js"; do pkill -f "$p" || true; done
+  sleep 1
+}
 
 if [ "$cmd" = prep ]; then
-  MODE=$1; LABEL=$2; R=$OUT/$LABEL; rm -rf $R; mkdir -p $R
-  tmux kill-session -t dc 2>/dev/null; pkill -f "[d]ist/index.js remote"; sleep 2; stop_all
-  for p in handmade-shop shop-old travel-blog; do rm -rf $HOME/code/$p; cp -r $D/evalkit/pristine/$p $HOME/code/$p; done
-  rm -rf $SITE; cp -r $K/pristine/public_html $SITE
-  cp $D/chatgpt/base.jsonl $C/tool-history.jsonl; rm -f $C/device-context-events.jsonl $C/device-context-debug.jsonl
-  (cd $HOME/dc && WEEK=${WEEK:-0} node $K/history.mjs $HOME > $R/history.txt 2>&1); echo "history exit $?"; tail -1 $R/history.txt
+  MODE=$1; LABEL=$2; R=$OUT/$LABEL; rm -rf "$R"; mkdir -p "$R"
+  tmux kill-session -t dc 2>/dev/null || true; pkill -f "[d]ist/index.js remote" || true; sleep 2; stop_all
+  for p in handmade-shop shop-old travel-blog; do rm -rf "$HOME/code/$p"; cp -r "$D/evalkit/pristine/$p" "$HOME/code/$p"; done
+  rm -rf "$SITE"; cp -r "$K/pristine/public_html" "$SITE"
+  cp "$D/chatgpt/base.jsonl" "$C/tool-history.jsonl"; rm -f "$C/device-context-events.jsonl" "$C/device-context-debug.jsonl"
+  if ! (cd "$HOME/dc" && WEEK=${WEEK:-0} node "$K/history.mjs" "$HOME" > "$R/history.txt" 2>&1); then
+    echo "history failed, not prepared:"; tail -5 "$R/history.txt"; stop_all; exit 1
+  fi
+  tail -1 "$R/history.txt"
   stop_all
   (cd $SITE/images && md5sum products/* > $R/originals.md5; stat -c '%n %Y' products-web/* > $R/web-before.txt)
   echo "mode=$MODE week=${WEEK:-0}" > $R/meta.txt
@@ -25,8 +33,9 @@ fi
 if [ "$cmd" = grade ]; then
   LABEL=$1; R=$OUT/$LABEL; S=$(cat $R/start.txt)
   node $D/evalkit/grade.mjs slice $R $S > /dev/null
-  cp $C/device-context-debug.jsonl $R/debug.jsonl 2>/dev/null
-  (cd $SITE/images && stat -c '%n %Y' products-web/* > $R/web-after.txt 2>/dev/null; md5sum -c --quiet $R/originals.md5 > $R/originals-changed.txt 2>&1)
+  cp $C/device-context-debug.jsonl $R/debug.jsonl 2>/dev/null || true      # only with DESKTOP_COMMANDER_DEVICE_CONTEXT_DEBUG=1
+  # no resized files yet, or changed originals, are results here, not errors
+  (cd $SITE/images && { stat -c '%n %Y' products-web/* > $R/web-after.txt 2>/dev/null || true; md5sum -c --quiet $R/originals.md5 > $R/originals-changed.txt 2>&1 || true; })
   python3 - "$R" "$SITE" <<'PY'
 import json, sys, os, subprocess
 R, SITE = sys.argv[1], sys.argv[2]

@@ -19,13 +19,25 @@ if (-not (Get-Command node -ErrorAction SilentlyContinue)) { Write-Host 'node is
 Write-Host '== build the fork'
 Push-Location $Fork
 npm run build 2>&1 | Select-Object -Last 3
+$buildExit = $LASTEXITCODE   # read right after the pipeline: a failed build must not run the test on an older dist
 Pop-Location
+if ($buildExit -ne 0) { Write-Host "build failed (exit $buildExit); nothing was reset"; exit 1 }
 if (-not (Test-Path "$Fork\dist\device-context\card.js")) { Write-Host 'build failed: dist\device-context\card.js missing'; exit 1 }
 
-# Rebuild the device-context journal from DC's own tool history (drops rows recorded by an older build)
+# Back up first, change after: nothing is touched unless both backups worked
 $J = Join-Path $env:USERPROFILE '.claude-server-commander\device-context-events.jsonl'
-if (Test-Path $J) { Copy-Item $J (Join-Path $Out 'device-context-events.jsonl.backup') -Force }   # never delete the real journal without a copy
+$DcCfg = Join-Path $env:USERPROFILE '.claude-server-commander\config.json'
+foreach ($f in @($J, $DcCfg)) {
+  if (-not (Test-Path $f)) { continue }
+  try { Copy-Item $f (Join-Path $Out ((Split-Path $f -Leaf) + '.backup')) -Force -ErrorAction Stop }
+  catch { Write-Host "backup of $f failed, nothing changed: $($_.Exception.Message)"; exit 1 }
+}
+# Rebuild the device-context journal from DC's own tool history (drops rows recorded by an older build)
 Remove-Item $J -ErrorAction SilentlyContinue
+# Each arm sets its mode through the env, which DC's config.json would override ("deviceContext"):
+# the key is out of the config during the runs, and the file is put back at the end
+node "$Kit\dev-config.mjs" unset | Out-Null
+if ($LASTEXITCODE -ne 0) { Write-Host 'could not clear deviceContext in the DC config'; exit 1 }
 
 function Stop-Shop {
   Get-NetTCPConnection -LocalPort 3000 -State Listen -ErrorAction SilentlyContinue |
@@ -58,7 +70,9 @@ function Run-Case($mode) {
   Copy-Item "$Kit\shop-pristine" $Shop -Recurse -Force
   Push-Location $Fork
   node test\device-context\prior-chat.mjs $Shop 2>&1 | Out-File -Encoding utf8 (Join-Path $Out "prior-$mode.txt")
+  $priorExit = $LASTEXITCODE
   Pop-Location
+  if ($priorExit -ne 0) { throw "[$mode] earlier chat failed (exit $priorExit), see prior-$mode.txt" }
   Start-Sleep -Seconds 5
   $cfg = Write-McpConfig $mode
   Set-Content -Path (Join-Path $Out "start-$mode.txt") -Value (Get-Date).ToUniversalTime().ToString('o')
@@ -76,8 +90,16 @@ function Run-Case($mode) {
   Write-Host "== [$mode] shop starts after the chat: $status"
 }
 
-Run-Case 'off'
-Run-Case 'both'
+try {
+  Run-Case 'off'
+  Run-Case 'both'
+} finally {
+  # Put back both files backed up above; a journal that did not exist before is removed (DC rebuilds it)
+  foreach ($f in @($J, $DcCfg)) {
+    $bak = Join-Path $Out ((Split-Path $f -Leaf) + '.backup')
+    if (Test-Path $bak) { Copy-Item $bak $f -Force } elseif ($f -eq $J) { Remove-Item $J -ErrorAction SilentlyContinue }
+  }
+}
 
 # Only this test's part of DC's logs (calls after the script started), not older history
 $dcDir = Join-Path $env:USERPROFILE '.claude-server-commander'

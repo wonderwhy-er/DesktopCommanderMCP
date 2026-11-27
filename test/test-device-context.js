@@ -18,10 +18,8 @@ const DIR = path.join(ROOT, 'test', 'device-context');
 
 // Known, documented gaps (README, "Limitations"): skipped with their reason, never silently passed
 const KNOWN_GAPS = {
-    macos_case_variants_split_one_project: 'case variants of one path on macOS split one project (low)',
     second_concurrent_chat_without_id_gets_no_card: 'two chats at once without a chat id share one note (inherent without a chat id)',
     card_under_2000_chars_for_heavy_user: 'a heavy user\'s card is ~2,400 characters, over the 2,000 target (low)',
-    docker_volume_arg_creates_bogus_root: 'a docker -v volume path can create a false project root on Windows (med)',
 };
 
 function runSuite(file) {
@@ -32,6 +30,7 @@ function runSuite(file) {
 async function runTests() {
     let ok = true;
     const suites = fs.readdirSync(DIR).filter((f) => /^device-context.*\.test\.mjs$/.test(f)).sort();
+    if (!suites.length) { console.error('❌ no device-context suites found'); return false; }
     for (const f of suites) {
         const { code, out, stdout } = runSuite(path.join(DIR, f));
         const last = stdout.trim().split('\n').at(-1) ?? '';   // stdout only: a deprecation warning on stderr may come last

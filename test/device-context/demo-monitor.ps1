@@ -10,7 +10,7 @@ param([switch]$All)   # -All: also show calls marked origin 'ui' (diagnostics ma
 $Dir  = Join-Path $env:USERPROFILE '.claude-server-commander'
 $Hist = Join-Path $Dir 'tool-history.jsonl'
 $Dbg  = Join-Path $Dir 'device-context-debug.jsonl'
-$Mode = Join-Path $Dir 'device-context-mode'
+$Cfg  = Join-Path $Dir 'config.json'
 
 # Tail a file from its current end; survives the file being rewritten or recreated
 function New-Tail($path) { $len = 0; if (Test-Path $path) { $len = (Get-Item $path).Length }; @{ Path = $path; Pos = $len; Rest = '' } }
@@ -54,7 +54,9 @@ function Show-Tally {
     Write-Host ("      calls {0} | exploring the disk {1} | first call {2} | card shown {3}" -f $tally.calls, $tally.explore, $tally.first, $c) -ForegroundColor DarkGray
 }
 function Header {
-    $m = if (Test-Path $Mode) { (Get-Content $Mode -Raw).Trim() } else { 'env' }
+    # the mode lives in DC's config.json ("deviceContext"); without it the env var of the DC process decides
+    $m = 'env'
+    try { $v = (Get-Content $Cfg -Raw -ErrorAction Stop | ConvertFrom-Json).deviceContext; if ($v) { $m = "$v (config.json)" } } catch { }
     Write-Host ''
     Write-Host "Desktop Commander live view | device context mode: $m | R = new run, Q = quit" -ForegroundColor Cyan
     Write-Host ('-' * 78) -ForegroundColor DarkGray

@@ -4,6 +4,13 @@ An old PHP shop in `~/public_html` with 300 product photos. An "earlier chat" (r
 clock shifted) installs sharp, writes `tools/resize.js` and runs it; it crashes on product-0181.jpg
 (not an image), so 180 of 300 are resized. With `WEEK=1` the job is 7 days old and ~130 other calls follow it.
 
+Use a throwaway VPS only: the scripts delete and recreate `~/public_html` and test projects in `~/code`, and replace
+DC's tool history. They refuse to run unless you opt in:
+
+```bash
+export DC_DEV_TOOLS=1
+```
+
 - `build.sh` — once: builds the pristine shop (300 generated photos + sharp) in /var/tmp/dctest/photokit/pristine
 - `run.sh prep <off|both> <label>` — resets the shop and DC history, replays the earlier chat, restarts the daemon
 - then ask ChatGPT (Remote Desktop Commander attached), e.g.

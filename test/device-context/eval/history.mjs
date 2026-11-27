@@ -12,6 +12,11 @@ import path from 'path';
 import { createRequire } from 'module';
 import { pathToFileURL } from 'url';
 if (process.env.DC_DEV_TOOLS !== '1') { console.error('Dev-only script: rewrites test projects and DC\'s tool history. Set DC_DEV_TOOLS=1 to run it.'); process.exit(1); }
+// The earlier chats must record in "both" mode; a "deviceContext" in DC's config.json would win over the env var
+// below and leave the journal empty, so say that now instead of "HISTORY INCOMPLETE" at the end
+const { modeConflict } = await import(new URL('../dev-config.mjs', import.meta.url).href);
+const conflict = modeConflict('both');
+if (conflict) { console.error(conflict); process.exit(1); }
 
 // Runs from the fork root (cwd); the kit itself may live elsewhere, so load the MCP SDK from the fork
 const fork = process.cwd();
@@ -110,7 +115,9 @@ if (VARIANT === 'twin') {
 
 // DC's tool-history.jsonl has wall-clock timestamps: move each session's calls to its "days ago" date,
 // so get_recent_tool_calls (what the no-memory arms see) tells the same story as the journal
+// tool history is always in the real home; device context's own files follow DC_DEVICE_CONTEXT_HOME when it is set
 const dcDir = path.join(os.homedir(), '.claude-server-commander');
+const ctxDir = path.join(process.env.DC_DEVICE_CONTEXT_HOME || os.homedir(), '.claude-server-commander');
 const hf = path.join(dcDir, 'tool-history.jsonl');
 if (fs.existsSync(hf)) {
   const out = fs.readFileSync(hf, 'utf8').split('\n').map((l) => {
@@ -130,7 +137,7 @@ if (fs.existsSync(hf)) {
 if (VARIANT === 'stale') fs.renameSync(shop, moved); // renamed by hand after the break, outside DC
 
 // The run is only valid if the memory really holds the break and the later blog session
-const j = fs.existsSync(path.join(dcDir, 'device-context-events.jsonl')) ? fs.readFileSync(path.join(dcDir, 'device-context-events.jsonl'), 'utf8') : '';
+const j = fs.existsSync(path.join(ctxDir, 'device-context-events.jsonl')) ? fs.readFileSync(path.join(ctxDir, 'device-context-events.jsonl'), 'utf8') : '';
 if (!/handmade-shop[^\n]*"failed":true/.test(j) || !j.includes('porto.md')) { console.error('HISTORY INCOMPLETE: journal is missing the failed shop start or the blog session'); process.exit(1); }
 console.log('\nhistory done: shop broken 2 days ago, last session = blog 1 day ago');
 process.exit(0);

@@ -67,14 +67,11 @@ $backedUp = $false
 try {
   # Back up your real DC files first: nothing below may touch them before this
   foreach ($f in @($Hist, $Jrnl, $Dbg, $Cfg)) { if (Test-Path $f) { Copy-Item $f (Join-Path $Out ((Split-Path $f -Leaf) + '.original')) -ErrorAction Stop } }
-  # a device-context-mode file (set for Claude Desktop) would override every arm's mode: park it during the runs
-  $ModeFile = Join-Path $DcDir 'device-context-mode'
-  if (Test-Path $ModeFile) { Move-Item $ModeFile (Join-Path $Out 'device-context-mode.original') -Force }
   $backedUp = $true
 
   Write-Host '== build the fork'
   Push-Location $Fork; npm run build 2>&1 | Select-Object -Last 2; $rc = $LASTEXITCODE; Pop-Location
-  if ($rc -ne 0 -or -not (Select-String -LiteralPath "$Fork\dist\device-context\index.js" -Pattern 'compactHistoryText' -Quiet)) { throw 'build failed or dist is stale' }
+  if ($rc -ne 0 -or -not (Select-String -LiteralPath "$Fork\dist\device-context\index.js" -Pattern 'compactHistoryIfEnabled' -Quiet)) { throw 'build failed or dist is stale' }
 
   # Clean base history: your real one minus earlier test runs and minus the last 36 h
   # (so the scripted "1 day ago" session really is the latest work)
@@ -111,6 +108,9 @@ try {
     Copy-Item $HistBase $Hist -Force                            # history = your real one, without test runs
     Remove-Item $Jrnl -ErrorAction SilentlyContinue             # journal is rebuilt from it, then the earlier chats are added
     if (Test-Path (Join-Path $Out 'config.json.original')) { Copy-Item (Join-Path $Out 'config.json.original') $Cfg -Force }
+    # each arm sets its mode through the env; a "deviceContext" in the config (set for Claude Desktop) would override it
+    node "$Kit\..\dev-config.mjs" unset | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw 'could not clear deviceContext in the DC config' }
     Remove-Item $Tmp -Recurse -Force -ErrorAction SilentlyContinue; New-Item -ItemType Directory -Force -Path $Tmp | Out-Null
   }
 
@@ -197,7 +197,6 @@ try {
     Where-Object { $_.CommandLine -match '(?i)handmade-shop|shop-old|travel-blog' } |
     ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
   if ($backedUp) {   # only touch your DC files if the backup was made
-    $mb = Join-Path $Out 'device-context-mode.original'; if (Test-Path $mb) { Move-Item $mb (Join-Path $DcDir 'device-context-mode') -Force }
     foreach ($pair in @(@($Hist, 'tool-history.jsonl.original'), @($Jrnl, 'device-context-events.jsonl.original'), @($Dbg, 'device-context-debug.jsonl.original'), @($Cfg, 'config.json.original'))) {
       $backup = Join-Path $Out $pair[1]
       if (Test-Path $backup) { Copy-Item $backup $pair[0] -Force } elseif ($pair[1] -ne 'config.json.original') { Remove-Item $pair[0] -ErrorAction SilentlyContinue }

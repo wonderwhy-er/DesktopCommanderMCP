@@ -2,6 +2,7 @@ import { toolHistory } from '../utils/toolHistory.js';
 import { GetRecentToolCallsArgsSchema, TrackUiEventArgsSchema } from '../tools/schemas.js';
 import { ServerResult } from '../types.js';
 import { capture_ui_event } from '../utils/capture.js';
+import { compactHistoryIfEnabled } from '../device-context/index.js';
 
 type TrackUiEventParams = Record<string, string | number | boolean | null>;
 
@@ -31,12 +32,13 @@ export async function handleGetRecentToolCalls(args: unknown): Promise<ServerRes
     
     // Format the response (excluding file path per user request)
     const summary = `Tool Call History (${calls.length} results, ${stats.totalEntries} total in memory)`;
-    const historyJson = JSON.stringify(calls, null, 2);
-    
+    // Device context (nudge/both mode): one line per call unless format "full" is asked for
+    const compact = compactHistoryIfEnabled(summary, calls, parsed.format);
+
     return {
       content: [{
         type: "text",
-        text: `${summary}\n\n${historyJson}`
+        text: compact ?? `${summary}\n\n${JSON.stringify(calls, null, 2)}`
       }]
     };
   } catch (error) {

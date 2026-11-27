@@ -11,7 +11,8 @@ const rnd = () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed
 const pick = (a) => a[Math.floor(rnd() * a.length)];
 const H = fs.mkdtempSync(path.join(os.tmpdir(), 'syn-'));
 Object.assign(process.env, { DC_DEVICE_CONTEXT_HOME: H, DC_DEVICE_CONTEXT_NO_RUNNING: '1' });
-const core = await import(pathToFileURL(path.resolve(DIST, 'device-context/core.js')).href);
+const { rank } = await import(pathToFileURL(path.resolve(DIST, 'device-context/rank.js')).href);
+const { observeEvent } = await import(pathToFileURL(path.resolve(DIST, 'device-context/observe.js')).href);
 const card = await import(pathToFileURL(path.resolve(DIST, 'device-context/card.js')).href);
 
 // --- machine: clear names, opaque names, plain folders, decoys
@@ -55,7 +56,7 @@ for (const s of sessions) {
   const now = new Date(s.t);
   // at session start: what would the new chat get?
   if (rows.length) {
-    const ranking = core.rank(rows, now);
+    const ranking = rank(rows, now);
     const text = card.renderCard(rows, ranking, { now, home: H, limit: 5 }) || '';
     const listed = card.cardRoots(text);
     const want = path.normalize(s.proj.dir);
@@ -66,7 +67,9 @@ for (const s of sessions) {
     if (seen.has(want)) { seenK++; if (listed.slice(0, 5).includes(want)) seenTop5++; if (text.includes('`' + want + '`')) seenAny++; }
     if (prev && prev.dir === s.proj.dir) lastSess++;
     const raw = JSON.stringify(history.slice(-50));
-    if (raw.includes(want)) rawHas++;
+    // search the serialized history in its own representation: JSON doubles Windows backslashes, and the
+    // commands name the folder as ~/… (POSIX paths come out unchanged)
+    if ([want, want.replace(H, '~')].some((p) => raw.includes(JSON.stringify(p).slice(1, -1)))) rawHas++;
     cardTok += text.length / 4; rawTok += raw.length / 4;
   }
   // the session itself
@@ -81,7 +84,7 @@ for (const s of sessions) {
       : { tool: 'start_process', args: { command: `cd ${s.proj.dir.replace(H, '~')} && ${pick(['npm test', 'git status', 'git diff', 'pm2 restart app', 'ls -la'])}` } };
     if (s.noise && i === 0) Object.assign(ev, { tool: 'start_process', args: { command: 'df -h; du -sh ~/Downloads' } });
     const iso = new Date(t).toISOString();
-    rows.push(...core.observeEvent({ t: iso, tool: ev.tool, args: ev.args, origin: 'remote' }, { home: H }).journal);
+    rows.push(...observeEvent({ t: iso, tool: ev.tool, args: ev.args, origin: 'remote' }, { home: H }).journal);
     history.push({ timestamp: iso, toolName: ev.tool, arguments: ev.args, output: { content: [{ type: 'text', text: 'x'.repeat(200 + Math.floor(rnd() * 2800)) }] } });
   }
   prev = s.proj; seen.add(path.normalize(s.proj.dir));

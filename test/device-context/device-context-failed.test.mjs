@@ -1,47 +1,82 @@
-// failed-start detection, PID linking, get_device_context returns the card
-import fs from 'fs'; import os from 'os'; import path from 'path';
-const home = fs.mkdtempSync(path.join(os.tmpdir(), 'dc3-'));
-process.env.DC_DEVICE_CONTEXT_HOME = home;
-process.env.DESKTOP_COMMANDER_DEVICE_CONTEXT = 'both';
-process.env.DC_DEVICE_CONTEXT_NO_RUNNING = '1';
-const shop = path.join(home, 'code', 'shop'); fs.mkdirSync(shop, { recursive: true });
-fs.writeFileSync(path.join(shop, 'package.json'), JSON.stringify({ name: 'shop', description: 'Online store for ceramics', scripts: { start: 'node server.js' } }));
-fs.writeFileSync(path.join(shop, 'server.js'), '//');
-fs.mkdirSync(path.join(home, '.claude-server-commander'), { recursive: true });
-fs.writeFileSync(path.join(home, '.claude-server-commander', 'device-context-events.jsonl'), '');
-const dc = await import('../../dist/device-context/index.js');
-let fails = 0; const check = (n, ok, info = '') => { console.log(`${ok ? 'ok  ' : 'FAIL'} ${n}${ok ? '' : '  ' + String(info).slice(0, 400)}`); if (!ok) fails++; };
-const txt = (t) => ({ content: [{ type: 'text', text: t }] });
-const crash = "Process started with PID 4242 (shell: powershell.exe)\nInitial output:\nnode:fs:441\nError: ENOENT: no such file or directory, open 'C:\\\\shop\\\\data\\\\catalog.json'\n  code: 'ENOENT'\nNode.js v22.9.0\n\n✅ Process 4242 has finished execution";
-const running = "Process started with PID 4343 (shell: bash)\nInitial output:\nshop listening on :3000\n\n⏳ Process is running. Use read_process_output to get more output.";
-const okDone = "Process started with PID 4444 (shell: bash)\nInitial output:\n3 passed\n\n✅ Process 4444 has finished execution";
-const logsError = "Process started with PID 4545 (shell: bash)\nInitial output:\n[warn] retrying\nTypeError: x is undefined (handled)\nserver up\n\n⏳ Process is running. Use read_process_output to get more output.";
+// Failed runs: detection from output, exit codes that arrive later (linked by PID to their run), runs stopped on
+// purpose, a cd that failed, and what the card says about them.
+import path from 'path';
+import { setup, mk, ok, q, checker, allOf, projectLine } from './harness.mjs';
+
+const t = await setup({ prefix: 'dc3-' });
+const { H, dc } = t;
+const { check, section, done } = checker();
+const shop = mk(path.join(H, 'code', 'shop'), { 'package.json': JSON.stringify({ name: 'shop', description: 'Online store for ceramics', scripts: { start: 'node server.js' } }), 'server.js': '//' });
+t.writeJournal([]);
+const started = (pid, out) => `Process started with PID ${pid} (shell: bash)\nInitial output:\n${out}`;
+const crash = started(4242, "node:fs:441\nError: ENOENT: no such file or directory, open 'C:\\\\shop\\\\data\\\\catalog.json'\n  code: 'ENOENT'\nNode.js v22.9.0\n\n✅ Process 4242 has finished execution");
+const running = (pid) => started(pid, 'shop listening on :3000\n\n⏳ Process is running. Use read_process_output to get more output.');
+const okDone = started(4444, '3 passed\n\n✅ Process 4444 has finished execution');
+const logsError = started(4545, '[warn] retrying\nTypeError: x is undefined (handled)\nserver up\n\n⏳ Process is running. Use read_process_output to get more output.');
+
+section('reading the output');
 check('crash right after start = failed', dc.failedOutput(crash));
-check('still running = not failed', !dc.failedOutput(running));
+check('still running = not failed', !dc.failedOutput(running(4343)));
 check('finished cleanly = not failed', !dc.failedOutput(okDone));
 check('error text while still running = not failed', !dc.failedOutput(logsError));
 check('exit code 1 = failed', dc.failedOutput('Process completed with exit code 1'));
 check('exit code 0 = not failed', !dc.failedOutput('Process completed with exit code 0'));
-const wait = () => new Promise((r) => setTimeout(r, 150));
-const journal = () => fs.readFileSync(path.join(home, '.claude-server-commander', 'device-context-events.jsonl'), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
-dc.observeToolCall('start_process', { command: `node "${path.join(shop, 'server.js')}"` }, txt(crash), false); await wait();
-check('crashed start recorded as failed node', journal().some((r) => r.verb === 'node' && r.failed), JSON.stringify(journal()));
-dc.observeToolCall('start_process', { command: `npm test --prefix "${shop}"` }, txt(running.replace('4343', '5151')), false); await wait();
-check('running start not failed', journal().filter((r) => r.verb === 'npm test').every((r) => !r.failed), JSON.stringify(journal()));
-dc.observeToolCall('read_process_output', { pid: 5151 }, txt('[Reading 3 new lines]\n\n1 failed\n✅ Process completed with exit code 1 (runtime: 2.1s)'), false); await wait();
-check('later exit code linked by PID', journal().some((r) => r.verb === 'npm test' && r.failed && r.root === shop), JSON.stringify(journal()));
-dc.observeToolCall('read_process_output', { pid: 9999 }, txt('✅ Process completed with exit code 1'), false); await wait();
-check('unknown PID adds nothing', journal().length === 3, journal().length);
-const before = journal().length;
-dc.observeToolCall('start_process', { command: `node "${path.join(shop, 'server.js')}"` }, txt(running.replace(/4343/g, '6161')), false); await wait();
-dc.observeToolCall('force_terminate', { pid: 6161 }, txt('Successfully initiated termination of session 6161'), false); await wait();
-dc.observeToolCall('read_process_output', { pid: 6161 }, txt('✅ Process completed with exit code 1'), false); await wait();
-check('stopped on purpose is not a failure', journal().slice(before).every((r) => !r.failed), JSON.stringify(journal().slice(before)));
+
+section('recording');
+const rowsSince = (n) => t.journal().slice(n);
+dc.observeToolCall('start_process', { command: `node ${q(path.join(shop, 'server.js'))}` }, ok(crash), false);
+check('crashed start recorded as failed node', t.journal().some((r) => r.verb === 'node' && r.failed && r.run), t.journal());
+
+let n = t.journal().length;
+dc.observeToolCall('start_process', { command: `npm test --prefix ${q(shop)}` }, ok(running(5151)), false);
+check('running start: one npm test row, not failed', rowsSince(n).length === 1 && allOf(rowsSince(n), (r) => r.verb === 'npm test' && !r.failed), rowsSince(n));
+const testRun = rowsSince(n)[0];
+dc.observeToolCall('read_process_output', { pid: 5151 }, ok('[Reading 3 new lines]\n\n1 failed\n✅ Process completed with exit code 1 (runtime: 2.1s)'), false);
+const late = t.journal().at(-1);
+check('later exit code linked by PID, written for that run (same id and start time)', late.verb === 'npm test' && late.failed && late.run === testRun.run && late.t === testRun.t && path.resolve(late.root).toLowerCase() === shop.toLowerCase(), late);
+n = t.journal().length;
+dc.observeToolCall('read_process_output', { pid: 9999 }, ok('✅ Process completed with exit code 1'), false);
+check('unknown PID adds nothing', t.journal().length === n, rowsSince(n));
+
+n = t.journal().length;
+dc.observeToolCall('start_process', { command: `node ${q(path.join(shop, 'server.js'))}` }, ok(running(6161)), false);
+check('the second node start was tracked (one row, not failed)', rowsSince(n).length === 1 && allOf(rowsSince(n), (r) => r.verb === 'node' && !r.failed), rowsSince(n));
+const m = t.journal().length;
+dc.observeToolCall('force_terminate', { pid: 6161 }, ok('Successfully initiated termination of session 6161'), false);
+dc.observeToolCall('read_process_output', { pid: 6161 }, ok('✅ Process completed with exit code 1'), false);
+check('stopped on purpose: the exit after it adds no failure', t.journal().length === m, rowsSince(m));
+
+section('a late failure of an older run does not hide a newer run');
+const api = mk(path.join(H, 'code', 'api'), { 'package.json': '{"name":"api"}' });
+dc.observeToolCall('start_process', { command: `cd ${q(api)} && npm test` }, ok(running(7001)), false);        // run A
+dc.observeToolCall('start_process', { command: `cd ${q(api)} && npm test` }, ok(started(7002, '5 passed\n✅ Process completed with exit code 0')), false); // run B, passed
+dc.observeToolCall('read_process_output', { pid: 7001 }, ok('✅ Process completed with exit code 1'), false);  // A's failure arrives after B
+const apiDetail = projectLine(dc.handleGetDeviceContext({}, {}).content[0].text, api);
+check('api: the latest run (B) passed, so no "last run failed"', apiDetail && !apiDetail.includes('last run failed'), apiDetail);
+const solo = mk(path.join(H, 'code', 'solo'), { 'package.json': '{"name":"solo"}' });
+dc.observeToolCall('start_process', { command: `cd ${q(solo)} && npm test` }, ok(running(7003)), false);
+dc.observeToolCall('read_process_output', { pid: 7003 }, ok('✅ Process completed with exit code 1'), false);
+const soloLine = projectLine(dc.handleGetDeviceContext({ limit: 10 }, {}).content[0].text, solo);
+check('solo: a late failure with no newer run is shown', /last run failed: `npm test`/.test(soloLine), soloLine);
+
+section('a cd that failed');
+const ghost = path.join(H, 'code', 'not-there');
+n = t.journal().length;
+dc.observeToolCall('start_process', { command: `cd ${q(path.join(api, 'missing'))} && npm test` }, ok(`bash: cd: ${path.join(api, 'missing')}: No such file or directory\nProcess completed with exit code 1`), false);
+check('cd into a missing folder: the test never ran, nothing failed', allOf(rowsSince(n), (r) => !r.failed), rowsSince(n));
+n = t.journal().length;
+dc.observeToolCall('start_process', { command: `cd ${q(ghost)} && npm test` }, ok('Process completed with exit code 1'), false);
+check('...also when only the missing folder tells', rowsSince(n).every((r) => !r.failed), rowsSince(n));
+
+section('the card');
 const out = dc.handleGetDeviceContext({}, {}).content[0].text;
 check('tool returns the resume card', /^💡 Recent work on this device/.test(out) && out.includes('Last session') && out.includes(shop), out);
-check('card shows the failure', /npm test`? \(failed\)/.test(out) || out.includes('(failed)'), out);
-check('card has the project description', out.includes('Online store for ceramics'), out);
+// the shop's own line, not any "(failed)" on the card: the node crash earlier must not stand in for the npm test failure
+const shopLine = projectLine(out, shop);
+check('shop line: last run failed is npm test (the failure linked by PID)', /last run failed: [^\n]*`npm test` \(\d{4}-/.test(shopLine), shopLine || out);
+check('shop line: node is not listed as failed (its latest run was stopped on purpose)', !/last run failed: [^\n]*`node`/.test(shopLine), shopLine);
+check('card has the project description', shopLine.includes('Online store for ceramics'), shopLine);
 const detail = dc.handleGetDeviceContext({ project: 'shop' }, {}).content[0].text;
-check('project arg still gives the detail view', detail.includes('recent files') || detail.includes('commands'), detail);
-console.log("\n--- card ---\n" + out + "\n");
-console.log(fails ? `${fails} FAILED` : 'all passed'); process.exit(fails ? 1 : 0);
+check('project arg gives the detail view', detail.includes(shop) && (detail.includes('recent files') || detail.includes('commands')), detail);
+console.log('\n--- card ---\n' + out + '\n');
+done();

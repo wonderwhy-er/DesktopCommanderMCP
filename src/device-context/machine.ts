@@ -1,13 +1,15 @@
 /**
  * Device context — what the machine has, beyond what Desktop Commander saw:
- *  - a one-line description of a project (manifest name/description, README title, git remote)
- *  - what is running: listening ports -> process -> its folder, nginx sites, docker compose projects
- * Read-only, metadata only (no file contents beyond a manifest's name/description and a README's first heading),
- * time-boxed, cached. Used only when a card is rendered, never on every tool call.
+ *  - a one-line description of a project (manifest name/description, README title, git remote);
+ *  - what is running: listening ports -> process -> its folder (Linux), nginx sites, docker compose projects.
+ * Read-only, metadata only (no file contents beyond a manifest's name/description and a README's first heading).
+ * Everything that runs a program or walks /proc is asynchronous and cached: building a card only reads the last
+ * result and never waits for it.
  */
 import fs from 'fs';
 import path from 'path';
-import { execFile, execFileSync } from 'child_process';
+import { execFile } from 'child_process';
+import { plainName, plainPhrase, redact } from './privacy.js';
 
 // ---------- project description ----------
 const descCache = new Map<string, { at: number; value: string | null }>();
@@ -20,23 +22,11 @@ function readSmall(file: string, max = 64 * 1024): string | null {
     } catch { return null; }
 }
 
-/** Repo text reaches the model at the top of a chat: keep only short, plain, non-instructive phrases. */
-const SUSPICIOUS = /(assistant|instruction|ignore|system prompt|you must|pre-?approved|run |execute|curl|wget|sudo|rm -|\|\s*sh|https?:|\$\(|`|<|>|\{|\})/i;
-export function plainPhrase(s: unknown, max = 70): string | null {
-    if (typeof s !== 'string') return null;
-    const t = s.replace(/[\p{Cc}\p{Cf}]/gu, ' ').replace(/\s+/g, ' ').trim();
-    if (!t || t.length > 140 || SUSPICIOUS.test(t)) return null;
-    return t.length > max ? t.slice(0, max - 1) + '…' : t;
-}
-const plainName = (s: unknown) => (typeof s === 'string' && /^[\w@./-]{1,40}$/.test(s) ? s : null);
-
 function fromPackageJson(root: string): string | null {
     const txt = readSmall(path.join(root, 'package.json'));
     if (!txt) return null;
-    try {
-        const j = JSON.parse(txt);
-        return [plainName(j.name), plainPhrase(j.description)].filter(Boolean).join(': ') || null;
-    } catch { return null; }
+    try { const j = JSON.parse(txt); return [plainName(j.name), plainPhrase(j.description)].filter(Boolean).join(': ') || null; }
+    catch { return null; }
 }
 
 function fromPyproject(root: string): string | null {
@@ -73,14 +63,15 @@ export function gitRemote(root: string): string | null {
     return /^[\w.-]+(\/[\w.-]+){1,3}$/.test(clean) ? clean : null;
 }
 
-/** A short "what is this" line, e.g. `shop: Online store for handmade goods`. */
+/** A short "what is this" line, e.g. `shop: Online store for handmade goods`. Secrets are redacted before it is
+ *  cached, shown, or written to device-context.md. */
 export function describeProject(root: string): string | null {
     const hit = descCache.get(root);
     if (hit && Date.now() - hit.at < 5 * 60_000) return hit.value;
     let value = fromPackageJson(root) ?? fromPyproject(root) ?? fromReadme(root);
     const remote = gitRemote(root);
     if (remote && !(value ?? '').includes(path.basename(remote)) && (value ?? '').length + remote.length < 58) value = value ? `${value} (${remote})` : remote;
-    if (value) value = value.replace(/\s+/g, ' ').slice(0, 120);
+    if (value) value = redact(value.replace(/\s+/g, ' ')).slice(0, 120);
     descCache.set(root, { at: Date.now(), value: value ?? null });
     return value ?? null;
 }
@@ -93,9 +84,11 @@ export interface RunningEntry {
     down?: boolean;     // configured to run but not running / nothing listening
 }
 
-let runCache: { at: number; value: RunningEntry[] } | null = null;
-/** True when we could see listening ports with their folders (Linux, at least one attributed). */
-export let portsVisible = false;
+/** How much of what listens could be traced to a process:
+ *  complete = every listening port has a visible owner, partial = some do, none = no port could be traced. */
+export type Attribution = 'complete' | 'partial' | 'none';
+
+let runCache: { at: number; value: RunningEntry[]; attribution: Attribution } | null = null;
 const TIMEOUT = 800;
 
 /** Runs a command without blocking the server (the MCP event loop keeps serving other calls meanwhile). */
@@ -111,72 +104,108 @@ export function runAsync(cmd: string, args: string[], timeout = TIMEOUT, env?: N
     });
 }
 
-function cwdOf(pid: number): string | null {
-    try { return fs.readlinkSync(`/proc/${pid}/cwd`); } catch { return null; }
+/** Run `fn` over `items` with at most `limit` running at once. */
+async function eachLimited<T>(items: T[], limit: number, fn: (x: T) => Promise<void>): Promise<void> {
+    let next = 0;
+    await Promise.all(Array.from({ length: Math.min(limit, items.length) }, async () => {
+        while (next < items.length) await fn(items[next++]);
+    }));
 }
 
-/** Linux without `ss`: listening sockets from /proc/net/tcp*, owners by scanning our own processes' fds. */
-async function listeningFromProc(): Promise<RunningEntry[]> {
-    const inodes = new Map<string, string>(); // inode -> port
+interface Listener { port: string; pid?: number; name: string }
+
+async function cwdOf(pid: number): Promise<string | undefined> {
+    try { const d = await fs.promises.readlink(`/proc/${pid}/cwd`); return d && d !== '/' ? d : undefined; } catch { return undefined; }
+}
+
+/** Linux without `ss`: listening sockets from /proc/net/tcp*, their owners from every process's fds.
+ *  All reads are asynchronous, a few processes at a time: a process with thousands of fds never blocks the server. */
+async function listenersFromProc(): Promise<Listener[]> {
+    const inodes = new Map<string, string>();                                     // socket inode -> port
     for (const f of ['/proc/net/tcp', '/proc/net/tcp6']) {
-        let txt = ''; try { txt = fs.readFileSync(f, 'utf8'); } catch { continue; }
+        let txt = ''; try { txt = await fs.promises.readFile(f, 'utf8'); } catch { continue; }
         for (const line of txt.split('\n').slice(1)) {
             const c = line.trim().split(/\s+/);
-            if (c[3] !== '0A') continue; // LISTEN
+            if (c[3] !== '0A') continue;                                           // LISTEN
             inodes.set(c[9], String(parseInt(c[1].split(':')[1], 16)));
         }
     }
     if (!inodes.size) return [];
     const owners = new Map<string, number>();
-    let pids: string[] = []; try { pids = fs.readdirSync('/proc').filter((x) => /^\d+$/.test(x)); } catch { /* ignore */ }
-    let n = 0;
-    for (const pid of pids.slice(0, 2000)) {
-        // let other MCP calls run between batches: this walks every process's open files
-        if (++n % 25 === 0) await new Promise((r) => setImmediate(r));
-        let fds: string[] = []; try { fds = fs.readdirSync(`/proc/${pid}/fd`); } catch { continue; }
+    let pids: string[] = [];
+    try { pids = (await fs.promises.readdir('/proc')).filter((x) => /^\d+$/.test(x)).slice(0, 2000); } catch { /* ignore */ }
+    await eachLimited(pids, 8, async (pid) => {
+        let fds: string[] = [];
+        try { fds = await fs.promises.readdir(`/proc/${pid}/fd`); } catch { return; }
         for (const fd of fds) {
-            let l = ''; try { l = fs.readlinkSync(`/proc/${pid}/fd/${fd}`); } catch { continue; }
+            if (owners.size === inodes.size) return;
+            let l = ''; try { l = await fs.promises.readlink(`/proc/${pid}/fd/${fd}`); } catch { continue; }
             const m = l.match(/^socket:\[(\d+)\]$/);
             if (m && inodes.has(m[1]) && !owners.has(m[1])) owners.set(m[1], Number(pid));
         }
-    }
-    const seen = new Set<string>();
-    const res: RunningEntry[] = [];
+    });
+    const out: Listener[] = [];
     for (const [inode, port] of inodes) {
         const pid = owners.get(inode);
-        let name = '?'; if (pid) { try { name = fs.readFileSync(`/proc/${pid}/comm`, 'utf8').trim(); } catch { /* ignore */ } }
-        const key = `${port}/${name}`; if (seen.has(key)) continue; seen.add(key);
-        const dir = pid ? cwdOf(pid) : null;
-        res.push({ kind: 'port', label: `:${port} ${name}`, dir: dir && dir !== '/' ? dir : undefined });
+        let name = '?';
+        if (pid) { try { name = (await fs.promises.readFile(`/proc/${pid}/comm`, 'utf8')).trim(); } catch { /* ignore */ } }
+        out.push({ port, pid, name });
     }
-    return res;
+    return out;
 }
 
-/** Linux: listening TCP sockets with their process (only processes this user may see get a folder). */
-async function listeningPorts(): Promise<RunningEntry[]> {
+/** Linux: listening TCP sockets with their process (only processes this user may see have one). */
+async function listeners(): Promise<Listener[]> {
     if (process.platform !== 'linux') return [];
-    const out = await runAsync('ss', ['-ltnpH']);
-    if (!out) return await listeningFromProc();
-    const seen = new Set<string>();
-    const res: RunningEntry[] = [];
+    // DC_DEVICE_CONTEXT_NO_SS=1 (tests): use the /proc fallback even where ss exists
+    const out = process.env.DC_DEVICE_CONTEXT_NO_SS === '1' ? null : await runAsync('ss', ['-ltnpH']);
+    if (!out) return listenersFromProc();
+    const res: Listener[] = [];
     for (const line of out.split('\n')) {
         const addr = line.trim().split(/\s+/)[3];
         if (!addr) continue;
         const port = addr.slice(addr.lastIndexOf(':') + 1);
+        if (!/^\d+$/.test(port)) continue;
         const proc = line.match(/users:\(\("([^"]+)",pid=(\d+)/);
-        const name = proc?.[1] ?? '?';
-        const key = `${port}/${name}`;
-        if (seen.has(key) || !/^\d+$/.test(port)) continue;
-        seen.add(key);
-        const dir = proc ? cwdOf(Number(proc[2])) : null;
-        res.push({ kind: 'port', label: `:${port} ${name}`, dir: dir && dir !== '/' ? dir : undefined });
+        res.push({ port, pid: proc ? Number(proc[2]) : undefined, name: proc?.[1] ?? '?' });
     }
     return res;
+}
+
+/** Listening ports as entries: one per (port, folder), so two projects on one port (different addresses) stay
+ *  two entries, while one server's IPv4 and IPv6 sockets are one. */
+async function listeningPorts(): Promise<{ entries: RunningEntry[]; attribution: Attribution }> {
+    const ls = await listeners();
+    const seen = new Set<string>();
+    const entries: RunningEntry[] = [];
+    for (const l of ls) {
+        const dir = l.pid ? await cwdOf(l.pid) : undefined;
+        const key = `${l.port}|${dir ?? `pid:${l.pid ?? '?'}:${l.name}`}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        entries.push({ kind: 'port', label: `:${l.port} ${l.name}`, dir });
+    }
+    const owned = ls.filter((l) => l.pid).length;
+    return { entries, attribution: !ls.length || !owned ? 'none' : owned === ls.length ? 'complete' : 'partial' };
 }
 
 function nginxDirs(): string[] {
     const env = process.env.DC_DEVICE_CONTEXT_NGINX_DIRS;
     return env ? env.split(path.delimiter) : ['/etc/nginx/sites-enabled', '/etc/nginx/conf.d'];
+}
+
+/** nginx config without comments (`#` to the end of the line, except inside quotes). */
+export function stripNginxComments(txt: string): string {
+    let out = '';
+    let quote: string | null = null;
+    for (let i = 0; i < txt.length; i++) {
+        const c = txt[i];
+        if (quote) { if (c === '\\') { out += c + (txt[++i] ?? ''); continue; } if (c === quote) quote = null; out += c; continue; }
+        if (c === '"' || c === "'") { quote = c; out += c; continue; }
+        if (c === '#') { const nl = txt.indexOf('\n', i); if (nl < 0) break; i = nl - 1; continue; }
+        out += c;
+    }
+    return out;
 }
 
 /** nginx server blocks: domains + where they point (root folder or proxied local port). */
@@ -186,11 +215,11 @@ export function nginxSites(): Array<{ domains: string[]; root?: string; port?: s
         let files: string[] = [];
         try { files = fs.readdirSync(d); } catch { continue; }
         for (const f of files.slice(0, 50)) {
-            const txt = readSmall(path.join(d, f), 128 * 1024);
-            if (!txt) continue;
-            for (const block of txt.split(/\bserver\s*\{/).slice(1)) {
+            const raw = readSmall(path.join(d, f), 128 * 1024);
+            if (!raw) continue;
+            for (const block of stripNginxComments(raw).split(/\bserver\s*\{/).slice(1)) {
                 const domains = (block.match(/server_name\s+([^;]+);/)?.[1] ?? '').split(/\s+/).filter((x) => x && x !== '_' && x !== 'localhost');
-                const root = block.match(/(?:^|[\s;{])root\s+([^;]+);/)?.[1]?.trim();
+                const root = block.match(/(?:^|[\s;{])root\s+([^;]+);/)?.[1]?.trim().replace(/^(["'])(.*)\1$/, '$2');
                 const port = block.match(/proxy_pass\s+https?:\/\/(?:127\.0\.0\.1|localhost|0\.0\.0\.0|\[::1\]):(\d+)/)?.[1];
                 if (domains.length || root || port) sites.push({ domains, root, port });
             }
@@ -210,34 +239,36 @@ async function dockerProjects(): Promise<RunningEntry[]> {
     });
 }
 
-/** Everything running that we can attribute. Collected in the background (ss, docker ps, nginx configs) and
- * cached for 30 s; runningMap() never waits for it, so building a card never blocks the server. */
+/** Everything running that we can attribute. Collected in the background (ss or /proc, docker ps, nginx configs)
+ *  and cached for 30 s. */
 let runRefresh: Promise<void> | null = null;
 export function refreshRunningMap(): Promise<void> {
     if (process.env.DC_DEVICE_CONTEXT_NO_RUNNING === '1') return Promise.resolve();
     if (runRefresh) return runRefresh;
     runRefresh = (async () => {
         try {
-            const [ports, docker] = await Promise.all([listeningPorts(), dockerProjects()]);
+            const [{ entries: ports, attribution }, docker] = await Promise.all([listeningPorts(), dockerProjects()]);
             const entries: RunningEntry[] = [...ports];
             for (const s of nginxSites()) {
                 const viaPort = s.port ? ports.find((p) => p.label.startsWith(`:${s.port} `)) : undefined;
                 const dir = s.root ?? viaPort?.dir;
                 const dead = !!s.port && !viaPort && ports.length > 0;
-                entries.push({ kind: 'nginx', label: `nginx config ${s.domains.slice(0, 2).join(' ') || '(default)'}${s.port ? ' → :' + s.port : ''}${dead ? ' (nothing listening)' : ''}`, dir, down: dead })
+                entries.push({ kind: 'nginx', label: `nginx config ${s.domains.slice(0, 2).join(' ') || '(default)'}${s.port ? ' → :' + s.port : ''}${dead ? ' (nothing listening)' : ''}`, dir, down: dead });
             }
             entries.push(...docker);
-            portsVisible = ports.some((p) => !!p.dir);
-            runCache = { at: Date.now(), value: entries };
+            runCache = { at: Date.now(), value: entries, attribution };
         } catch { /* keep the last value */ } finally { runRefresh = null; }
     })();
     return runRefresh;
 }
-/** The last collected map; starts a background refresh when it is missing or older than 30 s. */
+
+/** The last collected map; starts a background refresh when it is missing or older than 30 s. Never waits. */
 export function runningMap(): RunningEntry[] {
     if (process.env.DC_DEVICE_CONTEXT_NO_RUNNING === '1') return [];
     if (!runCache || Date.now() - runCache.at >= 30_000) void refreshRunningMap();
     return runCache?.value ?? [];
 }
+/** How complete the last port map was (see Attribution). */
+export const portAttribution = (): Attribution => runCache?.attribution ?? 'none';
 
 export function _resetMachineCachesForTests() { runCache = null; runRefresh = null; descCache.clear(); }

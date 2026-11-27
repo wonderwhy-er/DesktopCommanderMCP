@@ -8,15 +8,18 @@ import os from 'os';
 import path from 'path';
 
 const [, , cmd, a, b] = process.argv;
-const dcDir = process.env.DC_LOG_DIR || path.join(os.homedir(), '.claude-server-commander');
+// Where the producers write: DC's tool history is always in the real home; device context's own files (the
+// debug log) follow DC_DEVICE_CONTEXT_HOME when it is set. DC_LOG_DIR overrides both (logs copied elsewhere).
+const histDir = process.env.DC_LOG_DIR || path.join(os.homedir(), '.claude-server-commander');
+const ctxDir = process.env.DC_LOG_DIR || path.join(process.env.DC_DEVICE_CONTEXT_HOME || os.homedir(), '.claude-server-commander');
 const readText = (f) => (fs.existsSync(f) ? fs.readFileSync(f, 'utf8').replace(/^﻿/, '') : '');
 const jsonLines = (txt) => txt.split(/\r?\n/).filter(Boolean).map((l) => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
 
 if (cmd === 'slice') {
   const since = Date.parse(b);
   const keep = (rows, key) => rows.filter((r) => Date.parse(r[key]) >= since);
-  const calls = keep(jsonLines(readText(path.join(dcDir, 'tool-history.jsonl'))), 'timestamp');
-  const debug = keep(jsonLines(readText(path.join(dcDir, 'device-context-debug.jsonl'))), 't');
+  const calls = keep(jsonLines(readText(path.join(histDir, 'tool-history.jsonl'))), 'timestamp');
+  const debug = keep(jsonLines(readText(path.join(ctxDir, 'device-context-debug.jsonl'))), 't');
   fs.writeFileSync(path.join(a, 'calls.jsonl'), calls.map((r) => JSON.stringify(r)).join('\n') + '\n');
   fs.writeFileSync(path.join(a, 'debug.jsonl'), debug.map((r) => JSON.stringify(r)).join('\n') + '\n');
   console.log(`sliced ${calls.length} calls, ${debug.length} debug rows`);
@@ -87,9 +90,13 @@ export function gradeRun(dir) {
     charsBeforeTarget: before.reduce((n, r) => n + outText(r).length, 0),
     reachedTarget: locate >= 0,
     visitedOther: calls.filter((r) => others.some((o) => mentions(r, o))).length,
-    // any change on disk in another project (file hashes before/after the chat), shell writes included
-    wroteOther: readText(path.join(dir, 'changed.txt')).split(',').map((x) => x.trim()).filter((x) => x && x !== target).length
-      || calls.filter((r) => WRITE_TOOLS.has(r.toolName) && others.some((o) => mentions(r, o))).length,
+    // a change on disk in another project: from the file hashes before/after the chat (shell writes included)
+    // whenever the runner wrote changed.txt, even an empty one (= nothing changed); only without it, from write calls
+    wroteOther: fs.existsSync(path.join(dir, 'changed.txt'))
+      ? readText(path.join(dir, 'changed.txt')).split(',').map((x) => x.trim()).filter((x) => x && x !== target).length
+      : calls.filter((r) => WRITE_TOOLS.has(r.toolName) && others.some((o) => mentions(r, o))).length,
+    // write calls aimed at another project, whether or not they changed anything
+    triedWriteOther: calls.filter((r) => WRITE_TOOLS.has(r.toolName) && others.some((o) => mentions(r, o))).length,
     changed: readText(path.join(dir, 'changed.txt')).trim(),
     contextToolCalls: calls.filter((r) => r.toolName === 'get_device_context').length,
     cardAppends: debug.filter((r) => r.event === 'decision' && r.appended).length,
@@ -105,7 +112,9 @@ if (cmd === 'summary') {
   const dirs = fs.readdirSync(a).map((d) => path.join(a, d)).filter((d) => fs.existsSync(path.join(d, 'meta.json')));
   const runs = dirs.map(gradeRun);
   const cols = Object.keys(runs[0] ?? {});
-  fs.writeFileSync(path.join(a, 'runs.csv'), [cols.join(','), ...runs.map((r) => cols.map((c) => JSON.stringify(r[c] ?? '')).join(','))].join('\n') + '\n');
+  // RFC 4180: every field quoted, a quote inside doubled ("" not \"), missing values empty
+  const csv = (v) => (v === null || v === undefined ? '' : `"${String(v).replace(/"/g, '""')}"`);
+  fs.writeFileSync(path.join(a, 'runs.csv'), [cols.map(csv).join(','), ...runs.map((r) => cols.map((c) => csv(r[c])).join(','))].join('\n') + '\n');
   const arms = [...new Set(runs.map((r) => r.arm))];
   const rows = arms.map((arm) => {
     const rs = runs.filter((r) => r.arm === arm);
@@ -117,11 +126,12 @@ if (cmd === 'summary') {
       callsBeforeTarget: m('callsBeforeTarget'), dcCalls: m('dcCalls'), turns: m('turns'),
       inputTokens: m('inputTokens'), outputTokens: m('outputTokens'), costUsd: m('costUsd') == null ? null : +m('costUsd').toFixed(3),
       visitedOther: rs.reduce((s, r) => s + r.visitedOther, 0), wroteOther: rs.reduce((s, r) => s + r.wroteOther, 0),
+      triedWriteOther: rs.reduce((s, r) => s + r.triedWriteOther, 0),
       contextToolCalls: rs.reduce((s, r) => s + r.contextToolCalls, 0), cardAppends: rs.reduce((s, r) => s + r.cardAppends, 0),
       cardsSeen: rs.reduce((s, r) => s + r.cardsSeen, 0), charsBeforeTarget: m('charsBeforeTarget'),
       historyCalls: rs.reduce((s, r) => s + r.historyCalls, 0), claudeErrors: rs.filter((r) => !r.claudeOk).length };
   });
-  const head = ['arm', 'task', 'mode', 'n', 'success', 'asked', 'reached', 'callsBeforeTarget', 'charsBeforeTarget', 'dcCalls', 'turns', 'inputTokens', 'outputTokens', 'costUsd', 'visitedOther', 'wroteOther', 'contextToolCalls', 'cardsSeen', 'historyCalls', 'claudeErrors'];
+  const head = ['arm', 'task', 'mode', 'n', 'success', 'asked', 'reached', 'callsBeforeTarget', 'charsBeforeTarget', 'dcCalls', 'turns', 'inputTokens', 'outputTokens', 'costUsd', 'visitedOther', 'wroteOther', 'triedWriteOther', 'contextToolCalls', 'cardsSeen', 'historyCalls', 'claudeErrors'];
   const md = ['# Device-context eval', '', 'Medians per arm; counts are totals over the arm\'s runs.', '',
     `| ${head.join(' | ')} |`, `|${head.map(() => '---').join('|')}|`,
     ...rows.map((r) => `| ${head.map((h) => r[h] ?? '–').join(' | ')} |`), '',
