@@ -4,7 +4,7 @@ import { DEFAULT_COMMAND_TIMEOUT, MAX_PROCESS_WAIT_MS } from './config.js';
 import { configManager, type ServerConfig } from './config-manager.js';
 import {capture} from "./utils/capture.js";
 import { analyzeProcessState, STATE_DETECTION_TAIL_CHARS, type ProcessState } from './utils/process-detection.js';
-import { getCommandShell, getShellEnvironment, getShellSpawnArgs, type ShellSpawnConfig } from './utils/shell.js';
+import { getCommandShell, getShellEnvironment, getShellSpawnArgs, getShellType, type ShellSpawnConfig } from './utils/shell.js';
 import { terminateProcessTree } from './utils/process-tree.js';
 
 /** A child process's output pipes. */
@@ -143,7 +143,7 @@ export class TerminalManager {
     }
   }
   
-  async executeCommand(command: string, timeoutMs: number = DEFAULT_COMMAND_TIMEOUT, shell?: string, collectTiming: boolean = false, maxWaitMs: number = MAX_PROCESS_WAIT_MS): Promise<ProcessStartResult> {
+  async executeCommand(command: string, timeoutMs: number = DEFAULT_COMMAND_TIMEOUT, shell?: string, collectTiming: boolean = false, maxWaitMs: number = MAX_PROCESS_WAIT_MS, cwd?: string): Promise<ProcessStartResult> {
     let config: ServerConfig = {};
     try {
       config = await configManager.getConfig();
@@ -166,11 +166,21 @@ export class TerminalManager {
 
     // Get the appropriate spawn configuration for the shell, with login flags where appropriate
     const spawnConfig: ShellSpawnConfig = getShellSpawnArgs(shellToUse, enhancedCommand);
+    const env = getShellEnvironment();
     const spawnOptions: any = {
       // PATHEXT and ProgramData repaired on Windows; TERM for better terminal compatibility.
-      env: getShellEnvironment(),
+      env,
       windowsHide: true  // Prevent visible console windows on Windows
     };
+
+    if (cwd !== undefined) {
+      spawnOptions.cwd = cwd;
+      // MSYS2/Cygwin/Git-Bash login shells (-l) may cd to $HOME in /etc/profile
+      // unless CHERE_INVOKING is set.
+      if (process.platform === 'win32' && getShellType(shellToUse) === 'posix' && env.CHERE_INVOKING === undefined) {
+        env.CHERE_INVOKING = '1';
+      }
+    }
 
     // Add shell option if needed (for unknown shells)
     if (spawnConfig.useShellOption) {
