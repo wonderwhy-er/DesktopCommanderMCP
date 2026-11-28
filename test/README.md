@@ -30,6 +30,28 @@ They also take `--timed` and `--without-timed`: only, or without, their timed te
 - **The server:** a test that needs it starts it through `helpers/mcp-client.js`.
 - **Temporary folders:** make them with `createTempDir()` (`helpers/test-env.js`). It gives the real path; macOS's temporary folder is behind a link.
 
+## Reviewing changes to MCP tool input schemas
+
+`fixtures/mcp-tool-input-schemas.json` records `tools/list` from upstream
+`c747342f9d1cc42936ae054bd60959352a7f1f57` before the Zod 4 migration.
+Keep it as the baseline for changes that preserve the tool contract. For an
+intentional tool contract change, build the checkout whose schemas you want to
+capture and run these commands from its root.
+
+```sh
+npm run build
+node test/capture-mcp-tool-input-schemas.js > mcp-tool-input-schemas.candidate.json
+diff -u test/fixtures/mcp-tool-input-schemas.json mcp-tool-input-schemas.candidate.json
+```
+
+The capture uses the SDK and a temporary test home. It writes only to stdout
+and leaves the checked-in fixture alone. Review the diff against the intended
+contract change. To accept it, copy the candidate over the fixture, update
+the provenance here, and run `node test/test-mcp-tool-input-schemas.js`.
+To recapture the original baseline, copy only the capture script into `test/`
+in a disposable checkout of the commit above. Build that checkout with its
+own locked dependencies and run the capture there.
+
 ## Tests that measure time
 
 A busy machine makes everything slower, and the runners share machines with other runs. So a check that involves time is written to hold up under load:

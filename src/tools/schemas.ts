@@ -63,7 +63,7 @@ export const ReadFileArgsSchema = z.object({
   length: z.number().optional().default(1000),
   sheet: z.string().optional(),  // String only for MCP client compatibility (Cursor doesn't support union types in JSON Schema)
   range: z.string().optional(),
-  options: z.record(z.any()).optional(),
+  options: z.record(z.string(), z.any()).optional(),
   // Whether the call came from the file-preview UI (refresh/navigation) or the
   // LLM. 'ui' calls are excluded from tool-call telemetry; see isUiOriginCall
   // in server.ts.
@@ -89,7 +89,7 @@ export const PdfInsertOperationSchema = z.object({
   pageIndex: z.number(),
   markdown: z.string().optional(),
   sourcePdfPath: z.string().optional(),
-  pdfOptions: z.object({}).passthrough().optional(),
+  pdfOptions: z.looseObject({}).optional(),
 });
 
 export const PdfDeleteOperationSchema = z.object({
@@ -119,7 +119,7 @@ export const WritePdfArgsSchema = z.object({
     z.union([z.string(), z.array(PdfOperationSchema)])
   ),
   outputPath: z.string().optional(),
-  options: z.object({}).passthrough().optional(), // Allow passing options to md-to-pdf
+  options: z.looseObject({}).optional(), // Allow passing options to md-to-pdf
 });
 
 export const CreateDirectoryArgsSchema = z.object({
@@ -157,7 +157,7 @@ export const EditBlockArgsSchema = z.object({
   // Structured file range rewrite (Excel, etc.)
   range: z.string().optional(),
   content: z.any().optional(),
-  options: z.record(z.any()).optional(),
+  options: z.record(z.string(), z.any()).optional(),
   // 'ui' when fired by the file-preview UI, else 'llm'. 'ui' calls are
   // excluded from tool-call telemetry; see isUiOriginCall in server.ts.
   origin: z.enum(['ui', 'llm']).optional(),
@@ -196,8 +196,10 @@ export const GiveFeedbackArgsSchema = z.object({
 /** A whole number (at least `min`, if given), rejected with a message that says so */
 function wholeNumber(name: string, min?: number) {
   const message = `${name} must be a whole number${min === undefined ? '' : ` of at least ${min}`}`;
-  const number = z.number().int({ message });
-  return min === undefined ? number : number.min(min, { message });
+  // Zod 4's int() also imposes safe-integer bounds. Keep the original checks.
+  const number = z.number().refine(Number.isInteger, { message });
+  const bounded = min === undefined ? number : number.min(min, { message });
+  return bounded.meta({ type: 'integer' });
 }
 
 // Search schemas (renamed for natural language)
@@ -230,17 +232,26 @@ export const StopSearchArgsSchema = z.object({
 
 export const ListSearchesArgsSchema = z.object({});
 
+// Zod's documented precision: -1 accepts minute-only UTC timestamps, which
+// Zod 3 accepted alongside timestamps with seconds. Keep both validators under
+// a refinement so the published schema still uses only the date-time format.
+const utcDateTime = z.iso.datetime();
+const utcMinute = z.iso.datetime({ precision: -1 });
+
 // Tool history schema
 export const GetRecentToolCallsArgsSchema = z.object({
   maxResults: z.number().min(1).max(1000).optional().default(50),
   toolName: z.string().optional(),
-  since: z.string().datetime().optional(),
+  since: z.string()
+    .refine(value => utcDateTime.safeParse(value).success || utcMinute.safeParse(value).success, 'Invalid datetime')
+    .meta({ format: 'date-time' })
+    .optional(),
 });
 
 export const TrackUiEventArgsSchema = z.object({
   event: z.string().min(1).max(80),
   component: z.string().optional().default('file_preview'),
-  params: z.record(z.union([z.string(), z.number(), z.boolean(), z.null()])).optional().default({}),
+  params: z.record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()])).optional().default({}),
 });
 
 /**
@@ -248,7 +259,7 @@ export const TrackUiEventArgsSchema = z.object({
  * about parameters a caller sent that the tool does not support. Keep in sync
  * with the tool definitions in server.ts.
  */
-export const toolArgSchemas: Record<string, z.ZodTypeAny> = {
+export const toolArgSchemas: Record<string, z.ZodObject> = {
   get_config: GetConfigArgsSchema,
   set_config_value: SetConfigValueArgsSchema,
   read_file: ReadFileArgsSchema,
@@ -276,3 +287,32 @@ export const toolArgSchemas: Record<string, z.ZodTypeAny> = {
   give_feedback_to_desktop_commander: GiveFeedbackArgsSchema,
   track_ui_event: TrackUiEventArgsSchema,
 };
+
+/** Convert the tool's argument schema to the draft-7 contract clients already use. */
+export function toMcpInputSchema(schema: z.ZodObject) {
+  return z.toJSONSchema(schema, {
+    target: 'draft-07',
+    io: 'input',
+    override({ jsonSchema }) {
+      if (jsonSchema.type !== 'object') return;
+
+      // Zod strips unknown fields on ordinary objects. Advertise them as
+      // closed for clients, while keeping the runtime's corrective warnings.
+      if (jsonSchema.properties && jsonSchema.additionalProperties === undefined) {
+        jsonSchema.additionalProperties = false;
+      } else if (jsonSchema.properties && jsonSchema.additionalProperties
+        && typeof jsonSchema.additionalProperties === 'object'
+        && Object.keys(jsonSchema.additionalProperties).length === 0) {
+        // Preserve the representation used for loose PDF option objects.
+        jsonSchema.additionalProperties = true;
+      }
+
+      // JSON object keys are strings already. Keep the existing record schema.
+      const propertyNames = jsonSchema.propertyNames;
+      if (propertyNames && typeof propertyNames === 'object'
+        && propertyNames.type === 'string' && Object.keys(propertyNames).length === 1) {
+        delete jsonSchema.propertyNames;
+      }
+    },
+  });
+}
